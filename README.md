@@ -276,6 +276,16 @@ match rollback.add_remote_input(confirmed_input) {
 | **Input sync (ALICE)** | ~80 B | **19.2 KB/s** |
 | Savings | | **99.5%** |
 
+## Cargo Features
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `std` | Yes | Standard library support |
+| `async` | No | Tokio async runtime |
+| `simd` | No | SIMD acceleration |
+| `python` | No | Python bindings (PyO3 + NumPy zero-copy) |
+| `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, PhysicsRollbackSession) |
+
 ## Python Bindings (PyO3 + NumPy Zero-Copy)
 
 ```toml
@@ -324,9 +334,69 @@ predicted = rollback.add_local_input(frame)
 action = rollback.add_remote_input(remote_frame)  # "none" / "rollback:N" / "desync:N"
 ```
 
+## Game Engine Pipeline (ALICE-Physics Bridge)
+
+Enable with `--features physics` to bridge ALICE-Sync input synchronization with [ALICE-Physics](../ALICE-Physics) deterministic simulation.
+
+```toml
+[dependencies]
+alice-sync = { path = "../ALICE-Sync", features = ["physics"] }
+```
+
+### Architecture
+
+```
+Network ──► InputFrame (i16, 24B) ──► FrameInput (Fix128) ──► PhysicsWorld
+                 ALICE-Sync                ALICE-Physics
+
+PhysicsWorld ──► SimulationChecksum ──► WorldHash ──► Desync Verification
+                   ALICE-Physics           ALICE-Sync
+```
+
+### PhysicsRollbackSession
+
+Combined rollback input sync + deterministic physics in one struct:
+
+```rust
+use alice_sync::physics_bridge::PhysicsRollbackSession;
+use alice_sync::InputFrame;
+use alice_physics::{NetcodeConfig, RigidBody, Vec3Fix, Fix128};
+
+let mut session = PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default());
+
+// Add player bodies to physics world
+let body = RigidBody::new_dynamic(Vec3Fix::from_int(0, 10, 0), Fix128::ONE);
+let idx = session.sim.add_body(body);
+session.sim.assign_player_body(0, idx);
+
+// Game loop: advance with local input
+let input = InputFrame::new(1, 0).with_movement(1, 0, 0);
+let checksum = session.advance_frame(input);
+
+// When remote input arrives:
+match session.add_remote_input(remote_input) {
+    RollbackAction::None => {},
+    RollbackAction::Rollback { to_frame } => {
+        session.handle_rollback(to_frame);  // auto re-simulate
+    },
+    RollbackAction::Desync { .. } => { /* reconnect */ },
+}
+```
+
+### Bridge Functions
+
+| Function | Description |
+|----------|-------------|
+| `sync_input_to_physics()` | InputFrame (i16 Q8.8) → FrameInput (Fix128) |
+| `physics_input_to_sync()` | FrameInput (Fix128) → InputFrame (i16, truncate) |
+| `sync_inputs_to_physics()` | Batch conversion |
+| `physics_checksum_to_world_hash()` | SimulationChecksum(u64) → WorldHash(u64) |
+| `world_hash_to_physics_checksum()` | WorldHash(u64) → SimulationChecksum(u64) |
+
 ## Use Cases
 
 - **Multiplayer Games**: RTS, fighting games, physics puzzles
+- **Game Engine Pipeline**: ALICE-Physics + ALICE-Sync for bit-exact rollback netcode
 - **Distributed Simulation**: Weather, traffic, physics
 - **Collaborative Editing**: Real-time document/3D model sync
 - **Rollback Netcode**: GGPO-style predict/confirm/rollback
@@ -350,11 +420,12 @@ Consistency Check:
 
 ## Test Suite
 
-52 unit tests covering event processing, SoA batching, input sync, rollback, and serialization:
+58 unit tests covering event processing, SoA batching, input sync, rollback, physics bridge, and serialization:
 
 ```bash
-cargo test          # Run all 52 tests
-cargo bench         # Run benchmarks
+cargo test                   # Run 52 core tests
+cargo test --features physics # Run all 58 tests (including physics bridge)
+cargo bench                  # Run benchmarks
 ```
 
 ## License

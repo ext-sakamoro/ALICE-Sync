@@ -45,6 +45,8 @@ pub mod protocol;
 pub mod world;
 pub mod world_soa;
 pub mod input_sync;
+#[cfg(feature = "physics")]
+pub mod physics_bridge;
 #[cfg(feature = "python")]
 mod python;
 
@@ -60,6 +62,12 @@ pub use protocol::{Message, Protocol};
 pub use world::{Entity, EntityProps, World, WorldHash, WorldState, MAX_PROPS};
 pub use world_soa::{WorldStorage, WorldSoA, Slot};
 pub use input_sync::{InputFrame, InputBuffer, LockstepSession, RollbackSession, SyncResult, RollbackAction};
+#[cfg(feature = "physics")]
+pub use physics_bridge::{
+    sync_input_to_physics, physics_input_to_sync, sync_inputs_to_physics,
+    physics_checksum_to_world_hash, world_hash_to_physics_checksum,
+    PhysicsRollbackSession,
+};
 
 /// ALICE-Sync version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
