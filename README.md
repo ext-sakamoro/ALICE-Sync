@@ -220,12 +220,117 @@ let b = Fixed::from_f32(0.7);
 let c = a + b;  // Always exactly the same bits
 ```
 
+## Input Synchronization (v0.6)
+
+Deterministic input sync for multiplayer games — **~20 bytes/player/frame**.
+
+### Sync Modes
+
+| Mode | Best For | Latency Model |
+|------|----------|---------------|
+| **Lockstep** | RTS, turn-based, < 4 players | Wait for all inputs |
+| **Rollback** | Fighting, FPS, action games | Predict + confirm + rollback |
+
+### Usage
+
+```rust
+use alice_sync::{InputFrame, LockstepSession, RollbackSession};
+
+// --- Lockstep (RTS / turn-based) ---
+let mut session = LockstepSession::new(2);  // 2 players
+
+let input = InputFrame::new(0, 0)  // frame 0, player 0
+    .with_movement(100, 0, 0)
+    .with_actions(0x01);
+
+session.add_local_input(input);
+session.add_remote_input(remote_input);
+
+if session.ready_to_advance() {
+    let inputs = session.advance().unwrap();
+    // Apply all inputs deterministically
+}
+
+// --- Rollback (fighting / FPS) ---
+let mut rollback = RollbackSession::new(2, 0, 8);  // 2 players, local=0, max_rollback=8
+
+let predicted_inputs = rollback.add_local_input(local_input);
+// Apply predicted_inputs immediately (no waiting!)
+
+match rollback.add_remote_input(confirmed_input) {
+    RollbackAction::None => {},           // Prediction was correct
+    RollbackAction::Rollback { to_frame } => {
+        // Restore snapshot, re-simulate from to_frame
+    },
+    RollbackAction::Desync { frame } => {
+        // Unrecoverable — reconnect
+    },
+}
+```
+
+### Bandwidth Comparison
+
+| Approach | Data/Frame | 60 FPS, 4 Players |
+|----------|-----------|-------------------|
+| State sync (100 bodies) | ~16 KB | 3.84 MB/s |
+| **Input sync (ALICE)** | ~80 B | **19.2 KB/s** |
+| Savings | | **99.5%** |
+
+## Python Bindings (PyO3 + NumPy Zero-Copy)
+
+```toml
+[features]
+python = ["pyo3", "numpy"]
+```
+
+### Optimization Layers (カリカリ)
+
+| Layer | Technique | Effect |
+|-------|-----------|--------|
+| L1 | GIL Release (`py.allow_threads`) | Parallel batch processing |
+| L2 | Zero-Copy NumPy (`into_pyarray`) | No memcpy for positions |
+| L3 | Batch API (SoA world operations) | FFI amortization |
+| L4 | Rust backend (8-wide SIMD, Demon Mode) | Hardware-speed apply |
+
+### Python API
+
+```python
+import alice_sync
+
+# --- WorldSoA (high-performance SoA world) ---
+world = alice_sync.WorldSoA(seed=42)
+world.spawn(entity_id=0, kind=0, x=0, y=0, z=0)
+world.spawn(entity_id=1, kind=0, x=100, y=0, z=0)
+
+# Batch motions (GIL released, Demon Mode SIMD)
+motions = [(0, 10, 0, 0), (1, -5, 3, 0)]  # (entity_id, dx, dy, dz)
+world.apply_motions(motions)
+
+positions = world.positions()  # NumPy (N, 3) int32 — zero-copy
+print(f"Hash: {world.hash():016x}")
+
+# --- Input sync ---
+frame = alice_sync.InputFrame(frame=0, player_id=0, move_x=100, move_y=0, move_z=0)
+data = frame.to_bytes()   # bitcode serialized (~18 bytes)
+decoded = alice_sync.InputFrame.from_bytes(data)
+
+# Lockstep session
+session = alice_sync.LockstepSession(player_count=2)
+session.add_local_input(frame)
+
+# Rollback session
+rollback = alice_sync.RollbackSession(player_count=2, local_player=0, max_rollback=8)
+predicted = rollback.add_local_input(frame)
+action = rollback.add_remote_input(remote_frame)  # "none" / "rollback:N" / "desync:N"
+```
+
 ## Use Cases
 
 - **Multiplayer Games**: RTS, fighting games, physics puzzles
 - **Distributed Simulation**: Weather, traffic, physics
 - **Collaborative Editing**: Real-time document/3D model sync
-- **Rollback Netcode**: Foundation for fighting game networking
+- **Rollback Netcode**: GGPO-style predict/confirm/rollback
+- **Lockstep Netcode**: Deterministic wait-for-all synchronization
 
 ## Protocol
 
@@ -243,10 +348,13 @@ Consistency Check:
   B → A: HashCheck { seq, world_hash }  // O(1) comparison
 ```
 
-## Running Benchmarks
+## Test Suite
+
+52 unit tests covering event processing, SoA batching, input sync, rollback, and serialization:
 
 ```bash
-cargo bench
+cargo test          # Run all 52 tests
+cargo bench         # Run benchmarks
 ```
 
 ## License

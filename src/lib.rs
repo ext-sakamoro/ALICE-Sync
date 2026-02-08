@@ -44,6 +44,9 @@ pub mod node;
 pub mod protocol;
 pub mod world;
 pub mod world_soa;
+pub mod input_sync;
+#[cfg(feature = "python")]
+mod python;
 
 pub use arena::{Arena, Handle};
 pub use event::{
@@ -56,6 +59,7 @@ pub use node::{Node, NodeId, NodeState};
 pub use protocol::{Message, Protocol};
 pub use world::{Entity, EntityProps, World, WorldHash, WorldState, MAX_PROPS};
 pub use world_soa::{WorldStorage, WorldSoA, Slot};
+pub use input_sync::{InputFrame, InputBuffer, LockstepSession, RollbackSession, SyncResult, RollbackAction};
 
 /// ALICE-Sync version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -17,6 +17,8 @@ tokio = { version = "1.0", features = ["full"], optional = true }
 crossbeam-channel = "0.5"
 rustc-hash = "2.1"
 wide = "0.7"
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+numpy = { version = "0.22", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -26,6 +28,7 @@ default = ["std"]
 std = []
 async = ["tokio"]
 simd = []
+python = ["pyo3", "numpy"]  # Python bindings (PyO3 + NumPy zero-copy)
 
 [profile.release]
 opt-level = 3
