@@ -285,6 +285,7 @@ match rollback.add_remote_input(confirmed_input) {
 | `simd` | No | SIMD acceleration |
 | `python` | No | Python bindings (PyO3 + NumPy zero-copy) |
 | `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, PhysicsRollbackSession) |
+| `cache` | No | CRDT-based distributed cache invalidation via ALICE-Cache (`cache_bridge`) |
 | `telemetry` | No | Sync telemetry recording via ALICE-DB (RTT, rollback, desync metrics) |
 
 ## Python Bindings (PyO3 + NumPy Zero-Copy)
@@ -439,6 +440,26 @@ ALICE-DB's model-based compression fits telemetry naturally:
 - Stable RTT → constant model (1 coefficient)
 - Gradually improving prediction → linear model
 - Periodic jitter → Fourier model
+
+## Cross-Crate Bridges
+
+### Cache Bridge (feature: `cache`)
+
+CRDT-based distributed cache invalidation with [ALICE-Cache](../ALICE-Cache). When sync events modify shared state, the cache bridge propagates invalidation messages to ensure distributed cache consistency across nodes.
+
+```toml
+[dependencies]
+alice-sync = { path = "../ALICE-Sync", features = ["cache"] }
+```
+
+### Incoming Bridge: ALICE-Streaming-Protocol
+
+[ALICE-Streaming-Protocol](../ALICE-Streaming-Protocol) connects to ALICE-Sync via its `sync_bridge` module (feature `sync`), enabling synchronized media stream state across P2P nodes.
+
+### Build Profile Changes
+
+- `[profile.release]`: Added `strip = true` for smaller release binaries
+- `[profile.bench]`: Standardized bench profile added
 
 ## Use Cases
 

@@ -49,6 +49,10 @@ pub mod input_sync;
 pub mod physics_bridge;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
+#[cfg(feature = "cache")]
+pub mod cache_bridge;
+#[cfg(feature = "auth")]
+pub mod auth_bridge;
 #[cfg(feature = "python")]
 mod python;
 

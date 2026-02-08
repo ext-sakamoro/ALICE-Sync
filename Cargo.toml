@@ -21,6 +21,8 @@ pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 numpy = { version = "0.22", optional = true }
 alice-physics = { path = "../ALICE-Physics", optional = true }
 alice-db = { path = "../ALICE-DB", optional = true }
+alice-cache = { path = "../ALICE-Cache", optional = true }
+alice-auth = { path = "../ALICE-Auth", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -34,13 +36,22 @@ simd = []
 python = ["pyo3", "numpy"]  # Python bindings (PyO3 + NumPy zero-copy)
 physics = ["alice-physics"]  # ALICE-Physics bridge (InputFrame ↔ FrameInput, rollback)
 telemetry = ["alice-db"]    # Sync telemetry recording via ALICE-DB
+cache = ["alice-cache"]     # Entity state prefetching via Markov oracle
+auth = ["alice-auth"]       # P2P peer authentication with Ed25519 ZKP
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+strip = true
 
 [[bench]]
 name = "sync_bench"
 harness = false
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
