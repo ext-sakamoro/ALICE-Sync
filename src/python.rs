@@ -1,6 +1,6 @@
 //! Python Bindings for ALICE-Sync (PyO3 + NumPy Zero-Copy)
 //!
-//! # Optimization Layers (カリカリ)
+//! # Optimization Layers
 //!
 //! | Layer | Technique | Effect |
 //! |-------|-----------|--------|

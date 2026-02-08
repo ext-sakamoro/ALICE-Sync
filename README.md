@@ -285,6 +285,7 @@ match rollback.add_remote_input(confirmed_input) {
 | `simd` | No | SIMD acceleration |
 | `python` | No | Python bindings (PyO3 + NumPy zero-copy) |
 | `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, PhysicsRollbackSession) |
+| `telemetry` | No | Sync telemetry recording via ALICE-DB (RTT, rollback, desync metrics) |
 
 ## Python Bindings (PyO3 + NumPy Zero-Copy)
 
@@ -293,7 +294,7 @@ match rollback.add_remote_input(confirmed_input) {
 python = ["pyo3", "numpy"]
 ```
 
-### Optimization Layers (カリカリ)
+### Optimization Layers
 
 | Layer | Technique | Effect |
 |-------|-----------|--------|
@@ -393,6 +394,52 @@ match session.add_remote_input(remote_input) {
 | `physics_checksum_to_world_hash()` | SimulationChecksum(u64) → WorldHash(u64) |
 | `world_hash_to_physics_checksum()` | WorldHash(u64) → SimulationChecksum(u64) |
 
+## Sync Telemetry (ALICE-DB Integration)
+
+Record network synchronization metrics as time-series data in [ALICE-DB](../ALICE-DB). Enable with `--features telemetry`.
+
+```toml
+[dependencies]
+alice-sync = { path = "../ALICE-Sync", features = ["telemetry"] }
+```
+
+### Channels
+
+| Channel | Metric | Range |
+|---------|--------|-------|
+| 0 | Rollback count | frames rolled back per event |
+| 1 | Desync severity | 0.0 = none, 1.0 = fatal |
+| 2 | Prediction accuracy | 0.0..1.0 |
+| 3 | RTT (ms) | round-trip time |
+| 4 | Input delay | delay in frames |
+
+### Usage
+
+```rust
+use alice_sync::telemetry::SyncTelemetry;
+
+let telemetry = SyncTelemetry::new("./telemetry_data")?;
+
+// Record during gameplay
+telemetry.record_rtt(frame, 15.5)?;
+telemetry.record_prediction_accuracy(frame, 0.95)?;
+telemetry.record_rollback(frame, 3)?;
+
+telemetry.flush()?;
+
+// Query for analysis
+let rtt_data = telemetry.scan_rtt(0, 3600)?;
+let avg_rtt = telemetry.average_rtt(0, 3600)?;
+let max_rollback = telemetry.max_rollback(0, 3600)?;
+
+telemetry.close()?;
+```
+
+ALICE-DB's model-based compression fits telemetry naturally:
+- Stable RTT → constant model (1 coefficient)
+- Gradually improving prediction → linear model
+- Periodic jitter → Fourier model
+
 ## Use Cases
 
 - **Multiplayer Games**: RTS, fighting games, physics puzzles
@@ -420,12 +467,13 @@ Consistency Check:
 
 ## Test Suite
 
-58 unit tests covering event processing, SoA batching, input sync, rollback, physics bridge, and serialization:
+61 unit tests covering event processing, SoA batching, input sync, rollback, physics bridge, telemetry, and serialization:
 
 ```bash
-cargo test                   # Run 52 core tests
-cargo test --features physics # Run all 58 tests (including physics bridge)
-cargo bench                  # Run benchmarks
+cargo test                      # Run 52 core tests
+cargo test --features physics   # Run 58 tests (including physics bridge)
+cargo test --features telemetry # Run 55 tests (including telemetry)
+cargo bench                     # Run benchmarks
 ```
 
 ## License

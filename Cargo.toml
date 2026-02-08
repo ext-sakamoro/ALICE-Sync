@@ -20,9 +20,11 @@ wide = "0.7"
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 numpy = { version = "0.22", optional = true }
 alice-physics = { path = "../ALICE-Physics", optional = true }
+alice-db = { path = "../ALICE-DB", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
+tempfile = "3.10"
 
 [features]
 default = ["std"]
@@ -31,6 +33,7 @@ async = ["tokio"]
 simd = []
 python = ["pyo3", "numpy"]  # Python bindings (PyO3 + NumPy zero-copy)
 physics = ["alice-physics"]  # ALICE-Physics bridge (InputFrame ↔ FrameInput, rollback)
+telemetry = ["alice-db"]    # Sync telemetry recording via ALICE-DB
 
 [profile.release]
 opt-level = 3

@@ -47,6 +47,8 @@ pub mod world_soa;
 pub mod input_sync;
 #[cfg(feature = "physics")]
 pub mod physics_bridge;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
 #[cfg(feature = "python")]
 mod python;
 
