@@ -452,6 +452,28 @@ CRDT-based distributed cache invalidation with [ALICE-Cache](../ALICE-Cache). Wh
 alice-sync = { path = "../ALICE-Sync", features = ["cache"] }
 ```
 
+### Codec Bridge (feature: `codec`)
+
+Wavelet + rANS compression for event stream batches via [ALICE-Codec](../ALICE-Codec). Reduces event batch wire size by applying 1D wavelet transform and entropy coding to serialized event data.
+
+```toml
+[dependencies]
+alice-sync = { path = "../ALICE-Sync", features = ["codec"] }
+```
+
+```rust
+use alice_sync::codec_bridge::{compress_event_batch, decompress_event_batch, estimate_ratio};
+
+// Compress serialized event batch
+let compressed = compress_event_batch(&event_bytes, quality)?;
+
+// Estimate compression ratio
+let ratio = estimate_ratio(&event_bytes);
+
+// Decompress
+let original = decompress_event_batch(&compressed)?;
+```
+
 ### Incoming Bridge: ALICE-Streaming-Protocol
 
 [ALICE-Streaming-Protocol](../ALICE-Streaming-Protocol) connects to ALICE-Sync via its `sync_bridge` module (feature `sync`), enabling synchronized media stream state across P2P nodes.
