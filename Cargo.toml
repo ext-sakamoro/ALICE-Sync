@@ -23,6 +23,7 @@ alice-physics = { path = "../ALICE-Physics", optional = true }
 alice-db = { path = "../ALICE-DB", optional = true }
 alice-cache = { path = "../ALICE-Cache", optional = true }
 alice-auth = { path = "../ALICE-Auth", optional = true, default-features = false, features = ["std"] }
+alice-codec = { path = "../ALICE-Codec", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -38,6 +39,7 @@ physics = ["alice-physics"]  # ALICE-Physics bridge (InputFrame ↔ FrameInput, 
 telemetry = ["alice-db"]    # Sync telemetry recording via ALICE-DB
 cache = ["alice-cache"]     # Entity state prefetching via Markov oracle
 auth = ["alice-auth"]       # P2P peer authentication with Ed25519 ZKP
+codec = ["dep:alice-codec", "std"]  # ALICE-Codec wavelet compression for event streams
 
 [profile.release]
 opt-level = 3

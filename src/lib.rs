@@ -53,6 +53,8 @@ pub mod telemetry;
 pub mod cache_bridge;
 #[cfg(feature = "auth")]
 pub mod auth_bridge;
+#[cfg(feature = "codec")]
+pub mod codec_bridge;
 #[cfg(feature = "python")]
 mod python;
 
