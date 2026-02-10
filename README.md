@@ -474,6 +474,26 @@ let ratio = estimate_ratio(&event_bytes);
 let original = decompress_event_batch(&compressed)?;
 ```
 
+### Analytics Bridge (feature: `analytics`)
+
+Real-time sync telemetry via [ALICE-Analytics](../ALICE-Analytics). Feeds event throughput, round-trip latency, unique peer count, and hash divergences into probabilistic sketches (DDSketch, HyperLogLog, Count-Min Sketch).
+
+```toml
+[dependencies]
+alice-sync = { path = "../ALICE-Sync", features = ["analytics"] }
+```
+
+```rust
+use alice_sync::analytics_bridge::SyncTelemetry;
+
+let mut tel = SyncTelemetry::new();
+tel.record_throughput(1500.0);
+tel.record_latency(42.0);
+tel.record_peer(b"peer-001");
+println!("p99 latency: {:.1}us", tel.latency_p99());
+println!("unique peers: {:.0}", tel.unique_peers());
+```
+
 ### Incoming Bridge: ALICE-Streaming-Protocol
 
 [ALICE-Streaming-Protocol](../ALICE-Streaming-Protocol) connects to ALICE-Sync via its `sync_bridge` module (feature `sync`), enabling synchronized media stream state across P2P nodes.
