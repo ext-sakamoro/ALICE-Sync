@@ -24,6 +24,7 @@ alice-db = { path = "../ALICE-DB", optional = true }
 alice-cache = { path = "../ALICE-Cache", optional = true }
 alice-auth = { path = "../ALICE-Auth", optional = true, default-features = false, features = ["std"] }
 alice-codec = { path = "../ALICE-Codec", optional = true, default-features = false, features = ["std"] }
+alice-analytics = { path = "../ALICE-Analytics", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -40,6 +41,7 @@ telemetry = ["alice-db"]    # Sync telemetry recording via ALICE-DB
 cache = ["alice-cache"]     # Entity state prefetching via Markov oracle
 auth = ["alice-auth"]       # P2P peer authentication with Ed25519 ZKP
 codec = ["dep:alice-codec", "std"]  # ALICE-Codec wavelet compression for event streams
+analytics = ["dep:alice-analytics", "std"]  # ALICE-Analytics sync telemetry
 
 [profile.release]
 opt-level = 3
