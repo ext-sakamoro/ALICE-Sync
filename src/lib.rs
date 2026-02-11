@@ -57,6 +57,8 @@ pub mod auth_bridge;
 pub mod codec_bridge;
 #[cfg(feature = "analytics")]
 pub mod analytics_bridge;
+#[cfg(feature = "cloud")]
+pub mod cloud_bridge;
 #[cfg(feature = "python")]
 mod python;
 
