@@ -8,6 +8,7 @@ description = "P2P synchronization via event diffing, not data transfer"
 repository = "https://github.com/ext-sakamoro/ALICE-Sync"
 keywords = ["p2p", "sync", "distributed", "compression", "alice"]
 categories = ["network-programming", "compression"]
+publish = false
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
