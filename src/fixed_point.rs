@@ -40,6 +40,9 @@ impl Fixed {
     pub const FRAC_BITS: u32 = 16;
     pub const SCALE: i32 = 1 << 16;
 
+    /// Precomputed reciprocal of SCALE for f32 conversion
+    const RCP_SCALE: f32 = 1.0 / (1u32 << 16) as f32;
+
     #[inline(always)]
     pub const fn from_int(n: i32) -> Self {
         Self(n << 16)
@@ -62,7 +65,7 @@ impl Fixed {
 
     #[inline(always)]
     pub fn to_f32(self) -> f32 {
-        self.0 as f32 / Self::SCALE as f32
+        self.0 as f32 * Self::RCP_SCALE
     }
 
     #[inline(always)]
@@ -318,7 +321,7 @@ impl AddAssign for Vec3Simd {
 // ============================================================================
 
 /// Process multiple Vec3 additions in parallel
-#[inline]
+#[inline(always)]
 pub fn batch_add_vec3(positions: &mut [Vec3Fixed], deltas: &[Vec3Fixed]) {
     debug_assert_eq!(positions.len(), deltas.len());
     for (pos, delta) in positions.iter_mut().zip(deltas.iter()) {

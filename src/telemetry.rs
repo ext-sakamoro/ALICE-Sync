@@ -105,31 +105,31 @@ impl SyncTelemetry {
     // ── Recording ──────────────────────────────────────────────
 
     /// Record a rollback event (how many frames were rolled back).
-    #[inline]
+    #[inline(always)]
     pub fn record_rollback(&self, frame: u64, rollback_frames: u32) -> io::Result<()> {
         self.put_channel(CH_ROLLBACK, frame, rollback_frames as f32)
     }
 
     /// Record a desync event with severity (0.0 = minor, 1.0 = fatal).
-    #[inline]
+    #[inline(always)]
     pub fn record_desync(&self, frame: u64, severity: f32) -> io::Result<()> {
         self.put_channel(CH_DESYNC, frame, severity)
     }
 
     /// Record input prediction accuracy for this frame (0.0..1.0).
-    #[inline]
+    #[inline(always)]
     pub fn record_prediction_accuracy(&self, frame: u64, accuracy: f32) -> io::Result<()> {
         self.put_channel(CH_PREDICTION, frame, accuracy)
     }
 
     /// Record round-trip time in milliseconds.
-    #[inline]
+    #[inline(always)]
     pub fn record_rtt(&self, frame: u64, rtt_ms: f32) -> io::Result<()> {
         self.put_channel(CH_RTT, frame, rtt_ms)
     }
 
     /// Record input delay in frames.
-    #[inline]
+    #[inline(always)]
     pub fn record_input_delay(&self, frame: u64, delay_frames: u32) -> io::Result<()> {
         self.put_channel(CH_INPUT_DELAY, frame, delay_frames as f32)
     }
@@ -138,7 +138,7 @@ impl SyncTelemetry {
     ///
     /// Single lock acquisition instead of one per metric — up to 5x fewer
     /// lock round-trips when recording all channels per frame.
-    #[inline]
+    #[inline(always)]
     pub fn record_batch(&self, frame: u64, rtt_ms: Option<f32>, prediction_accuracy: Option<f32>, rollback_frames: Option<u32>, desync_severity: Option<f32>, input_delay: Option<u32>) -> io::Result<()> {
         let f = frame as i64;
         let mut batch = [(0i64, 0.0f32); 5];
@@ -174,7 +174,7 @@ impl SyncTelemetry {
     // ── Point Query ────────────────────────────────────────────
 
     /// Get a single metric value at a frame.
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, channel: TelemetryChannel, frame: u64) -> io::Result<Option<f32>> {
         self.db.get(channel.id() * MAX_FRAMES + frame as i64)
     }

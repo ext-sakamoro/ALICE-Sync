@@ -101,7 +101,7 @@ impl WorldStorage {
     }
 
     /// Spawn entity, returns slot index
-    #[inline]
+    #[inline(always)]
     pub fn spawn(&mut self, id: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
         let slot = if let Some(slot) = self.free_list.pop() {
             slot
@@ -132,7 +132,7 @@ impl WorldStorage {
     }
 
     /// Despawn entity by slot
-    #[inline]
+    #[inline(always)]
     pub fn despawn(&mut self, slot: u32) -> bool {
         let idx = slot as usize;
         if idx >= self.capacity || !self.alive[idx] {
@@ -342,7 +342,7 @@ impl WorldStorage {
     }
 
     /// Compute hashes for 8 consecutive entities (parallel)
-    #[inline]
+    #[inline(always)]
     pub fn compute_hashes_8(&self, start: usize) -> [u64; 8] {
         let mut hashes = [0u64; 8];
         for i in 0..8 {
@@ -442,7 +442,7 @@ impl WorldSoA {
     }
 
     /// Ensure id_to_slot can hold entity_id
-    #[inline]
+    #[inline(always)]
     fn ensure_id_capacity(&mut self, entity_id: u32) {
         let required = entity_id as usize + 1;
         if self.id_to_slot.len() < required {
@@ -460,7 +460,7 @@ impl WorldSoA {
     }
 
     /// Apply event to SoA world
-    #[inline]
+    #[inline(always)]
     pub fn apply(&mut self, event: &Event) -> Result<()> {
         match &event.kind {
             EventKind::Motion { entity, delta } => {
@@ -573,7 +573,7 @@ impl WorldSoA {
     /// - Same for y and z
     ///
     /// Requires entities to be at consecutive slots (use with sorted data)
-    #[inline]
+    #[inline(always)]
     pub fn apply_motions_vertical_8(
         &mut self,
         start_slot: usize,
@@ -600,7 +600,7 @@ impl WorldSoA {
     }
 
     /// Batch apply motion events (with automatic Vertical SIMD for consecutive entities)
-    #[inline]
+    #[inline(always)]
     pub fn apply_motions_batch(&mut self, motions: &[MotionData]) {
         for m in motions {
             if let Some(slot) = self.get_slot(m.entity) {
@@ -632,7 +632,7 @@ impl WorldSoA {
     /// 2. Detect contiguous slot ranges for Vertical SIMD
     /// 3. Coalesce multiple motions to the same entity
     /// 4. Apply with maximum cache efficiency
-    #[inline]
+    #[inline(always)]
     pub fn apply_motions_sorted(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
             return;
@@ -751,7 +751,7 @@ impl WorldSoA {
     /// Apply motions with pre-sorted input (skip sorting step)
     ///
     /// Use when motions are already sorted by entity_id
-    #[inline]
+    #[inline(always)]
     pub fn apply_motions_presorted(&mut self, motions: &[MotionData]) {
         // Resolve entity_id -> slot mapping (already sorted)
         let mut slot_motions: Vec<(u32, &MotionData)> = Vec::with_capacity(motions.len());
@@ -791,7 +791,7 @@ impl WorldSoA {
     /// 3. Detect contiguous slots for SIMD
     ///
     /// Hypothesis: Faster when fragmentation is low (ID ≈ Slot)
-    #[inline]
+    #[inline(always)]
     pub fn apply_motions_demon(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
             return;
@@ -897,7 +897,7 @@ impl WorldSoA {
     }
 
     /// Apply motions without any sorting (baseline for comparison)
-    #[inline]
+    #[inline(always)]
     pub fn apply_motions_nosort(&mut self, motions: &[MotionData]) {
         for m in motions {
             if let Some(slot) = self.get_slot(m.entity) {
