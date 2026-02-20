@@ -93,20 +93,22 @@ impl Node {
 
     /// Generate a local event and apply it
     pub fn emit(&mut self, event: Event) -> Result<()> {
-        self.events.push(event.clone(), self.id.0);
-        let event_with_id = self.events.all().last().unwrap().clone();
-        self.world.apply(&event_with_id)?;
+        self.events.push(event, self.id.0);
+        let event_with_id = self.events.all().last().unwrap();
+        self.world.apply(event_with_id)?;
         Ok(())
     }
 
     /// Apply an event (from local or remote)
     pub fn apply_event(&mut self, event: &Event) -> Result<()> {
-        let mut event = event.clone();
         if event.seq.0 == 0 {
-            self.events.push(event.clone(), event.origin);
-            event = self.events.all().last().unwrap().clone();
+            let owned = event.clone();
+            self.events.push(owned, event.origin);
+            let stamped = self.events.all().last().unwrap();
+            self.world.apply(stamped)
+        } else {
+            self.world.apply(event)
         }
-        self.world.apply(&event)
     }
 
     /// Add a peer
