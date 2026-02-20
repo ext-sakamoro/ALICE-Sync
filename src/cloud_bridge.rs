@@ -85,7 +85,7 @@ impl CloudSyncHub {
 
     /// Register a new edge device
     pub fn register_device(&mut self, device_id: u64, name: String) -> &DeviceInfo {
-        let node_id = NodeId(device_id as u32);
+        let node_id = NodeId(device_id);
         self.cloud_node.add_peer(node_id);
 
         self.devices.entry(device_id).or_insert(DeviceInfo {
