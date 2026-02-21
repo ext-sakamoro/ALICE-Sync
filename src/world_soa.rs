@@ -928,7 +928,7 @@ impl WorldSoA {
         let dz_simd = i32x8::splat(dz_fixed);
 
         // Process 8 entities at a time
-        let chunks = count / 8;
+        let chunks = count >> 3;
         for i in 0..chunks {
             let slot = start_slot + i * 8;
             self.apply_motions_vertical_8(slot, dx_simd, dy_simd, dz_simd);
