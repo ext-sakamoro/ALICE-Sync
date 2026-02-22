@@ -16,12 +16,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-//! World Storage - Complete SoA (Structure of Arrays) Layout
+//! World Storage - Complete `SoA` (Structure of Arrays) Layout
 //!
 //! v0.5 "Zen Mode": Entity data decomposed into component arrays
 //!
 //! Benefits:
-//! 1. Cache pollution zero: Motion only touches pos_x/pos_y/pos_z
+//! 1. Cache pollution zero: Motion only touches `pos_x/pos_y/pos_z`
 //! 2. Vertical SIMD: Process 8 entities' x-coordinates in one instruction
 //! 3. Memory bandwidth: 12 bytes/entity instead of 84 bytes
 //! 4. Perfect alignment: Each array is naturally aligned for SIMD
@@ -36,7 +36,7 @@ pub const MAX_ENTITIES: usize = 65536;
 /// Maximum properties per entity
 pub const MAX_PROPS: usize = 16;
 
-/// SoA World Storage - Component arrays instead of Entity structs
+/// `SoA` World Storage - Component arrays instead of Entity structs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldStorage {
     // Generation tracking (for handle validation)
@@ -72,11 +72,13 @@ impl Default for WorldStorage {
 
 impl WorldStorage {
     /// Create new storage with default capacity
+    #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(1024)
     }
 
     /// Create storage with specific capacity
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             generations: vec![0; capacity],
@@ -172,6 +174,7 @@ impl WorldStorage {
 
     /// Check if slot is alive
     #[inline(always)]
+    #[must_use]
     pub fn is_alive(&self, slot: u32) -> bool {
         let idx = slot as usize;
         idx < self.capacity && self.alive[idx]
@@ -179,6 +182,7 @@ impl WorldStorage {
 
     /// Get position as Fixed tuple
     #[inline(always)]
+    #[must_use]
     pub fn get_position(&self, slot: u32) -> (Fixed, Fixed, Fixed) {
         let idx = slot as usize;
         (
@@ -217,6 +221,7 @@ impl WorldStorage {
 
     /// Get property
     #[inline(always)]
+    #[must_use]
     pub fn get_property(&self, slot: u32, prop: u16) -> Option<i32> {
         let idx = slot as usize;
         let prop_idx = (prop as usize) & (MAX_PROPS - 1);
@@ -229,8 +234,9 @@ impl WorldStorage {
 
     /// Compute hash for a single entity (branchless)
     #[inline(always)]
+    #[must_use]
     pub fn compute_hash(&self, slot: u32) -> u64 {
-        const WYHASH_K: u64 = 0x517cc1b727220a95;
+        const WYHASH_K: u64 = 0x517c_c1b7_2722_0a95;
 
         let idx = slot as usize;
 
@@ -259,6 +265,7 @@ impl WorldStorage {
 
     /// Load 8 x-coordinates into SIMD register
     #[inline(always)]
+    #[must_use]
     pub fn load_pos_x_8(&self, start: usize) -> i32x8 {
         debug_assert!(start + 8 <= self.capacity);
         i32x8::new([
@@ -275,6 +282,7 @@ impl WorldStorage {
 
     /// Load 8 y-coordinates into SIMD register
     #[inline(always)]
+    #[must_use]
     pub fn load_pos_y_8(&self, start: usize) -> i32x8 {
         debug_assert!(start + 8 <= self.capacity);
         i32x8::new([
@@ -291,6 +299,7 @@ impl WorldStorage {
 
     /// Load 8 z-coordinates into SIMD register
     #[inline(always)]
+    #[must_use]
     pub fn load_pos_z_8(&self, start: usize) -> i32x8 {
         debug_assert!(start + 8 <= self.capacity);
         i32x8::new([
@@ -343,6 +352,7 @@ impl WorldStorage {
 
     /// Compute hashes for 8 consecutive entities (parallel)
     #[inline(always)]
+    #[must_use]
     pub fn compute_hashes_8(&self, start: usize) -> [u64; 8] {
         let mut hashes = [0u64; 8];
         for (i, h) in hashes.iter_mut().enumerate() {
@@ -353,6 +363,7 @@ impl WorldStorage {
 
     /// XOR-reduce 8 hashes into one
     #[inline(always)]
+    #[must_use]
     pub fn reduce_hashes_xor(hashes: [u64; 8]) -> u64 {
         hashes[0]
             ^ hashes[1]
@@ -366,12 +377,14 @@ impl WorldStorage {
 
     /// Entity count
     #[inline(always)]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.count
     }
 
     /// Check if empty
     #[inline(always)]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -382,7 +395,7 @@ impl WorldStorage {
     }
 }
 
-/// Slot-based handle for WorldStorage
+/// Slot-based handle for `WorldStorage`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Slot {
     pub index: u32,
@@ -396,11 +409,13 @@ impl Slot {
     };
 
     #[inline(always)]
+    #[must_use]
     pub fn new(index: u32, generation: u32) -> Self {
         Self { index, generation }
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.index != u32::MAX
     }
@@ -415,7 +430,7 @@ use crate::{Event, EventKind, MotionData, Result};
 
 /// SoA-based World (v0.5 "Zen Mode")
 ///
-/// Unlike the AoS World, this uses WorldStorage for complete SoA layout.
+/// Unlike the `AoS` World, this uses `WorldStorage` for complete `SoA` layout.
 /// Benefits:
 /// - 7x less memory read for Motion events
 /// - 8x parallelism with Vertical SIMD
@@ -424,7 +439,7 @@ use crate::{Event, EventKind, MotionData, Result};
 pub struct WorldSoA {
     pub storage: WorldStorage,
     current_hash: WorldHash,
-    /// entity_id -> slot mapping
+    /// `entity_id` -> slot mapping
     id_to_slot: Vec<u32>,
 }
 
@@ -435,7 +450,8 @@ impl Default for WorldSoA {
 }
 
 impl WorldSoA {
-    /// Create new SoA world with seed
+    /// Create new `SoA` world with seed
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         let mut storage = WorldStorage::with_capacity(1024);
         storage.seed = seed;
@@ -447,7 +463,7 @@ impl WorldSoA {
         }
     }
 
-    /// Ensure id_to_slot can hold entity_id
+    /// Ensure `id_to_slot` can hold `entity_id`
     #[inline(always)]
     fn ensure_id_capacity(&mut self, entity_id: u32) {
         let required = entity_id as usize + 1;
@@ -456,7 +472,7 @@ impl WorldSoA {
         }
     }
 
-    /// Get slot for entity_id
+    /// Get slot for `entity_id`
     #[inline(always)]
     fn get_slot(&self, entity_id: u32) -> Option<u32> {
         self.id_to_slot
@@ -465,7 +481,11 @@ impl WorldSoA {
             .filter(|&s| s != u32::MAX && self.storage.is_alive(s))
     }
 
-    /// Apply event to SoA world
+    /// Apply event to `SoA` world.
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible but returns `Result` for future error handling.
     #[inline(always)]
     pub fn apply(&mut self, event: &Event) -> Result<()> {
         match &event.kind {
@@ -544,6 +564,7 @@ impl WorldSoA {
 
     /// Get world hash (O(1))
     #[inline(always)]
+    #[must_use]
     pub fn hash(&self) -> WorldHash {
         self.current_hash
     }
@@ -560,12 +581,14 @@ impl WorldSoA {
 
     /// Entity count
     #[inline(always)]
+    #[must_use]
     pub fn entity_count(&self) -> usize {
         self.storage.len()
     }
 
     /// Current frame
     #[inline(always)]
+    #[must_use]
     pub fn frame(&self) -> u64 {
         self.storage.frame
     }
@@ -632,7 +655,7 @@ impl WorldSoA {
     /// Apply motions with sort-based optimization (Demon Mode)
     ///
     /// Strategy:
-    /// 1. Sort motions by entity_id (→ sequential memory access)
+    /// 1. Sort motions by `entity_id` (→ sequential memory access)
     /// 2. Detect contiguous slot ranges for Vertical SIMD
     /// 3. Coalesce multiple motions to the same entity
     /// 4. Apply with maximum cache efficiency
@@ -778,7 +801,7 @@ impl WorldSoA {
 
     /// Apply motions with pre-sorted input (skip sorting step)
     ///
-    /// Use when motions are already sorted by entity_id
+    /// Use when motions are already sorted by `entity_id`
     #[inline(always)]
     pub fn apply_motions_presorted(&mut self, motions: &[MotionData]) {
         // Resolve entity_id -> slot mapping (already sorted)
@@ -814,7 +837,7 @@ impl WorldSoA {
     /// Apply motions with ID-sort only (Gemini's Demon Mode)
     ///
     /// Simpler strategy:
-    /// 1. Sort by entity_id only (no slot re-sort)
+    /// 1. Sort by `entity_id` only (no slot re-sort)
     /// 2. No coalescing
     /// 3. Detect contiguous slots for SIMD
     ///

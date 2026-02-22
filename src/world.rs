@@ -19,20 +19,20 @@
 //! World state - deterministic simulation with O(1) incremental hashing
 //!
 //! v0.4 "Ultra Mode" optimizations:
-//! 1. HashMap eliminated: Direct Vec indexing for entity lookup
+//! 1. `HashMap` eliminated: Direct Vec indexing for entity lookup
 //! 2. Entity is Copy: Fixed-size properties, no heap allocation
 //! 3. SIMD: Vec3 operations use wide crate
 //! 4. Raw integer mixing: No Hasher trait overhead
 //! 5. Branchless property hash: Zero conditional branches
-//! 6. Bounds check elimination: unsafe get_unchecked
+//! 6. Bounds check elimination: unsafe `get_unchecked`
 
 use crate::arena::{Arena, Handle};
 use crate::fixed_point::{Vec3Fixed, Vec3Simd};
 use crate::{Event, EventKind, Result};
 use serde::{Deserialize, Serialize};
 
-/// WyHash mixing constant (proven avalanche properties)
-const WYHASH_K: u64 = 0x517cc1b727220a95;
+/// `WyHash` mixing constant (proven avalanche properties)
+const WYHASH_K: u64 = 0x517c_c1b7_2722_0a95;
 
 /// World state hash (64-bit XOR rolling hash)
 #[derive(
@@ -52,11 +52,13 @@ pub struct WorldHash(pub u64);
 
 impl WorldHash {
     #[inline(always)]
+    #[must_use]
     pub const fn zero() -> Self {
         Self(0)
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn xor(self, other: u64) -> Self {
         Self(self.0 ^ other)
     }
@@ -69,7 +71,7 @@ impl WorldHash {
 /// Maximum number of properties per entity (compile-time constant)
 pub const MAX_PROPS: usize = 16;
 
-/// Fixed-size property storage (no HashMap, no allocation)
+/// Fixed-size property storage (no `HashMap`, no allocation)
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct EntityProps {
     /// Property values indexed by property ID (0-15)
@@ -94,6 +96,7 @@ impl EntityProps {
 
     /// Get a property value (None if not set)
     #[inline(always)]
+    #[must_use]
     pub fn get(&self, prop: u16) -> Option<i32> {
         let idx = (prop as usize) & (MAX_PROPS - 1);
         if self.active & (1 << idx) != 0 {
@@ -106,6 +109,7 @@ impl EntityProps {
     /// Hash all active properties (truly branchless)
     /// Uses arithmetic masking instead of conditional branches
     #[inline(always)]
+    #[must_use]
     pub fn hash_bits(&self) -> u64 {
         let mut h = self.active as u64;
 
@@ -139,6 +143,7 @@ impl Entity {
     /// Uses WyHash-style mixing: pure register operations, zero memory access,
     /// no state machine, single-pass avalanche.
     #[inline(always)]
+    #[must_use]
     pub fn compute_hash(&self) -> u64 {
         // Start with entity ID
         let mut h = self.id as u64;
@@ -171,8 +176,8 @@ impl Entity {
 pub struct WorldState {
     /// All entities in arena (cache-friendly)
     pub entities: Arena<Entity>,
-    /// Direct ID -> Handle mapping (Vec, not HashMap!)
-    /// Index = entity_id, Value = Handle (or Handle::INVALID)
+    /// Direct ID -> Handle mapping (Vec, not `HashMap`!)
+    /// Index = `entity_id`, Value = Handle (or `Handle::INVALID`)
     pub id_map: Vec<Handle>,
     /// Current simulation frame
     pub frame: u64,
@@ -181,7 +186,7 @@ pub struct WorldState {
 }
 
 impl WorldState {
-    /// Ensure id_map can hold the given entity_id
+    /// Ensure `id_map` can hold the given `entity_id`
     #[inline]
     fn ensure_capacity(&mut self, entity_id: u32) {
         let required = entity_id as usize + 1;
@@ -190,23 +195,24 @@ impl WorldState {
         }
     }
 
-    /// Get handle for entity_id (O(1) array access)
+    /// Get handle for `entity_id` (O(1) array access)
     #[inline(always)]
+    #[must_use]
     pub fn get_handle(&self, entity_id: u32) -> Option<Handle> {
         self.id_map
             .get(entity_id as usize)
             .copied()
-            .filter(|h| h.is_valid())
+            .filter(super::arena::Handle::is_valid)
     }
 
-    /// Set handle for entity_id
+    /// Set handle for `entity_id`
     #[inline(always)]
     pub fn set_handle(&mut self, entity_id: u32, handle: Handle) {
         self.ensure_capacity(entity_id);
         self.id_map[entity_id as usize] = handle;
     }
 
-    /// Remove handle for entity_id
+    /// Remove handle for `entity_id`
     #[inline(always)]
     pub fn remove_handle(&mut self, entity_id: u32) -> Option<Handle> {
         if let Some(slot) = self.id_map.get_mut(entity_id as usize) {
@@ -234,6 +240,7 @@ pub struct World {
 
 impl World {
     /// Create a new world with a seed
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         Self {
             state: WorldState {
@@ -244,8 +251,12 @@ impl World {
         }
     }
 
-    /// Apply an event to the world (deterministic, O(1) hash update)
-    /// Safe version with bounds checking
+    /// Apply an event to the world (deterministic, O(1) hash update).
+    /// Safe version with bounds checking.
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible but returns `Result` for future error handling.
     #[inline]
     pub fn apply(&mut self, event: &Event) -> Result<()> {
         // SAFETY: We use the safe path by default
@@ -297,17 +308,13 @@ impl World {
                 }
             }
 
-            EventKind::Input { .. } => {
-                // Input events affect game logic, not world state directly
+            EventKind::Input { .. } | EventKind::Custom { .. } => {
+                // Input/Custom events affect game logic, not world state directly
             }
 
             EventKind::Tick { frame } => {
                 self.state.frame = *frame;
                 self.tick_simulation();
-            }
-
-            EventKind::Custom { .. } => {
-                // Custom events handled by user code
             }
         }
 
@@ -357,6 +364,7 @@ impl World {
 
     /// Deterministic simulation tick
     #[inline]
+    #[allow(clippy::unused_self)]
     fn tick_simulation(&mut self) {
         // Physics, AI, etc. would go here
         // All operations must use fixed-point for determinism
@@ -364,6 +372,7 @@ impl World {
 
     /// Get world hash in O(1)
     #[inline(always)]
+    #[must_use]
     pub fn hash(&self) -> WorldHash {
         self.current_hash
     }
@@ -380,24 +389,28 @@ impl World {
 
     /// Get current state
     #[inline(always)]
+    #[must_use]
     pub fn state(&self) -> &WorldState {
         &self.state
     }
 
     /// Get entity count
     #[inline(always)]
+    #[must_use]
     pub fn entity_count(&self) -> usize {
         self.state.entities.len()
     }
 
     /// Get current frame
     #[inline(always)]
+    #[must_use]
     pub fn frame(&self) -> u64 {
         self.state.frame
     }
 
     /// Get entity by ID (O(1) lookup)
     #[inline(always)]
+    #[must_use]
     pub fn get_entity(&self, id: u32) -> Option<&Entity> {
         self.state
             .get_handle(id)
@@ -477,10 +490,14 @@ impl World {
         }
     }
 
-    /// Apply event stream using batch processing (Run-Length optimization)
+    /// Apply event stream using batch processing (Run-Length optimization).
     ///
     /// Groups consecutive events of the same type and processes them together,
     /// maximizing instruction cache utilization and minimizing branch misprediction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any individual event fails to apply.
     pub fn apply_stream_batched(&mut self, stream: &crate::EventStream) -> Result<()> {
         let meta = stream.metadata();
         if meta.is_empty() {

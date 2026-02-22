@@ -18,7 +18,7 @@
 
 //! Generational Arena - cache-friendly entity storage
 //!
-//! HashMap has poor cache locality. Arena allocates entities
+//! `HashMap` has poor cache locality. Arena allocates entities
 //! in contiguous memory for maximum CPU cache efficiency.
 
 use serde::{Deserialize, Serialize};
@@ -40,11 +40,13 @@ impl Handle {
     };
 
     #[inline]
+    #[must_use]
     pub const fn new(index: u32, generation: Generation) -> Self {
         Self { index, generation }
     }
 
     #[inline]
+    #[must_use]
     pub const fn is_valid(&self) -> bool {
         self.index != u32::MAX
     }
@@ -63,6 +65,7 @@ enum Slot<T> {
 }
 
 /// Generational arena for cache-friendly storage
+#[allow(clippy::unsafe_derive_deserialize)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Arena<T> {
     slots: Vec<Slot<T>>,
@@ -78,6 +81,7 @@ impl<T> Default for Arena<T> {
 
 impl<T> Arena<T> {
     /// Create empty arena
+    #[must_use]
     pub fn new() -> Self {
         Self {
             slots: Vec::new(),
@@ -87,6 +91,7 @@ impl<T> Arena<T> {
     }
 
     /// Create with capacity
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             slots: Vec::with_capacity(capacity),
@@ -97,12 +102,14 @@ impl<T> Arena<T> {
 
     /// Number of active elements
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if empty
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -111,7 +118,15 @@ impl<T> Arena<T> {
     pub fn insert(&mut self, data: T) -> Handle {
         self.len += 1;
 
-        if self.free_head != u32::MAX {
+        if self.free_head == u32::MAX {
+            // Allocate new slot
+            let index = self.slots.len();
+            self.slots.push(Slot::Occupied {
+                data,
+                generation: 0,
+            });
+            Handle::new(index as u32, 0)
+        } else {
             // Reuse free slot
             let index = self.free_head as usize;
             match &self.slots[index] {
@@ -127,16 +142,8 @@ impl<T> Arena<T> {
                     };
                     Handle::new(index as u32, gen)
                 }
-                _ => unreachable!(),
+                Slot::Occupied { .. } => unreachable!(),
             }
-        } else {
-            // Allocate new slot
-            let index = self.slots.len();
-            self.slots.push(Slot::Occupied {
-                data,
-                generation: 0,
-            });
-            Handle::new(index as u32, 0)
         }
     }
 
@@ -162,7 +169,7 @@ impl<T> Arena<T> {
 
                 match old {
                     Slot::Occupied { data, .. } => Some(data),
-                    _ => unreachable!(),
+                    Slot::Free { .. } => unreachable!(),
                 }
             }
             _ => None,
@@ -171,6 +178,7 @@ impl<T> Arena<T> {
 
     /// Get reference by handle
     #[inline]
+    #[must_use]
     pub fn get(&self, handle: Handle) -> Option<&T> {
         let index = handle.index as usize;
         if index >= self.slots.len() {
@@ -202,11 +210,12 @@ impl<T> Arena<T> {
     /// # Safety
     /// Caller must ensure handle is valid and points to an occupied slot
     #[inline(always)]
+    #[must_use]
     pub unsafe fn get_unchecked(&self, handle: Handle) -> &T {
         let slot = self.slots.get_unchecked(handle.index as usize);
         match slot {
             Slot::Occupied { data, .. } => data,
-            _ => std::hint::unreachable_unchecked(),
+            Slot::Free { .. } => std::hint::unreachable_unchecked(),
         }
     }
 
@@ -219,7 +228,7 @@ impl<T> Arena<T> {
         let slot = self.slots.get_unchecked_mut(handle.index as usize);
         match slot {
             Slot::Occupied { data, .. } => data,
-            _ => std::hint::unreachable_unchecked(),
+            Slot::Free { .. } => std::hint::unreachable_unchecked(),
         }
     }
 
@@ -232,7 +241,7 @@ impl<T> Arena<T> {
                 Slot::Occupied { data, generation } => {
                     Some((Handle::new(i as u32, *generation), data))
                 }
-                _ => None,
+                Slot::Free { .. } => None,
             })
     }
 
@@ -245,7 +254,7 @@ impl<T> Arena<T> {
                 Slot::Occupied { data, generation } => {
                     Some((Handle::new(i as u32, *generation), data))
                 }
-                _ => None,
+                Slot::Free { .. } => None,
             })
     }
 }

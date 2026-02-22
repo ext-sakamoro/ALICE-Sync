@@ -69,6 +69,7 @@ pub struct Node {
 
 impl Node {
     /// Create a new node
+    #[must_use]
     pub fn new(id: NodeId) -> Self {
         Self {
             id,
@@ -80,6 +81,7 @@ impl Node {
     }
 
     /// Create a node with a specific world seed
+    #[must_use]
     pub fn with_seed(id: NodeId, seed: u64) -> Self {
         Self {
             id,
@@ -92,17 +94,27 @@ impl Node {
 
     /// Get current world hash (O(1))
     #[inline(always)]
+    #[must_use]
     pub fn world_hash(&self) -> WorldHash {
         self.world.hash()
     }
 
     /// Get current state
     #[inline(always)]
+    #[must_use]
     pub fn state(&self) -> NodeState {
         self.state
     }
 
-    /// Generate a local event and apply it
+    /// Generate a local event and apply it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event fails to apply to the world state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the event stream is empty after pushing (should never happen).
     pub fn emit(&mut self, event: Event) -> Result<()> {
         self.events.push(event, self.id.0);
         let event_with_id = self.events.all().last().unwrap();
@@ -110,7 +122,15 @@ impl Node {
         Ok(())
     }
 
-    /// Apply an event (from local or remote)
+    /// Apply an event (from local or remote).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event fails to apply to the world state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the event stream is empty after pushing (should never happen).
     pub fn apply_event(&mut self, event: &Event) -> Result<()> {
         if event.seq.0 == 0 {
             let owned = event.clone();
@@ -135,7 +155,11 @@ impl Node {
         );
     }
 
-    /// Get events since a peer's last known sequence (ZERO-COPY: returns slice)
+    /// Get events since a peer's last known sequence (ZERO-COPY: returns slice).
+    ///
+    /// # Errors
+    ///
+    /// Returns `SyncError::UnknownNode` if the peer is not registered.
     #[inline]
     pub fn events_for_peer(&self, peer_id: NodeId) -> Result<&[Event]> {
         let peer = self
@@ -146,7 +170,12 @@ impl Node {
         Ok(self.events.since(seq))
     }
 
-    /// Update peer's sync state
+    /// Update peer's sync state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SyncError::UnknownNode` if the peer is not registered,
+    /// or `SyncError::StateDivergence` if world hashes don't match.
     pub fn update_peer(
         &mut self,
         peer_id: NodeId,
@@ -180,17 +209,20 @@ impl Node {
 
     /// Get world reference
     #[inline(always)]
+    #[must_use]
     pub fn world(&self) -> &World {
         &self.world
     }
 
     /// Get event stream reference
     #[inline(always)]
+    #[must_use]
     pub fn events(&self) -> &EventStream {
         &self.events
     }
 
     /// Statistics
+    #[must_use]
     pub fn stats(&self) -> NodeStats {
         NodeStats {
             events_count: self.events.len(),

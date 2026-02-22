@@ -13,7 +13,7 @@ use alice_cache::AliceCache;
 /// learns entity access sequences (e.g., entity 1 → entity 2 → entity 5)
 /// and prefetches predicted-next entities before they're needed.
 pub struct SyncCache {
-    /// Entity state cache (entity_id → serialized state).
+    /// Entity state cache (`entity_id` → serialized state).
     cache: AliceCache<u32, CachedEntity>,
     /// Last accessed entity (for oracle training).
     last_accessed: Option<u32>,
@@ -30,7 +30,7 @@ pub struct CachedEntity {
     pub id: u32,
     /// Entity kind.
     pub kind: u16,
-    /// Position as fixed-point triple (from Vec3Fixed).
+    /// Position as fixed-point triple (from `Vec3Fixed`).
     pub position: [i32; 3],
     /// World hash at cache time (staleness detection).
     pub snapshot_hash: u64,
@@ -38,6 +38,7 @@ pub struct CachedEntity {
 
 impl SyncCache {
     /// Create a new sync cache with the given capacity (max entities).
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
             cache: AliceCache::new(capacity),

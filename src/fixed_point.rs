@@ -44,51 +44,61 @@ impl Fixed {
     const RCP_SCALE: f32 = 1.0 / (1u32 << 16) as f32;
 
     #[inline(always)]
+    #[must_use]
     pub const fn from_int(n: i32) -> Self {
         Self(n << 16)
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn from_bits(bits: i32) -> Self {
         Self(bits)
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn to_bits(self) -> i32 {
         self.0
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn from_f32(f: f32) -> Self {
         Self((f * Self::SCALE as f32) as i32)
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn to_f32(self) -> f32 {
         self.0 as f32 * Self::RCP_SCALE
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn from_i16(n: i16) -> Self {
         Self((n as i32) << 6)
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn to_i16(self) -> i16 {
         (self.0 >> 6) as i16
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn saturating_add(self, rhs: Self) -> Self {
         Self(self.0.saturating_add(rhs.0))
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn saturating_sub(self, rhs: Self) -> Self {
         Self(self.0.saturating_sub(rhs.0))
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn saturating_mul(self, rhs: Self) -> Self {
         let result = (self.0 as i64 * rhs.0 as i64) >> 16;
         Self(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
@@ -143,11 +153,13 @@ impl Vec3Fixed {
     };
 
     #[inline(always)]
+    #[must_use]
     pub const fn new(x: Fixed, y: Fixed, z: Fixed) -> Self {
         Self { x, y, z }
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn from_f32(x: f32, y: f32, z: f32) -> Self {
         Self {
             x: Fixed::from_f32(x),
@@ -157,16 +169,19 @@ impl Vec3Fixed {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn to_f32_array(self) -> [f32; 3] {
         [self.x.to_f32(), self.y.to_f32(), self.z.to_f32()]
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn to_i16_array(self) -> [i16; 3] {
         [self.x.to_i16(), self.y.to_i16(), self.z.to_i16()]
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn from_i16_array(arr: [i16; 3]) -> Self {
         Self {
             x: Fixed::from_i16(arr[0]),
@@ -177,12 +192,14 @@ impl Vec3Fixed {
 
     /// Convert to SIMD vector for batch operations
     #[inline(always)]
+    #[must_use]
     pub fn to_simd(self) -> Vec3Simd {
         Vec3Simd::from_vec3(self)
     }
 
     /// Hash for XOR rolling hash (optimized: no branching)
     #[inline(always)]
+    #[must_use]
     pub fn hash_bits(self) -> u64 {
         let x = self.x.0 as u64;
         let y = self.y.0 as u64;
@@ -229,14 +246,16 @@ impl Vec3Simd {
 
     /// Create from individual components
     #[inline(always)]
+    #[must_use]
     pub fn new(x: i32, y: i32, z: i32) -> Self {
         Self {
             data: i32x4::new([x, y, z, 0]),
         }
     }
 
-    /// Create from Vec3Fixed
+    /// Create from `Vec3Fixed`
     #[inline(always)]
+    #[must_use]
     pub fn from_vec3(v: Vec3Fixed) -> Self {
         Self {
             data: i32x4::new([v.x.0, v.y.0, v.z.0, 0]),
@@ -245,6 +264,7 @@ impl Vec3Simd {
 
     /// Create from i16 array (network format)
     #[inline(always)]
+    #[must_use]
     pub fn from_i16_array(arr: [i16; 3]) -> Self {
         Self {
             data: i32x4::new([
@@ -256,8 +276,9 @@ impl Vec3Simd {
         }
     }
 
-    /// Convert to Vec3Fixed
+    /// Convert to `Vec3Fixed`
     #[inline(always)]
+    #[must_use]
     pub fn to_vec3(self) -> Vec3Fixed {
         let arr = self.data.to_array();
         Vec3Fixed {
@@ -270,6 +291,7 @@ impl Vec3Simd {
     /// SIMD add (single instruction for x+y+z)
     #[inline(always)]
     #[allow(clippy::should_implement_trait)]
+    #[must_use]
     pub fn add(self, rhs: Self) -> Self {
         Self {
             data: self.data + rhs.data,
@@ -279,13 +301,14 @@ impl Vec3Simd {
     /// SIMD sub
     #[inline(always)]
     #[allow(clippy::should_implement_trait)]
+    #[must_use]
     pub fn sub(self, rhs: Self) -> Self {
         Self {
             data: self.data - rhs.data,
         }
     }
 
-    /// Add and store back to Vec3Fixed (common pattern)
+    /// Add and store back to `Vec3Fixed` (common pattern)
     #[inline(always)]
     pub fn add_to_vec3(self, target: &mut Vec3Fixed) {
         let current = Vec3Simd::from_vec3(*target);
@@ -294,6 +317,7 @@ impl Vec3Simd {
 
     /// Hash for XOR rolling (SIMD horizontal XOR)
     #[inline(always)]
+    #[must_use]
     pub fn hash_bits(self) -> u64 {
         let arr = self.data.to_array();
         let x = arr[0] as u64;

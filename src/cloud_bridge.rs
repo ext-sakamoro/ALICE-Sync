@@ -38,11 +38,13 @@ pub struct SpatialRegion {
 }
 
 impl SpatialRegion {
+    #[must_use]
     pub fn new(min: [f32; 3], max: [f32; 3]) -> Self {
         Self { min, max }
     }
 
     /// Check if two regions overlap
+    #[must_use]
     pub fn overlaps(&self, other: &SpatialRegion) -> bool {
         self.min[0] <= other.max[0]
             && self.max[0] >= other.min[0]
@@ -53,6 +55,7 @@ impl SpatialRegion {
     }
 
     /// Check if a point is inside the region
+    #[must_use]
     pub fn contains_point(&self, x: f32, y: f32, z: f32) -> bool {
         x >= self.min[0]
             && x <= self.max[0]
@@ -86,6 +89,7 @@ impl Default for CloudSyncHub {
 
 impl CloudSyncHub {
     /// Create a new cloud sync hub
+    #[must_use]
     pub fn new() -> Self {
         Self {
             devices: HashMap::new(),
@@ -155,8 +159,7 @@ impl CloudSyncHub {
                 && info
                     .region_of_interest
                     .as_ref()
-                    .map(|r| r.overlaps(&update_region))
-                    .unwrap_or(true)
+                    .is_none_or(|r| r.overlaps(&update_region))
             {
                 recipients.push(id);
             }
@@ -164,7 +167,12 @@ impl CloudSyncHub {
         recipients
     }
 
-    /// Verify spatial consistency between cloud and device
+    /// Verify spatial consistency between cloud and device.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SyncError::StateDivergence` if the device's reported hash
+    /// does not match the cloud's last recorded hash.
     pub fn verify_consistency(
         &self,
         device_id: u64,
@@ -182,11 +190,13 @@ impl CloudSyncHub {
     }
 
     /// Get all connected devices
+    #[must_use]
     pub fn connected_devices(&self) -> Vec<&DeviceInfo> {
         self.devices.values().filter(|d| d.connected).collect()
     }
 
     /// Get device info by ID
+    #[must_use]
     pub fn device(&self, device_id: u64) -> Option<&DeviceInfo> {
         self.devices.get(&device_id)
     }
@@ -199,16 +209,19 @@ impl CloudSyncHub {
     }
 
     /// Current global scene version
+    #[must_use]
     pub fn global_scene_version(&self) -> u32 {
         self.global_scene_version
     }
 
     /// Current world hash
+    #[must_use]
     pub fn world_hash(&self) -> WorldHash {
         self.world_hash
     }
 
     /// Total registered device count
+    #[must_use]
     pub fn device_count(&self) -> usize {
         self.devices.len()
     }

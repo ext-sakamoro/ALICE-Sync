@@ -18,7 +18,7 @@
 
 //! Event system - the core of ALICE-Sync
 //!
-//! v0.4 "Ultra Mode": SoA (Structure of Arrays) event storage
+//! v0.4 "Ultra Mode": `SoA` (Structure of Arrays) event storage
 //! - Events grouped by type for cache-friendly batch processing
 //! - Eliminates enum tag overhead in hot loops
 //! - SIMD-friendly memory layout
@@ -41,11 +41,11 @@ pub struct SeqNum(pub u64);
 /// Uses i16 for network-efficient coordinates (6 bytes vs 12 bytes for f32x3)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
 pub enum EventKind {
-    /// Entity motion: entity_id + delta vector
+    /// Entity motion: `entity_id` + delta vector
     /// Network: 4 + 6 = 10 bytes (was 16 with f32)
     Motion { entity: u32, delta: [i16; 3] },
 
-    /// Entity spawn: entity_id + type + position
+    /// Entity spawn: `entity_id` + type + position
     /// Network: 4 + 2 + 6 = 12 bytes (was 22 with f32)
     Spawn {
         entity: u32,
@@ -53,15 +53,15 @@ pub enum EventKind {
         pos: [i16; 3],
     },
 
-    /// Entity despawn: entity_id
+    /// Entity despawn: `entity_id`
     /// Network: 4 bytes
     Despawn { entity: u32 },
 
-    /// Property change: entity_id + property_id + value
+    /// Property change: `entity_id` + `property_id` + value
     /// Network: 4 + 2 + 4 = 10 bytes
     Property { entity: u32, prop: u16, value: i32 },
 
-    /// Input event: player_id + input_code
+    /// Input event: `player_id` + `input_code`
     /// Network: 2 + 4 = 6 bytes
     Input { player: u16, code: u32 },
 
@@ -75,20 +75,23 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    /// Convert i16 delta to Vec3Fixed
+    /// Convert i16 delta to `Vec3Fixed`
     #[inline]
+    #[must_use]
     pub fn delta_to_fixed(delta: [i16; 3]) -> Vec3Fixed {
         Vec3Fixed::from_i16_array(delta)
     }
 
-    /// Convert Vec3Fixed to i16 delta
+    /// Convert `Vec3Fixed` to i16 delta
     #[inline]
+    #[must_use]
     pub fn fixed_to_delta(v: Vec3Fixed) -> [i16; 3] {
         v.to_i16_array()
     }
 
-    /// Create motion event from Vec3Fixed
+    /// Create motion event from `Vec3Fixed`
     #[inline]
+    #[must_use]
     pub fn motion(entity: u32, delta: Vec3Fixed) -> Self {
         Self::Motion {
             entity,
@@ -96,8 +99,9 @@ impl EventKind {
         }
     }
 
-    /// Create spawn event from Vec3Fixed
+    /// Create spawn event from `Vec3Fixed`
     #[inline]
+    #[must_use]
     pub fn spawn(entity: u32, kind: u16, pos: Vec3Fixed) -> Self {
         Self::Spawn {
             entity,
@@ -124,6 +128,7 @@ pub struct Event {
 
 impl Event {
     /// Create a new event (ID and seq assigned later)
+    #[must_use]
     pub fn new(kind: EventKind) -> Self {
         Self {
             id: EventId(0),
@@ -135,35 +140,39 @@ impl Event {
     }
 
     /// Serialize to bytes using bincode (for compatibility)
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_default()
     }
 
     /// Serialize to compact bytes using bitcode
+    #[must_use]
     pub fn to_compact_bytes(&self) -> Vec<u8> {
         bitcode::encode(self)
     }
 
     /// Deserialize from bincode bytes
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::deserialize(bytes).ok()
     }
 
     /// Deserialize from bitcode bytes
+    #[must_use]
     pub fn from_compact_bytes(bytes: &[u8]) -> Option<Self> {
         bitcode::decode(bytes).ok()
     }
 
     /// Get approximate size in bytes (compact format)
+    #[must_use]
     pub fn size_bytes(&self) -> usize {
         // Header: id(8) + seq(8) + origin(8) + timestamp(8) = 32
         // But with varint encoding, typically 8-16 bytes
         let header = 12; // Estimated compressed header
         let payload = match &self.kind {
-            EventKind::Motion { .. } => 10,
             EventKind::Spawn { .. } => 12,
             EventKind::Despawn { .. } => 4,
-            EventKind::Property { .. } => 10,
+            EventKind::Motion { .. } | EventKind::Property { .. } => 10,
             EventKind::Input { .. } => 6,
             EventKind::Tick { .. } => 8,
             EventKind::Custom { .. } => 18,
@@ -262,7 +271,7 @@ pub struct EventMeta {
 // SoA EventStream - Cache-friendly batch processing
 // ============================================================================
 
-/// Stream of events with SoA layout for maximum cache efficiency
+/// Stream of events with `SoA` layout for maximum cache efficiency
 ///
 /// Events are stored by type, enabling:
 /// - SIMD-friendly batch processing
@@ -291,6 +300,7 @@ pub struct EventStream {
 
 impl EventStream {
     /// Create a new event stream
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -381,60 +391,71 @@ impl EventStream {
     }
 
     /// Get events since a sequence number
+    #[must_use]
     pub fn since(&self, seq: SeqNum) -> &[Event] {
         let start = self.events.partition_point(|e| e.seq < seq);
         &self.events[start..]
     }
 
     /// Get all events
+    #[must_use]
     pub fn all(&self) -> &[Event] {
         &self.events
     }
 
     /// Get all motion events (for batch SIMD processing)
     #[inline(always)]
+    #[must_use]
     pub fn all_motions(&self) -> &[MotionData] {
         &self.motions
     }
 
     /// Get all spawn events
     #[inline(always)]
+    #[must_use]
     pub fn all_spawns(&self) -> &[SpawnData] {
         &self.spawns
     }
 
     /// Get event metadata for ordered replay
     #[inline(always)]
+    #[must_use]
     pub fn metadata(&self) -> &[EventMeta] {
         &self.meta
     }
 
     /// Current sequence number
+    #[must_use]
     pub fn current_seq(&self) -> SeqNum {
         SeqNum(self.next_seq.saturating_sub(1))
     }
 
     /// Total events count
+    #[must_use]
     pub fn len(&self) -> usize {
         self.events.len()
     }
 
     /// Check if empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
 
     /// Total bytes if serialized (compact)
+    #[must_use]
     pub fn total_bytes(&self) -> usize {
-        self.events.iter().map(|e| e.size_bytes()).sum()
+        self.events.iter().map(Event::size_bytes).sum()
     }
 
     /// Serialize all events to compact format
+    #[must_use]
     pub fn to_compact_bytes(&self) -> Vec<u8> {
         bitcode::encode(&self.events)
     }
 
-    /// Get SoA statistics
+    /// Get `SoA` statistics
+    #[must_use]
     pub fn soa_stats(&self) -> SoAStats {
         SoAStats {
             motions: self.motions.len(),
@@ -448,7 +469,7 @@ impl EventStream {
     }
 }
 
-/// SoA storage statistics
+/// `SoA` storage statistics
 #[derive(Debug, Clone, Copy)]
 pub struct SoAStats {
     pub motions: usize,

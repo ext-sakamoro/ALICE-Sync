@@ -61,6 +61,7 @@ pub struct InputFrame {
 impl InputFrame {
     /// Create a new empty input for the given frame and player
     #[inline]
+    #[must_use]
     pub fn new(frame: u64, player_id: u8) -> Self {
         Self {
             frame,
@@ -73,6 +74,7 @@ impl InputFrame {
 
     /// Set movement
     #[inline]
+    #[must_use]
     pub fn with_movement(mut self, x: i16, y: i16, z: i16) -> Self {
         self.movement = [x, y, z];
         self
@@ -80,6 +82,7 @@ impl InputFrame {
 
     /// Set actions
     #[inline]
+    #[must_use]
     pub fn with_actions(mut self, actions: u32) -> Self {
         self.actions = actions;
         self
@@ -87,17 +90,20 @@ impl InputFrame {
 
     /// Set aim direction
     #[inline]
+    #[must_use]
     pub fn with_aim(mut self, x: i16, y: i16, z: i16) -> Self {
         self.aim = [x, y, z];
         self
     }
 
     /// Serialize with bitcode (compact binary)
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         bitcode::encode(self)
     }
 
     /// Deserialize from bitcode
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         bitcode::decode(data).ok()
     }
@@ -127,6 +133,7 @@ pub struct InputBuffer {
 
 impl InputBuffer {
     /// Create a new input buffer for the given player
+    #[must_use]
     pub fn new(player_id: u8) -> Self {
         Self {
             player_id,
@@ -165,6 +172,7 @@ impl InputBuffer {
     /// Get input for a specific frame.
     ///
     /// Returns `None` if the frame is not in the buffer.
+    #[must_use]
     pub fn get(&self, frame: u64) -> Option<&InputFrame> {
         if frame < self.base_frame {
             return None;
@@ -205,6 +213,7 @@ impl InputBuffer {
 
     /// Check if input is confirmed for a specific frame.
     #[inline]
+    #[must_use]
     pub fn is_confirmed(&self, frame: u64) -> bool {
         frame <= self.confirmed_frame
     }
@@ -310,7 +319,8 @@ impl LockstepSession {
     }
 
     /// Check if the next frame is ready to advance
-    /// (all players have submitted input for confirmed_frame + 1).
+    /// (all players have submitted input for `confirmed_frame` + 1).
+    #[must_use]
     pub fn ready_to_advance(&self) -> bool {
         let next = self.confirmed_frame + 1;
         self.buffers.iter().all(|b| b.is_confirmed(next))
@@ -319,7 +329,7 @@ impl LockstepSession {
     /// Collect all inputs for the next frame and advance.
     ///
     /// Returns `None` if not all inputs are ready.
-    /// Returns `Some(inputs)` — one per player, sorted by player_id.
+    /// Returns `Some(inputs)` — one per player, sorted by `player_id`.
     pub fn advance(&mut self) -> Option<Vec<InputFrame>> {
         if !self.ready_to_advance() {
             return None;
@@ -346,6 +356,7 @@ impl LockstepSession {
     }
 
     /// Verify a remote checksum.
+    #[must_use]
     pub fn verify_checksum(&self, frame: u64, remote_checksum: u64) -> SyncResult {
         if let Some(&(_, local)) = self.checksums.iter().find(|&&(f, _)| f == frame) {
             if local == remote_checksum {
@@ -365,6 +376,7 @@ impl LockstepSession {
 
     /// Current confirmed frame.
     #[inline]
+    #[must_use]
     pub fn confirmed_frame(&self) -> u64 {
         self.confirmed_frame
     }
@@ -374,12 +386,7 @@ impl LockstepSession {
         for buf in &mut self.buffers {
             buf.trim_before(frame);
         }
-        while self
-            .checksums
-            .front()
-            .map(|&(f, _)| f < frame)
-            .unwrap_or(false)
-        {
+        while self.checksums.front().is_some_and(|&(f, _)| f < frame) {
             self.checksums.pop_front();
         }
     }
@@ -420,7 +427,7 @@ pub struct RollbackSession {
     predicted_frame: u64,
     /// Maximum frames of rollback allowed
     max_rollback: u64,
-    /// State snapshots for rollback: (frame, serialized_state)
+    /// State snapshots for rollback: (frame, `serialized_state`)
     snapshots: VecDeque<(u64, Vec<u8>)>,
     /// Checksum history: (frame, checksum)
     checksums: VecDeque<(u64, u64)>,
@@ -452,6 +459,10 @@ impl RollbackSession {
     ///
     /// Predicts remote players' inputs (repeat last confirmed).
     /// Returns all players' inputs for the frame to simulate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a confirmed input buffer returns `None` for the current frame.
     pub fn add_local_input(&mut self, input: InputFrame) -> Vec<InputFrame> {
         let frame = input.frame;
         self.buffers[self.local_player as usize].add_confirmed(input);
@@ -520,25 +531,16 @@ impl RollbackSession {
 
         // Trim old snapshots beyond rollback window
         let min_frame = self.confirmed_frame.saturating_sub(1);
-        while self
-            .snapshots
-            .front()
-            .map(|&(f, _)| f < min_frame)
-            .unwrap_or(false)
-        {
+        while self.snapshots.front().is_some_and(|&(f, _)| f < min_frame) {
             self.snapshots.pop_front();
         }
-        while self
-            .checksums
-            .front()
-            .map(|&(f, _)| f < min_frame)
-            .unwrap_or(false)
-        {
+        while self.checksums.front().is_some_and(|&(f, _)| f < min_frame) {
             self.checksums.pop_front();
         }
     }
 
     /// Get the snapshot for rollback to a specific frame.
+    #[must_use]
     pub fn get_snapshot(&self, frame: u64) -> Option<&[u8]> {
         self.snapshots
             .iter()
@@ -566,6 +568,7 @@ impl RollbackSession {
     }
 
     /// Verify a remote checksum.
+    #[must_use]
     pub fn verify_checksum(&self, frame: u64, remote_checksum: u64) -> SyncResult {
         if let Some(&(_, local)) = self.checksums.iter().find(|&&(f, _)| f == frame) {
             if local == remote_checksum {
@@ -584,18 +587,21 @@ impl RollbackSession {
 
     /// Current confirmed frame (all players' inputs received).
     #[inline]
+    #[must_use]
     pub fn confirmed_frame(&self) -> u64 {
         self.confirmed_frame
     }
 
     /// Current predicted frame (local simulation is at this frame).
     #[inline]
+    #[must_use]
     pub fn predicted_frame(&self) -> u64 {
         self.predicted_frame
     }
 
     /// Number of frames ahead of confirmation (rollback risk).
     #[inline]
+    #[must_use]
     pub fn frames_ahead(&self) -> u64 {
         self.predicted_frame.saturating_sub(self.confirmed_frame)
     }

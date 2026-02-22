@@ -67,12 +67,12 @@
 //! | Module | Description |
 //! |--------|-------------|
 //! | [`arena`] | Generational arena allocator with O(1) insert/remove |
-//! | [`event`] | Event types, SoA event storage, bitcode serialization |
+//! | [`event`] | Event types, `SoA` event storage, bitcode serialization |
 //! | [`fixed_point`] | Q16.16 fixed-point arithmetic, SIMD `Vec3Simd` |
 //! | [`node`] | P2P node with causal event ordering |
-//! | [`protocol`] | Handshake / Sync / Ack / HashCheck wire protocol |
-//! | [`world`] | AoS entity world with O(1) incremental hashing |
-//! | [`world_soa`] | SoA world with Demon Mode batch processing + 8-wide SIMD |
+//! | [`protocol`] | Handshake / Sync / Ack / `HashCheck` wire protocol |
+//! | [`world`] | `AoS` entity world with O(1) incremental hashing |
+//! | [`world_soa`] | `SoA` world with Demon Mode batch processing + 8-wide SIMD |
 //! | [`input_sync`] | Lockstep and Rollback input synchronization sessions |
 //!
 //! ### Feature-Gated Bridges
@@ -94,8 +94,8 @@
 //! | `std` | Yes | Standard library support |
 //! | `async` | No | Tokio async runtime integration |
 //! | `simd` | No | Explicit SIMD acceleration hints |
-//! | `python` | No | PyO3 + NumPy zero-copy bindings |
-//! | `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, rollback) |
+//! | `python` | No | `PyO3` + `NumPy` zero-copy bindings |
+//! | `physics` | No | ALICE-Physics bridge (`InputFrame` ↔ `FrameInput`, rollback) |
 //! | `telemetry` | No | ALICE-DB time-series sync telemetry |
 //! | `cache` | No | Markov-oracle entity prefetching via ALICE-Cache |
 //! | `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |
@@ -107,8 +107,8 @@
 //! ## Optimization History
 //!
 //! - **v0.6 "Demon Mode"**: Sort-based batching, coalescing, auto-SIMD detection
-//! - **v0.5 "Zen Mode"**: Complete SoA world, vertical 8-wide SIMD, 7x memory reduction
-//! - **v0.4 "Ultra Mode"**: Branchless hashing, SoA event storage
+//! - **v0.5 "Zen Mode"**: Complete `SoA` world, vertical 8-wide SIMD, 7x memory reduction
+//! - **v0.4 "Ultra Mode"**: Branchless hashing, `SoA` event storage
 //! - **v0.3 "God Mode"**: XOR rolling hash, Vec direct indexing, Copy entities
 //! - **v0.2**: Fixed-point determinism, arena allocation, bitcode serialization
 //! - **v0.1**: Core event system, basic world state
@@ -177,11 +177,7 @@ impl std::fmt::Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CausalityViolation { expected, got } => {
-                write!(
-                    f,
-                    "Causality violation: expected seq {}, got {}",
-                    expected, got
-                )
+                write!(f, "Causality violation: expected seq {expected}, got {got}")
             }
             Self::StateDivergence { local, remote } => {
                 write!(
@@ -190,9 +186,9 @@ impl std::fmt::Display for SyncError {
                     local.0, remote.0
                 )
             }
-            Self::UnknownNode(id) => write!(f, "Unknown node: {:?}", id),
-            Self::NetworkError(msg) => write!(f, "Network error: {}", msg),
-            Self::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            Self::UnknownNode(id) => write!(f, "Unknown node: {id:?}"),
+            Self::NetworkError(msg) => write!(f, "Network error: {msg}"),
+            Self::SerializationError(msg) => write!(f, "Serialization error: {msg}"),
         }
     }
 }

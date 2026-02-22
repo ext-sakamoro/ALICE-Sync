@@ -24,6 +24,7 @@ pub struct SyncTelemetry {
 
 impl SyncTelemetry {
     /// Create a new telemetry collector.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             throughput: DDSketch256::new(0.01),
@@ -62,41 +63,49 @@ impl SyncTelemetry {
     }
 
     /// Estimated p50 throughput.
+    #[must_use]
     pub fn throughput_p50(&self) -> f64 {
         self.throughput.quantile(0.5)
     }
 
     /// Estimated p99 throughput.
+    #[must_use]
     pub fn throughput_p99(&self) -> f64 {
         self.throughput.quantile(0.99)
     }
 
     /// Estimated p50 latency.
+    #[must_use]
     pub fn latency_p50(&self) -> f64 {
         self.latency.quantile(0.5)
     }
 
     /// Estimated p99 latency.
+    #[must_use]
     pub fn latency_p99(&self) -> f64 {
         self.latency.quantile(0.99)
     }
 
     /// Estimated unique peer count.
+    #[must_use]
     pub fn unique_peers(&self) -> f64 {
         self.peers.cardinality()
     }
 
     /// Estimated frequency of an event type.
+    #[must_use]
     pub fn event_type_count(&self, event_type: &[u8]) -> u64 {
         self.event_freq.estimate_bytes(event_type)
     }
 
     /// Total divergence count.
+    #[must_use]
     pub fn divergences(&self) -> u64 {
         self.divergence_count
     }
 
     /// Total events processed.
+    #[must_use]
     pub fn total_events(&self) -> u64 {
         self.total_events
     }

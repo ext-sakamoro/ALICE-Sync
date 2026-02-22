@@ -53,6 +53,7 @@ use alice_physics::{
 /// The conversion is: `i16 → i64 → Fix128::from_int()` which places the
 /// i16 value in the integer part of the fixed-point number.
 #[inline]
+#[must_use]
 pub fn sync_input_to_physics(input: &InputFrame) -> FrameInput {
     FrameInput {
         player_id: input.player_id,
@@ -75,6 +76,7 @@ pub fn sync_input_to_physics(input: &InputFrame) -> FrameInput {
 /// Truncates Fix128 to i16 by taking the integer part (`hi` field),
 /// matching the serialization format used by `FrameInput::to_bytes()`.
 #[inline]
+#[must_use]
 pub fn physics_input_to_sync(input: &FrameInput, frame: u64) -> InputFrame {
     InputFrame {
         frame,
@@ -107,12 +109,14 @@ pub fn sync_inputs_to_physics(inputs: &[InputFrame]) -> Vec<FrameInput> {
 ///
 /// Both are XOR rolling hashes stored as `u64` — direct inner value mapping.
 #[inline]
+#[must_use]
 pub fn physics_checksum_to_world_hash(checksum: SimulationChecksum) -> WorldHash {
     WorldHash(checksum.0)
 }
 
 /// Convert a Sync [`WorldHash`] to a Physics [`SimulationChecksum`].
 #[inline]
+#[must_use]
 pub fn world_hash_to_physics_checksum(hash: WorldHash) -> SimulationChecksum {
     SimulationChecksum(hash.0)
 }
@@ -153,6 +157,7 @@ pub struct PhysicsRollbackSession {
 
 impl PhysicsRollbackSession {
     /// Create a new physics rollback session.
+    #[must_use]
     pub fn new(
         player_count: u8,
         local_player: u8,
@@ -286,24 +291,28 @@ impl PhysicsRollbackSession {
     }
 
     /// Verify a remote checksum against local physics state.
+    #[must_use]
     pub fn verify_checksum(&self, frame: u64, remote_checksum: u64) -> SyncResult {
         self.sync.verify_checksum(frame, remote_checksum)
     }
 
     /// Current simulation frame.
     #[inline]
+    #[must_use]
     pub fn frame(&self) -> u64 {
         self.sim.frame()
     }
 
     /// Current confirmed frame (all players' inputs received).
     #[inline]
+    #[must_use]
     pub fn confirmed_frame(&self) -> u64 {
         self.sync.confirmed_frame()
     }
 
     /// Number of frames ahead of confirmation.
     #[inline]
+    #[must_use]
     pub fn frames_ahead(&self) -> u64 {
         self.sync.frames_ahead()
     }

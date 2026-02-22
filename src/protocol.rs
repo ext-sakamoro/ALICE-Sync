@@ -58,26 +58,31 @@ pub enum Message {
 
 impl Message {
     /// Serialize to bytes (bincode, compatible)
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_default()
     }
 
     /// Serialize to compact bytes (bitcode)
+    #[must_use]
     pub fn to_compact_bytes(&self) -> Vec<u8> {
         bitcode::encode(self)
     }
 
     /// Deserialize from bincode bytes
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::deserialize(bytes).ok()
     }
 
     /// Deserialize from bitcode bytes
+    #[must_use]
     pub fn from_compact_bytes(bytes: &[u8]) -> Option<Self> {
         bitcode::decode(bytes).ok()
     }
 
     /// Get message size in bytes
+    #[must_use]
     pub fn size_bytes(&self) -> usize {
         self.to_compact_bytes().len()
     }
@@ -93,6 +98,7 @@ pub struct Protocol {
 
 impl Protocol {
     /// Create a new protocol handler
+    #[must_use]
     pub fn new(node_id: NodeId) -> Self {
         Self {
             node_id,
@@ -102,6 +108,7 @@ impl Protocol {
     }
 
     /// Create hello message
+    #[must_use]
     pub fn hello(&self, seq: u64, world_hash: WorldHash) -> Message {
         Message::Hello {
             node_id: self.node_id,
@@ -111,16 +118,19 @@ impl Protocol {
     }
 
     /// Create sync request
+    #[must_use]
     pub fn request_sync(&self, since_seq: u64) -> Message {
         Message::RequestSync { since_seq }
     }
 
     /// Create events message
+    #[must_use]
     pub fn events(&self, events: Vec<Event>) -> Message {
         Message::Events { events }
     }
 
     /// Check if hash check is due
+    #[must_use]
     pub fn should_hash_check(&self) -> bool {
         self.events_since_check >= self.hash_check_interval
     }
@@ -137,6 +147,7 @@ impl Protocol {
     }
 
     /// Create ack message
+    #[must_use]
     pub fn ack(&self, seq: u64) -> Message {
         Message::Ack { seq }
     }
@@ -154,6 +165,7 @@ pub struct BandwidthStats {
 
 impl BandwidthStats {
     /// Average bytes per event
+    #[must_use]
     pub fn bytes_per_event(&self) -> f64 {
         if self.events_synced == 0 {
             0.0
@@ -163,6 +175,7 @@ impl BandwidthStats {
     }
 
     /// Compression ratio vs raw data
+    #[must_use]
     pub fn compression_ratio(&self, raw_world_size: u64) -> f64 {
         if self.bytes_sent == 0 {
             0.0

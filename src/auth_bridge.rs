@@ -24,7 +24,7 @@ pub struct AuthenticatedNode {
 pub struct SignedEvent {
     /// Serialized event bytes.
     pub event_bytes: Vec<u8>,
-    /// Ed25519 signature over event_bytes.
+    /// Ed25519 signature over `event_bytes`.
     pub signature: AliceSig,
     /// Signer's public identity.
     pub signer: AliceId,
@@ -32,6 +32,10 @@ pub struct SignedEvent {
 
 impl AuthenticatedNode {
     /// Create a new authenticated node with a fresh Ed25519 identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Ed25519 key generation fails.
     pub fn new(node_id: NodeId) -> alice_auth::Result<Self> {
         let identity = Identity::gen()?;
         Ok(Self {
@@ -44,6 +48,7 @@ impl AuthenticatedNode {
     }
 
     /// Create from an existing seed (deterministic identity recovery).
+    #[must_use]
     pub fn from_seed(node_id: NodeId, seed: &[u8; 32]) -> Self {
         Self {
             node_id,
@@ -54,7 +59,8 @@ impl AuthenticatedNode {
         }
     }
 
-    /// Get this node's public identity (AliceId).
+    /// Get this node's public identity (`AliceId`).
+    #[must_use]
     pub fn public_id(&self) -> AliceId {
         self.identity.id()
     }
@@ -94,12 +100,14 @@ impl AuthenticatedNode {
     }
 
     /// Export seed for identity persistence.
+    #[must_use]
     pub fn seed(&self) -> [u8; 32] {
         self.identity.seed()
     }
 }
 
 /// Verify a signed event without owning a node (standalone verification).
+#[must_use]
 pub fn verify_signed_event(signed: &SignedEvent) -> bool {
     verify(&signed.signer, &signed.event_bytes, &signed.signature).is_ok()
 }

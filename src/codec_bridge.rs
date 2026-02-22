@@ -28,6 +28,7 @@ pub struct CompressedEventBatch {
 ///
 /// `serialized` should be the bitcode/bincode output of an event batch.
 /// `quantizer_step` controls lossy compression (1 = near-lossless).
+#[must_use]
 pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> CompressedEventBatch {
     let original_len = serialized.len();
     if original_len < 4 {
@@ -79,6 +80,7 @@ pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> Compresse
 }
 
 /// Decompress an event batch back to serialized bytes.
+#[must_use]
 pub fn decompress_event_batch(compressed: &CompressedEventBatch) -> Vec<u8> {
     if compressed.data.len() < 1028 || compressed.original_len < 4 {
         return compressed.data.clone();
@@ -129,6 +131,7 @@ pub fn decompress_event_batch(compressed: &CompressedEventBatch) -> Vec<u8> {
 /// Estimate compression ratio for a serialized event batch.
 ///
 /// Returns `(compressed_size, original_size)`.
+#[must_use]
 pub fn estimate_ratio(serialized: &[u8]) -> (usize, usize) {
     let compressed = compress_event_batch(serialized, 1);
     (compressed.data.len(), compressed.original_len)
