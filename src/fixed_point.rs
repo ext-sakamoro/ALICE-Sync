@@ -269,6 +269,7 @@ impl Vec3Simd {
 
     /// SIMD add (single instruction for x+y+z)
     #[inline(always)]
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, rhs: Self) -> Self {
         Self {
             data: self.data + rhs.data,
@@ -277,6 +278,7 @@ impl Vec3Simd {
 
     /// SIMD sub
     #[inline(always)]
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, rhs: Self) -> Self {
         Self {
             data: self.data - rhs.data,

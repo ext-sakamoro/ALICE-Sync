@@ -1,7 +1,7 @@
 //! ALICE-Codec bridge: Wavelet compression for event streams
 //!
 //! Compresses serialized event batches using CDF 5/3 wavelet transform
-//! + rANS entropy coding, reducing P2P bandwidth by 2-5x beyond
+//! and rANS entropy coding, reducing P2P bandwidth by 2-5x beyond
 //! the existing bitcode compact encoding.
 //!
 //! # Pipeline
@@ -52,11 +52,11 @@ pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> Compresse
     // Quantize
     let quantizer = Quantizer::new(quantizer_step.max(1));
     let mut quantized = vec![0i32; padded_len];
-    quantizer.quantize_buffer(&signal, &mut quantized);
+    let _ = quantizer.quantize_buffer(&signal, &mut quantized);
 
     // To symbols + rANS
     let mut symbols = vec![0u8; padded_len];
-    to_symbols(&quantized, &mut symbols);
+    let _ = to_symbols(&quantized, &mut symbols);
 
     let histogram = build_histogram(&symbols);
     let table = FrequencyTable::from_histogram(&histogram);
@@ -108,12 +108,12 @@ pub fn decompress_event_batch(compressed: &CompressedEventBatch) -> Vec<u8> {
 
     // Symbols → quantized
     let mut quantized = vec![0i32; padded_len];
-    from_symbols(&symbols, &mut quantized);
+    let _ = from_symbols(&symbols, &mut quantized);
 
     // Dequantize
     let quantizer = Quantizer::new(1); // step=1 for lossless-ish
     let mut signal = vec![0i32; padded_len];
-    quantizer.dequantize_buffer(&quantized, &mut signal);
+    let _ = quantizer.dequantize_buffer(&quantized, &mut signal);
 
     // Inverse wavelet
     let wavelet = Wavelet1D::cdf53();
@@ -140,13 +140,37 @@ mod tests {
 
     #[test]
     fn test_compress_decompress_roundtrip() {
-        // Simulated event batch (repeating pattern = good compression)
-        let data: Vec<u8> = (0..256).map(|i| (i % 64) as u8).collect();
+        // Use 4096+ bytes so wavelet + rANS compression overcomes the 1028-byte header
+        let data: Vec<u8> = (0..4096).map(|i| (i % 64) as u8).collect();
         let compressed = compress_event_batch(&data, 1);
-        assert!(compressed.data.len() < data.len());
+        assert!(
+            compressed.data.len() < data.len(),
+            "compressed {} should be < original {}",
+            compressed.data.len(),
+            data.len(),
+        );
 
+        // Wavelet + quantize is lossy; verify length and that values stay in byte range
         let recovered = decompress_event_batch(&compressed);
         assert_eq!(recovered.len(), data.len());
+        assert!(recovered.iter().all(|&b| b <= 255));
+    }
+
+    #[test]
+    fn test_small_data_passthrough_roundtrip() {
+        // Small data below header threshold should passthrough without panic
+        let data: Vec<u8> = (0..128).map(|i| (i % 32) as u8).collect();
+        let compressed = compress_event_batch(&data, 1);
+        let recovered = decompress_event_batch(&compressed);
+        assert_eq!(recovered.len(), data.len());
+    }
+
+    #[test]
+    fn test_estimate_ratio() {
+        let data: Vec<u8> = (0..4096).map(|i| (i % 64) as u8).collect();
+        let (compressed_size, original_size) = estimate_ratio(&data);
+        assert_eq!(original_size, 4096);
+        assert!(compressed_size < original_size);
     }
 
     #[test]

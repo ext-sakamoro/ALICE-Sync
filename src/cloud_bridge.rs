@@ -6,7 +6,7 @@
 //!
 //! Author: Moroya Sakamoto
 
-use crate::{WorldHash, NodeId, Event, EventKind, Node, SyncError};
+use crate::{WorldHash, NodeId, Node, SyncError};
 use std::collections::HashMap;
 
 /// Device registration for cloud-side tracking
@@ -70,6 +70,12 @@ pub struct CloudSyncHub {
     global_scene_version: u32,
     /// World hash for spatial consistency verification
     world_hash: WorldHash,
+}
+
+impl Default for CloudSyncHub {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CloudSyncHub {

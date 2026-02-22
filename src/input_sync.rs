@@ -283,7 +283,7 @@ pub struct LockstepSession {
 impl LockstepSession {
     /// Create a new lockstep session
     pub fn new(player_count: u8) -> Self {
-        let buffers = (0..player_count).map(|i| InputBuffer::new(i)).collect();
+        let buffers = (0..player_count).map(InputBuffer::new).collect();
         Self {
             player_count,
             buffers,
@@ -424,11 +424,13 @@ pub struct RollbackSession {
 impl RollbackSession {
     /// Create a new rollback session.
     ///
+    /// Arguments:
+    ///
     /// - `player_count`: Total number of players
     /// - `local_player`: This client's player ID
     /// - `max_rollback`: Maximum frames that can be rolled back (default: 8)
     pub fn new(player_count: u8, local_player: u8, max_rollback: u64) -> Self {
-        let buffers = (0..player_count).map(|i| InputBuffer::new(i)).collect();
+        let buffers = (0..player_count).map(InputBuffer::new).collect();
         Self {
             player_count,
             local_player,
@@ -452,9 +454,7 @@ impl RollbackSession {
         // Collect inputs for this frame: confirmed or predicted
         let mut inputs = Vec::with_capacity(self.player_count as usize);
         for (i, buf) in self.buffers.iter_mut().enumerate() {
-            if i == self.local_player as usize {
-                inputs.push(*buf.get(frame).unwrap());
-            } else if buf.is_confirmed(frame) {
+            if i == self.local_player as usize || buf.is_confirmed(frame) {
                 inputs.push(*buf.get(frame).unwrap());
             } else {
                 inputs.push(buf.predict(frame));

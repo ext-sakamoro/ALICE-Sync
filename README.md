@@ -281,12 +281,17 @@ match rollback.add_remote_input(confirmed_input) {
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std` | Yes | Standard library support |
-| `async` | No | Tokio async runtime |
-| `simd` | No | SIMD acceleration |
+| `async` | No | Tokio async runtime integration |
+| `simd` | No | SIMD acceleration hints |
 | `python` | No | Python bindings (PyO3 + NumPy zero-copy) |
 | `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, PhysicsRollbackSession) |
-| `cache` | No | CRDT-based distributed cache invalidation via ALICE-Cache (`cache_bridge`) |
 | `telemetry` | No | Sync telemetry recording via ALICE-DB (RTT, rollback, desync metrics) |
+| `cache` | No | Markov oracle entity prefetching via ALICE-Cache |
+| `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |
+| `codec` | No | Wavelet + rANS event stream compression via ALICE-Codec |
+| `analytics` | No | DDSketch/HLL/CMS probabilistic telemetry via ALICE-Analytics |
+| `cloud` | No | Cloud-side multi-device spatial synchronization hub |
+| `all-bridges` | No | Enable all integration bridges (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
 
 ## Python Bindings (PyO3 + NumPy Zero-Copy)
 
@@ -530,14 +535,27 @@ Consistency Check:
 
 ## Test Suite
 
-61 unit tests covering event processing, SoA batching, input sync, rollback, physics bridge, telemetry, and serialization:
+78 tests across core modules and bridge integrations:
+
+| Scope | Command | Tests |
+|-------|---------|-------|
+| Core | `cargo test --features std` | 52 |
+| + Physics | `cargo test --features std,physics` | 58 |
+| + Telemetry | `cargo test --features std,telemetry` | 55 |
+| All bridges | `cargo test --features all-bridges,cloud` | 77 |
 
 ```bash
-cargo test                      # Run 52 core tests
-cargo test --features physics   # Run 58 tests (including physics bridge)
-cargo test --features telemetry # Run 55 tests (including telemetry)
-cargo bench                     # Run benchmarks
+cargo test --features std                  # Core tests (52)
+cargo test --features all-bridges,cloud    # All tests (77)
+cargo bench                                # Benchmarks
 ```
+
+### Codec Compression Note
+
+The `codec` bridge uses a 1028-byte header (4B length + 256×4B histogram).
+Event batches smaller than ~2 KB will not benefit from wavelet compression —
+the header overhead exceeds savings. For small batches, bitcode serialization
+alone (18 bytes/event) is already optimal.
 
 ## License
 

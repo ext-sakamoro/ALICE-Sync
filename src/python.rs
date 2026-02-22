@@ -265,7 +265,7 @@ impl PyWorldSoA {
     /// Apply batch motions using Demon Mode (sort + coalesce + 8-wide SIMD).
     ///
     /// Args:
-    ///     motions: list of (entity_id, dx, dy, dz) tuples
+    ///     motions: list of `(entity_id, dx, dy, dz)` tuples
     ///
     /// GIL released for the batch operation.
     fn apply_motions(&mut self, py: Python<'_>, motions: Vec<(u32, i16, i16, i16)>) {

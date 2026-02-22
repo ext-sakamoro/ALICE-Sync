@@ -22,20 +22,78 @@
 //!
 //! > "Don't send data. Send the delta."
 //!
-//! ## v0.6 "Demon Mode" Optimizations
+//! ## Quick Start
 //!
-//! 1. **Sort-Based Batching**: Events sorted by entity_id for sequential access
-//! 2. **Coalescing**: Multiple motions to same entity merged before apply
-//! 3. **Auto-SIMD Detection**: Contiguous 8-slot ranges trigger Vertical SIMD
-//! 4. **Prefetcher Friendly**: 1.4x faster than random access pattern
+//! ```rust
+//! use alice_sync::{Node, NodeId, Event, EventKind};
 //!
-//! ## v0.5 "Zen Mode" Optimizations
+//! // Two nodes process the same events → identical world hash
+//! let mut node_a = Node::new(NodeId(1));
+//! let mut node_b = Node::new(NodeId(2));
 //!
-//! 1. **Complete SoA World**: Entity data decomposed into component arrays
-//! 2. **Vertical SIMD**: Process 8 entities' x-coordinates in one instruction
-//! 3. **7x Memory Reduction**: Motion reads 12 bytes/entity instead of 84 bytes
-//! 4. **100% Cache Efficiency**: Only touch data you need
-//! 5. **8-wide Parallel Hash**: Compute 8 entity hashes simultaneously
+//! let spawn = Event::new(EventKind::Spawn { entity: 1, kind: 0, pos: [0, 0, 0] });
+//! let motion = Event::new(EventKind::Motion { entity: 1, delta: [100, 0, 0] });
+//!
+//! node_a.apply_event(&spawn).unwrap();
+//! node_a.apply_event(&motion).unwrap();
+//! node_b.apply_event(&spawn).unwrap();
+//! node_b.apply_event(&motion).unwrap();
+//!
+//! assert_eq!(node_a.world_hash(), node_b.world_hash());
+//! ```
+//!
+//! ## Modules
+//!
+//! ### Core
+//!
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`arena`] | Generational arena allocator with O(1) insert/remove |
+//! | [`event`] | Event types, SoA event storage, bitcode serialization |
+//! | [`fixed_point`] | Q16.16 fixed-point arithmetic, SIMD `Vec3Simd` |
+//! | [`node`] | P2P node with causal event ordering |
+//! | [`protocol`] | Handshake / Sync / Ack / HashCheck wire protocol |
+//! | [`world`] | AoS entity world with O(1) incremental hashing |
+//! | [`world_soa`] | SoA world with Demon Mode batch processing + 8-wide SIMD |
+//! | [`input_sync`] | Lockstep and Rollback input synchronization sessions |
+//!
+//! ### Feature-Gated Bridges
+//!
+//! | Module | Feature | Description |
+//! |--------|---------|-------------|
+//! | `physics_bridge` | `physics` | ALICE-Physics deterministic simulation bridge |
+//! | `telemetry` | `telemetry` | ALICE-DB time-series sync metrics |
+//! | `cache_bridge` | `cache` | Markov oracle entity prefetching via ALICE-Cache |
+//! | `auth_bridge` | `auth` | Ed25519 ZKP peer authentication via ALICE-Auth |
+//! | `codec_bridge` | `codec` | Wavelet + rANS event stream compression via ALICE-Codec |
+//! | `analytics_bridge` | `analytics` | DDSketch/HLL/CMS probabilistic telemetry via ALICE-Analytics |
+//! | `cloud_bridge` | `cloud` | Star-topology multi-device spatial sync hub |
+//!
+//! ## Cargo Features
+//!
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `std` | Yes | Standard library support |
+//! | `async` | No | Tokio async runtime integration |
+//! | `simd` | No | Explicit SIMD acceleration hints |
+//! | `python` | No | PyO3 + NumPy zero-copy bindings |
+//! | `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, rollback) |
+//! | `telemetry` | No | ALICE-DB time-series sync telemetry |
+//! | `cache` | No | Markov-oracle entity prefetching via ALICE-Cache |
+//! | `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |
+//! | `codec` | No | Wavelet + rANS event compression via ALICE-Codec |
+//! | `analytics` | No | Probabilistic sketch telemetry via ALICE-Analytics |
+//! | `cloud` | No | Cloud-side multi-device spatial synchronization |
+//! | `all-bridges` | No | Enable all integration bridges at once |
+//!
+//! ## Optimization History
+//!
+//! - **v0.6 "Demon Mode"**: Sort-based batching, coalescing, auto-SIMD detection
+//! - **v0.5 "Zen Mode"**: Complete SoA world, vertical 8-wide SIMD, 7x memory reduction
+//! - **v0.4 "Ultra Mode"**: Branchless hashing, SoA event storage
+//! - **v0.3 "God Mode"**: XOR rolling hash, Vec direct indexing, Copy entities
+//! - **v0.2**: Fixed-point determinism, arena allocation, bitcode serialization
+//! - **v0.1**: Core event system, basic world state
 
 pub mod arena;
 pub mod event;

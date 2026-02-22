@@ -345,8 +345,8 @@ impl WorldStorage {
     #[inline(always)]
     pub fn compute_hashes_8(&self, start: usize) -> [u64; 8] {
         let mut hashes = [0u64; 8];
-        for i in 0..8 {
-            hashes[i] = self.compute_hash((start + i) as u32);
+        for (i, h) in hashes.iter_mut().enumerate() {
+            *h = self.compute_hash((start + i) as u32);
         }
         hashes
     }

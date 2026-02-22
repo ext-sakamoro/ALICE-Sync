@@ -155,7 +155,7 @@ impl Entity {
 // ============================================================================
 
 /// World state container with O(1) entity lookup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldState {
     /// All entities in arena (cache-friendly)
     pub entities: Arena<Entity>,
@@ -166,17 +166,6 @@ pub struct WorldState {
     pub frame: u64,
     /// Random seed (for deterministic procedural generation)
     pub seed: u64,
-}
-
-impl Default for WorldState {
-    fn default() -> Self {
-        Self {
-            entities: Arena::new(),
-            id_map: Vec::new(),
-            frame: 0,
-            seed: 0,
-        }
-    }
 }
 
 impl WorldState {
@@ -508,8 +497,8 @@ impl World {
                 }
                 crate::EventType::Despawn => {
                     // Despawn is lightweight, process individually
-                    for i in head..end {
-                        let idx = meta[i].index as usize;
+                    for m in &meta[head..end] {
+                        let idx = m.index as usize;
                         let entity = stream.despawns[idx].entity;
                         if let Some(handle) = self.state.remove_handle(entity) {
                             unsafe {
@@ -522,8 +511,8 @@ impl World {
                     }
                 }
                 crate::EventType::Property => {
-                    for i in head..end {
-                        let idx = meta[i].index as usize;
+                    for m in &meta[head..end] {
+                        let idx = m.index as usize;
                         let p = &stream.properties[idx];
                         if let Some(handle) = self.state.get_handle(p.entity) {
                             unsafe {

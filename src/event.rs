@@ -171,7 +171,7 @@ impl Event {
 // ============================================================================
 
 /// Motion event data (cache-friendly, SIMD-ready)
-/// Layout: [entity:4][dx:2][dy:2][dz:2] = 10 bytes + 2 padding = 12 bytes
+/// Layout: `[entity:4][dx:2][dy:2][dz:2]` = 10 bytes + 2 padding = 12 bytes
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct MotionData {
