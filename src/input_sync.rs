@@ -33,8 +33,8 @@
 //! ```
 //! Compare to state sync: 160 bytes × 100 bodies × 60 fps = 960 KB/s
 
-use serde::{Serialize, Deserialize};
-use bitcode::{Encode, Decode};
+use bitcode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 // ============================================================================
@@ -374,7 +374,12 @@ impl LockstepSession {
         for buf in &mut self.buffers {
             buf.trim_before(frame);
         }
-        while self.checksums.front().map(|&(f, _)| f < frame).unwrap_or(false) {
+        while self
+            .checksums
+            .front()
+            .map(|&(f, _)| f < frame)
+            .unwrap_or(false)
+        {
             self.checksums.pop_front();
         }
     }
@@ -515,17 +520,28 @@ impl RollbackSession {
 
         // Trim old snapshots beyond rollback window
         let min_frame = self.confirmed_frame.saturating_sub(1);
-        while self.snapshots.front().map(|&(f, _)| f < min_frame).unwrap_or(false) {
+        while self
+            .snapshots
+            .front()
+            .map(|&(f, _)| f < min_frame)
+            .unwrap_or(false)
+        {
             self.snapshots.pop_front();
         }
-        while self.checksums.front().map(|&(f, _)| f < min_frame).unwrap_or(false) {
+        while self
+            .checksums
+            .front()
+            .map(|&(f, _)| f < min_frame)
+            .unwrap_or(false)
+        {
             self.checksums.pop_front();
         }
     }
 
     /// Get the snapshot for rollback to a specific frame.
     pub fn get_snapshot(&self, frame: u64) -> Option<&[u8]> {
-        self.snapshots.iter()
+        self.snapshots
+            .iter()
             .find(|&&(f, _)| f == frame)
             .map(|(_, state)| state.as_slice())
     }
@@ -593,7 +609,9 @@ impl RollbackSession {
 
     /// Update the confirmed frame based on all players' confirmed status.
     fn update_confirmed_frame(&mut self) {
-        let min_confirmed = self.buffers.iter()
+        let min_confirmed = self
+            .buffers
+            .iter()
             .map(|b| b.confirmed_frame)
             .min()
             .unwrap_or(0);
@@ -633,7 +651,11 @@ mod tests {
         let input = InputFrame::new(1, 0).with_movement(1, 0, 0);
         let bytes = input.to_bytes();
         // bitcode should produce very compact output
-        assert!(bytes.len() < 30, "InputFrame too large: {} bytes", bytes.len());
+        assert!(
+            bytes.len() < 30,
+            "InputFrame too large: {} bytes",
+            bytes.len()
+        );
     }
 
     // --- InputBuffer Tests ---
@@ -728,7 +750,11 @@ mod tests {
         assert_eq!(session.verify_checksum(1, 0xABCD), SyncResult::Ok);
         assert_eq!(
             session.verify_checksum(1, 0xDEAD),
-            SyncResult::Desync { frame: 1, local: 0xABCD, remote: 0xDEAD },
+            SyncResult::Desync {
+                frame: 1,
+                local: 0xABCD,
+                remote: 0xDEAD
+            },
         );
     }
 
@@ -758,9 +784,7 @@ mod tests {
         session.add_local_input(InputFrame::new(2, 0).with_movement(1, 0, 0));
 
         // Remote input for frame 1 arrives with different data than predicted
-        let action = session.add_remote_input(
-            InputFrame::new(1, 1).with_movement(5, 5, 5)
-        );
+        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(5, 5, 5));
         assert_eq!(action, RollbackAction::Rollback { to_frame: 1 });
     }
 
@@ -780,7 +804,11 @@ mod tests {
         assert_eq!(session.verify_checksum(1, 0xAAAA), SyncResult::Ok);
         assert_eq!(
             session.verify_checksum(1, 0xBBBB),
-            SyncResult::Desync { frame: 1, local: 0xAAAA, remote: 0xBBBB },
+            SyncResult::Desync {
+                frame: 1,
+                local: 0xAAAA,
+                remote: 0xBBBB
+            },
         );
     }
 
@@ -825,9 +853,7 @@ mod tests {
         }
 
         // Remote sends frame 1 with different data → needs rollback of 4 frames > max 2
-        let action = session.add_remote_input(
-            InputFrame::new(1, 1).with_movement(99, 99, 99)
-        );
+        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(99, 99, 99));
         assert_eq!(action, RollbackAction::Desync { frame: 1 });
     }
 }

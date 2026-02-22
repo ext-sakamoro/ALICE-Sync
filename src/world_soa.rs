@@ -49,7 +49,7 @@ pub struct WorldStorage {
     pub kinds: Vec<u16>,
 
     // Position: 3 separate arrays for Vertical SIMD
-    pub pos_x: Vec<i32>,  // Fixed-point raw bits
+    pub pos_x: Vec<i32>, // Fixed-point raw bits
     pub pos_y: Vec<i32>,
     pub pos_z: Vec<i32>,
 
@@ -354,8 +354,14 @@ impl WorldStorage {
     /// XOR-reduce 8 hashes into one
     #[inline(always)]
     pub fn reduce_hashes_xor(hashes: [u64; 8]) -> u64 {
-        hashes[0] ^ hashes[1] ^ hashes[2] ^ hashes[3]
-            ^ hashes[4] ^ hashes[5] ^ hashes[6] ^ hashes[7]
+        hashes[0]
+            ^ hashes[1]
+            ^ hashes[2]
+            ^ hashes[3]
+            ^ hashes[4]
+            ^ hashes[5]
+            ^ hashes[6]
+            ^ hashes[7]
     }
 
     /// Entity count
@@ -508,7 +514,11 @@ impl WorldSoA {
                 }
             }
 
-            EventKind::Property { entity, prop, value } => {
+            EventKind::Property {
+                entity,
+                prop,
+                value,
+            } => {
                 if let Some(slot) = self.get_slot(*entity) {
                     // XOR out old hash
                     let old_hash = self.storage.compute_hash(slot);
@@ -574,13 +584,7 @@ impl WorldSoA {
     ///
     /// Requires entities to be at consecutive slots (use with sorted data)
     #[inline(always)]
-    pub fn apply_motions_vertical_8(
-        &mut self,
-        start_slot: usize,
-        dx: i32x8,
-        dy: i32x8,
-        dz: i32x8,
-    ) {
+    pub fn apply_motions_vertical_8(&mut self, start_slot: usize, dx: i32x8, dy: i32x8, dz: i32x8) {
         // Compute old hashes for 8 entities
         let old_hashes = self.storage.compute_hashes_8(start_slot);
         let old_combined = WorldStorage::reduce_hashes_xor(old_hashes);
@@ -709,20 +713,44 @@ impl WorldSoA {
                     // Variable SIMD: 8 different deltas
                     let deltas: Vec<_> = slot_motions[i..i + 8]
                         .iter()
-                        .map(|(_, m)| ((m.delta_x as i32) << 6, (m.delta_y as i32) << 6, (m.delta_z as i32) << 6))
+                        .map(|(_, m)| {
+                            (
+                                (m.delta_x as i32) << 6,
+                                (m.delta_y as i32) << 6,
+                                (m.delta_z as i32) << 6,
+                            )
+                        })
                         .collect();
 
                     let dx = i32x8::new([
-                        deltas[0].0, deltas[1].0, deltas[2].0, deltas[3].0,
-                        deltas[4].0, deltas[5].0, deltas[6].0, deltas[7].0,
+                        deltas[0].0,
+                        deltas[1].0,
+                        deltas[2].0,
+                        deltas[3].0,
+                        deltas[4].0,
+                        deltas[5].0,
+                        deltas[6].0,
+                        deltas[7].0,
                     ]);
                     let dy = i32x8::new([
-                        deltas[0].1, deltas[1].1, deltas[2].1, deltas[3].1,
-                        deltas[4].1, deltas[5].1, deltas[6].1, deltas[7].1,
+                        deltas[0].1,
+                        deltas[1].1,
+                        deltas[2].1,
+                        deltas[3].1,
+                        deltas[4].1,
+                        deltas[5].1,
+                        deltas[6].1,
+                        deltas[7].1,
                     ]);
                     let dz = i32x8::new([
-                        deltas[0].2, deltas[1].2, deltas[2].2, deltas[3].2,
-                        deltas[4].2, deltas[5].2, deltas[6].2, deltas[7].2,
+                        deltas[0].2,
+                        deltas[1].2,
+                        deltas[2].2,
+                        deltas[3].2,
+                        deltas[4].2,
+                        deltas[5].2,
+                        deltas[6].2,
+                        deltas[7].2,
                     ]);
 
                     self.apply_motions_vertical_8(start_slot as usize, dx, dy, dz);
@@ -868,7 +896,8 @@ impl WorldSoA {
                 }
 
                 // SIMD add
-                self.storage.add_positions_8(start_slot as usize, dx, dy, dz);
+                self.storage
+                    .add_positions_8(start_slot as usize, dx, dy, dz);
 
                 // Hash update (XOR in new)
                 let new_hashes = self.storage.compute_hashes_8(start_slot as usize);
@@ -918,7 +947,14 @@ impl WorldSoA {
     ///
     /// This is the maximum performance path when entities are densely packed.
     /// Process 8 entities per iteration.
-    pub fn apply_uniform_motion_vertical(&mut self, start_slot: usize, count: usize, dx: i16, dy: i16, dz: i16) {
+    pub fn apply_uniform_motion_vertical(
+        &mut self,
+        start_slot: usize,
+        count: usize,
+        dx: i16,
+        dy: i16,
+        dz: i16,
+    ) {
         let dx_fixed = (dx as i32) << 6;
         let dy_fixed = (dy as i32) << 6;
         let dz_fixed = (dz as i32) << 6;
@@ -942,7 +978,8 @@ impl WorldSoA {
                 let old_hash = self.storage.compute_hash(slot);
                 self.current_hash = self.current_hash.xor(old_hash);
 
-                self.storage.add_position(slot, dx_fixed, dy_fixed, dz_fixed);
+                self.storage
+                    .add_position(slot, dx_fixed, dy_fixed, dz_fixed);
 
                 let new_hash = self.storage.compute_hash(slot);
                 self.current_hash = self.current_hash.xor(new_hash);
@@ -1041,11 +1078,13 @@ mod tests {
     fn test_world_soa_basic() {
         let mut world = WorldSoA::new(42);
 
-        world.apply(&Event::new(EventKind::Spawn {
-            entity: 1,
-            kind: 0,
-            pos: [0, 0, 0],
-        })).unwrap();
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
 
         assert_eq!(world.entity_count(), 1);
         assert_ne!(world.hash(), WorldHash::zero());
@@ -1055,18 +1094,22 @@ mod tests {
     fn test_world_soa_motion() {
         let mut world = WorldSoA::new(42);
 
-        world.apply(&Event::new(EventKind::Spawn {
-            entity: 1,
-            kind: 0,
-            pos: [0, 0, 0],
-        })).unwrap();
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
 
         let hash_before = world.hash();
 
-        world.apply(&Event::new(EventKind::Motion {
-            entity: 1,
-            delta: [1000, 0, 0],
-        })).unwrap();
+        world
+            .apply(&Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [1000, 0, 0],
+            }))
+            .unwrap();
 
         assert_ne!(world.hash(), hash_before);
 
@@ -1082,9 +1125,20 @@ mod tests {
         let mut world_b = WorldSoA::new(42);
 
         let events = vec![
-            Event::new(EventKind::Spawn { entity: 1, kind: 0, pos: [0, 0, 0] }),
-            Event::new(EventKind::Motion { entity: 1, delta: [100, 200, 300] }),
-            Event::new(EventKind::Property { entity: 1, prop: 0, value: 42 }),
+            Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }),
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [100, 200, 300],
+            }),
+            Event::new(EventKind::Property {
+                entity: 1,
+                prop: 0,
+                value: 42,
+            }),
         ];
 
         for e in &events {
@@ -1099,13 +1153,17 @@ mod tests {
     fn test_world_soa_xor_rollback() {
         let mut world = WorldSoA::new(0);
 
-        world.apply(&Event::new(EventKind::Spawn {
-            entity: 1,
-            kind: 0,
-            pos: [0, 0, 0],
-        })).unwrap();
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
 
-        world.apply(&Event::new(EventKind::Despawn { entity: 1 })).unwrap();
+        world
+            .apply(&Event::new(EventKind::Despawn { entity: 1 }))
+            .unwrap();
 
         assert_eq!(world.hash(), WorldHash::zero());
     }
@@ -1116,11 +1174,13 @@ mod tests {
 
         // Spawn 16 entities (for 2 SIMD batches)
         for i in 0..16u32 {
-            world.apply(&Event::new(EventKind::Spawn {
-                entity: i,
-                kind: 0,
-                pos: [0, 0, 0],
-            })).unwrap();
+            world
+                .apply(&Event::new(EventKind::Spawn {
+                    entity: i,
+                    kind: 0,
+                    pos: [0, 0, 0],
+                }))
+                .unwrap();
         }
 
         let hash_before = world.hash();
@@ -1145,19 +1205,41 @@ mod tests {
 
         // Spawn 100 entities
         for i in 0..100u32 {
-            world.apply(&Event::new(EventKind::Spawn {
-                entity: i,
-                kind: 0,
-                pos: [0, 0, 0],
-            })).unwrap();
+            world
+                .apply(&Event::new(EventKind::Spawn {
+                    entity: i,
+                    kind: 0,
+                    pos: [0, 0, 0],
+                }))
+                .unwrap();
         }
 
         // Create random-order motions
         let motions: Vec<MotionData> = vec![
-            MotionData { entity: 50, delta_x: 10, delta_y: 0, delta_z: 0 },
-            MotionData { entity: 10, delta_x: 20, delta_y: 0, delta_z: 0 },
-            MotionData { entity: 90, delta_x: 30, delta_y: 0, delta_z: 0 },
-            MotionData { entity: 10, delta_x: 5, delta_y: 0, delta_z: 0 },  // Same entity (should coalesce)
+            MotionData {
+                entity: 50,
+                delta_x: 10,
+                delta_y: 0,
+                delta_z: 0,
+            },
+            MotionData {
+                entity: 10,
+                delta_x: 20,
+                delta_y: 0,
+                delta_z: 0,
+            },
+            MotionData {
+                entity: 90,
+                delta_x: 30,
+                delta_y: 0,
+                delta_z: 0,
+            },
+            MotionData {
+                entity: 10,
+                delta_x: 5,
+                delta_y: 0,
+                delta_z: 0,
+            }, // Same entity (should coalesce)
         ];
 
         let hash_before = world.hash();
@@ -1182,11 +1264,13 @@ mod tests {
 
         // Spawn 16 entities (contiguous IDs)
         for i in 0..16u32 {
-            world.apply(&Event::new(EventKind::Spawn {
-                entity: i,
-                kind: 0,
-                pos: [0, 0, 0],
-            })).unwrap();
+            world
+                .apply(&Event::new(EventKind::Spawn {
+                    entity: i,
+                    kind: 0,
+                    pos: [0, 0, 0],
+                }))
+                .unwrap();
         }
 
         // Create motions for 8 contiguous entities (should trigger SIMD path)

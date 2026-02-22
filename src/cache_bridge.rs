@@ -4,8 +4,8 @@
 //! When entity E is accessed, the cache oracle predicts which entities
 //! will be accessed next and prefetches their states.
 
-use alice_cache::AliceCache;
 use crate::{Entity, WorldHash};
+use alice_cache::AliceCache;
 
 /// Cached world state for fast entity lookup and predictive prefetching.
 ///
@@ -56,7 +56,11 @@ impl SyncCache {
         let cached = CachedEntity {
             id,
             kind: entity.kind,
-            position: [entity.position.x.0, entity.position.y.0, entity.position.z.0],
+            position: [
+                entity.position.x.0,
+                entity.position.y.0,
+                entity.position.z.0,
+            ],
             snapshot_hash: world_hash.0,
         };
         self.cache.put(id, cached);
@@ -96,13 +100,21 @@ impl SyncCache {
     /// Cache hit rate.
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
-        if total == 0 { 0.0 } else { self.hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
     }
 
     /// Total cache hits.
-    pub fn hits(&self) -> u64 { self.hits }
+    pub fn hits(&self) -> u64 {
+        self.hits
+    }
     /// Total cache misses.
-    pub fn misses(&self) -> u64 { self.misses }
+    pub fn misses(&self) -> u64 {
+        self.misses
+    }
 }
 
 #[cfg(test)]

@@ -37,7 +37,7 @@
 //! let avg_rtt = telemetry.average_rtt(0, 3600).unwrap();
 //! ```
 
-use alice_db::{AliceDB, Aggregation};
+use alice_db::{Aggregation, AliceDB};
 use std::io;
 use std::path::Path;
 
@@ -139,7 +139,15 @@ impl SyncTelemetry {
     /// Single lock acquisition instead of one per metric — up to 5x fewer
     /// lock round-trips when recording all channels per frame.
     #[inline(always)]
-    pub fn record_batch(&self, frame: u64, rtt_ms: Option<f32>, prediction_accuracy: Option<f32>, rollback_frames: Option<u32>, desync_severity: Option<f32>, input_delay: Option<u32>) -> io::Result<()> {
+    pub fn record_batch(
+        &self,
+        frame: u64,
+        rtt_ms: Option<f32>,
+        prediction_accuracy: Option<f32>,
+        rollback_frames: Option<u32>,
+        desync_severity: Option<f32>,
+        input_delay: Option<u32>,
+    ) -> io::Result<()> {
         let f = frame as i64;
         let mut batch = [(0i64, 0.0f32); 5];
         let mut len = 0usize;
@@ -190,8 +198,13 @@ impl SyncTelemetry {
         end_frame: u64,
     ) -> io::Result<Vec<(u64, f32)>> {
         let base = channel.id() * MAX_FRAMES;
-        let raw = self.db.scan(base + start_frame as i64, base + end_frame as i64)?;
-        Ok(raw.into_iter().map(|(t, v)| ((t - base) as u64, v)).collect())
+        let raw = self
+            .db
+            .scan(base + start_frame as i64, base + end_frame as i64)?;
+        Ok(raw
+            .into_iter()
+            .map(|(t, v)| ((t - base) as u64, v))
+            .collect())
     }
 
     /// Scan rollback events in a frame range.
@@ -209,25 +222,29 @@ impl SyncTelemetry {
     /// Compute average RTT over a frame range.
     pub fn average_rtt(&self, start: u64, end: u64) -> io::Result<f64> {
         let base = CH_RTT * MAX_FRAMES;
-        self.db.aggregate(base + start as i64, base + end as i64, Aggregation::Avg)
+        self.db
+            .aggregate(base + start as i64, base + end as i64, Aggregation::Avg)
     }
 
     /// Compute max rollback depth over a frame range.
     pub fn max_rollback(&self, start: u64, end: u64) -> io::Result<f64> {
         let base = CH_ROLLBACK * MAX_FRAMES;
-        self.db.aggregate(base + start as i64, base + end as i64, Aggregation::Max)
+        self.db
+            .aggregate(base + start as i64, base + end as i64, Aggregation::Max)
     }
 
     /// Count desync events in a frame range.
     pub fn desync_count(&self, start: u64, end: u64) -> io::Result<f64> {
         let base = CH_DESYNC * MAX_FRAMES;
-        self.db.aggregate(base + start as i64, base + end as i64, Aggregation::Count)
+        self.db
+            .aggregate(base + start as i64, base + end as i64, Aggregation::Count)
     }
 
     /// Average prediction accuracy over a frame range.
     pub fn average_prediction_accuracy(&self, start: u64, end: u64) -> io::Result<f64> {
         let base = CH_PREDICTION * MAX_FRAMES;
-        self.db.aggregate(base + start as i64, base + end as i64, Aggregation::Avg)
+        self.db
+            .aggregate(base + start as i64, base + end as i64, Aggregation::Avg)
     }
 
     // ── Lifecycle ──────────────────────────────────────────────
@@ -258,7 +275,9 @@ mod tests {
 
         // Record RTT data only (contiguous keys in one channel)
         for frame in 0..100u64 {
-            telemetry.record_rtt(frame, 15.0 + (frame as f32) * 0.1).unwrap();
+            telemetry
+                .record_rtt(frame, 15.0 + (frame as f32) * 0.1)
+                .unwrap();
         }
         telemetry.flush().unwrap();
 
@@ -278,13 +297,18 @@ mod tests {
 
         // Record rollback events only
         for frame in 0..50u64 {
-            telemetry.record_rollback(frame, (frame % 5) as u32).unwrap();
+            telemetry
+                .record_rollback(frame, (frame % 5) as u32)
+                .unwrap();
         }
         telemetry.flush().unwrap();
 
         // Scan rollback data
         let rollbacks = telemetry.scan_rollbacks(0, 49).unwrap();
-        assert!(!rollbacks.is_empty(), "Should have rollback data after flush");
+        assert!(
+            !rollbacks.is_empty(),
+            "Should have rollback data after flush"
+        );
 
         telemetry.close().unwrap();
     }

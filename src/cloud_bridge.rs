@@ -6,7 +6,7 @@
 //!
 //! Author: Moroya Sakamoto
 
-use crate::{WorldHash, NodeId, Node, SyncError};
+use crate::{Node, NodeId, SyncError, WorldHash};
 use std::collections::HashMap;
 
 /// Device registration for cloud-side tracking
@@ -44,16 +44,22 @@ impl SpatialRegion {
 
     /// Check if two regions overlap
     pub fn overlaps(&self, other: &SpatialRegion) -> bool {
-        self.min[0] <= other.max[0] && self.max[0] >= other.min[0]
-            && self.min[1] <= other.max[1] && self.max[1] >= other.min[1]
-            && self.min[2] <= other.max[2] && self.max[2] >= other.min[2]
+        self.min[0] <= other.max[0]
+            && self.max[0] >= other.min[0]
+            && self.min[1] <= other.max[1]
+            && self.max[1] >= other.min[1]
+            && self.min[2] <= other.max[2]
+            && self.max[2] >= other.min[2]
     }
 
     /// Check if a point is inside the region
     pub fn contains_point(&self, x: f32, y: f32, z: f32) -> bool {
-        x >= self.min[0] && x <= self.max[0]
-            && y >= self.min[1] && y <= self.max[1]
-            && z >= self.min[2] && z <= self.max[2]
+        x >= self.min[0]
+            && x <= self.max[0]
+            && y >= self.min[1]
+            && y <= self.max[1]
+            && z >= self.min[2]
+            && z <= self.max[2]
     }
 }
 
@@ -115,11 +121,7 @@ impl CloudSyncHub {
     }
 
     /// Set device region of interest
-    pub fn set_region_of_interest(
-        &mut self,
-        device_id: u64,
-        region: SpatialRegion,
-    ) {
+    pub fn set_region_of_interest(&mut self, device_id: u64, region: SpatialRegion) {
         if let Some(device) = self.devices.get_mut(&device_id) {
             device.region_of_interest = Some(region);
         }
@@ -150,7 +152,8 @@ impl CloudSyncHub {
         for (&id, info) in &self.devices {
             if id != device_id
                 && info.connected
-                && info.region_of_interest
+                && info
+                    .region_of_interest
                     .as_ref()
                     .map(|r| r.overlaps(&update_region))
                     .unwrap_or(true)
@@ -180,9 +183,7 @@ impl CloudSyncHub {
 
     /// Get all connected devices
     pub fn connected_devices(&self) -> Vec<&DeviceInfo> {
-        self.devices.values()
-            .filter(|d| d.connected)
-            .collect()
+        self.devices.values().filter(|d| d.connected).collect()
     }
 
     /// Get device info by ID
@@ -243,14 +244,13 @@ mod tests {
         hub.register_device(3, "dev-3".to_string());
 
         // Set ROI for device 2 (overlaps with update)
-        hub.set_region_of_interest(2, SpatialRegion::new(
-            [-5.0, -5.0, -5.0], [5.0, 5.0, 5.0]
-        ));
+        hub.set_region_of_interest(2, SpatialRegion::new([-5.0, -5.0, -5.0], [5.0, 5.0, 5.0]));
 
         // Set ROI for device 3 (doesn't overlap)
-        hub.set_region_of_interest(3, SpatialRegion::new(
-            [100.0, 100.0, 100.0], [200.0, 200.0, 200.0]
-        ));
+        hub.set_region_of_interest(
+            3,
+            SpatialRegion::new([100.0, 100.0, 100.0], [200.0, 200.0, 200.0]),
+        );
 
         let recipients = hub.process_device_update(
             1,

@@ -35,7 +35,19 @@ use serde::{Deserialize, Serialize};
 const WYHASH_K: u64 = 0x517cc1b727220a95;
 
 /// World state hash (64-bit XOR rolling hash)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct WorldHash(pub u64);
 
 impl WorldHash {
@@ -274,7 +286,11 @@ impl World {
                 }
             }
 
-            EventKind::Property { entity, prop, value } => {
+            EventKind::Property {
+                entity,
+                prop,
+                value,
+            } => {
                 if let Some(handle) = self.state.get_handle(*entity) {
                     // SAFETY: handle was just validated by get_handle
                     unsafe { self.apply_property_unchecked(handle, *prop, *value) };

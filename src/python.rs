@@ -9,11 +9,13 @@
 //! | L3 | Batch API (SoA world operations) | FFI amortization |
 //! | L4 | Rust backend (8-wide SIMD, Demon Mode) | Hardware-speed apply |
 
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::prelude::*;
-use numpy::{PyArray1, PyArray2, IntoPyArray};
 
-use crate::input_sync::{InputFrame, InputBuffer, LockstepSession, RollbackSession, RollbackAction};
 use crate::event::MotionData;
+use crate::input_sync::{
+    InputBuffer, InputFrame, LockstepSession, RollbackAction, RollbackSession,
+};
 use crate::world_soa::WorldSoA;
 
 // ============================================================================
@@ -35,10 +37,15 @@ impl PyInputFrame {
     #[new]
     #[pyo3(signature = (frame, player_id, move_x=0, move_y=0, move_z=0, actions=0, aim_x=0, aim_y=0, aim_z=0))]
     fn new(
-        frame: u64, player_id: u8,
-        move_x: i16, move_y: i16, move_z: i16,
+        frame: u64,
+        player_id: u8,
+        move_x: i16,
+        move_y: i16,
+        move_z: i16,
         actions: u32,
-        aim_x: i16, aim_y: i16, aim_z: i16,
+        aim_x: i16,
+        aim_y: i16,
+        aim_z: i16,
     ) -> Self {
         Self {
             inner: InputFrame::new(frame, player_id)
@@ -60,18 +67,28 @@ impl PyInputFrame {
     }
 
     #[getter]
-    fn frame(&self) -> u64 { self.inner.frame }
-
-    #[getter]
-    fn player_id(&self) -> u8 { self.inner.player_id }
-
-    #[getter]
-    fn movement(&self) -> (i16, i16, i16) {
-        (self.inner.movement[0], self.inner.movement[1], self.inner.movement[2])
+    fn frame(&self) -> u64 {
+        self.inner.frame
     }
 
     #[getter]
-    fn actions(&self) -> u32 { self.inner.actions }
+    fn player_id(&self) -> u8 {
+        self.inner.player_id
+    }
+
+    #[getter]
+    fn movement(&self) -> (i16, i16, i16) {
+        (
+            self.inner.movement[0],
+            self.inner.movement[1],
+            self.inner.movement[2],
+        )
+    }
+
+    #[getter]
+    fn actions(&self) -> u32 {
+        self.inner.actions
+    }
 
     #[getter]
     fn aim(&self) -> (i16, i16, i16) {
@@ -81,8 +98,11 @@ impl PyInputFrame {
     fn __repr__(&self) -> String {
         format!(
             "<InputFrame frame={} player={} move=({},{},{}) actions=0x{:x}>",
-            self.inner.frame, self.inner.player_id,
-            self.inner.movement[0], self.inner.movement[1], self.inner.movement[2],
+            self.inner.frame,
+            self.inner.player_id,
+            self.inner.movement[0],
+            self.inner.movement[1],
+            self.inner.movement[2],
             self.inner.actions,
         )
     }
@@ -105,7 +125,9 @@ pub struct PyLockstepSession {
 impl PyLockstepSession {
     #[new]
     fn new(player_count: u8) -> Self {
-        Self { inner: LockstepSession::new(player_count) }
+        Self {
+            inner: LockstepSession::new(player_count),
+        }
     }
 
     /// Add a local player's input.
@@ -126,7 +148,10 @@ impl PyLockstepSession {
     /// Advance and collect all inputs. Returns list of InputFrame or None.
     fn advance(&mut self) -> Option<Vec<PyInputFrame>> {
         self.inner.advance().map(|inputs| {
-            inputs.into_iter().map(|inner| PyInputFrame { inner }).collect()
+            inputs
+                .into_iter()
+                .map(|inner| PyInputFrame { inner })
+                .collect()
         })
     }
 
@@ -139,8 +164,15 @@ impl PyLockstepSession {
     fn verify_checksum(&self, frame: u64, remote: u64) -> String {
         match self.inner.verify_checksum(frame, remote) {
             crate::input_sync::SyncResult::Ok => "ok".to_string(),
-            crate::input_sync::SyncResult::Desync { frame, local, remote } => {
-                format!("desync:frame={},local={:x},remote={:x}", frame, local, remote)
+            crate::input_sync::SyncResult::Desync {
+                frame,
+                local,
+                remote,
+            } => {
+                format!(
+                    "desync:frame={},local={:x},remote={:x}",
+                    frame, local, remote
+                )
             }
         }
     }
@@ -151,7 +183,10 @@ impl PyLockstepSession {
     }
 
     fn __repr__(&self) -> String {
-        format!("<LockstepSession confirmed_frame={}>", self.inner.confirmed_frame())
+        format!(
+            "<LockstepSession confirmed_frame={}>",
+            self.inner.confirmed_frame()
+        )
     }
 }
 
@@ -188,7 +223,10 @@ impl PyRollbackSession {
     /// Add local player's input. Returns list of all inputs (confirmed + predicted).
     fn add_local_input(&mut self, frame: &PyInputFrame) -> Vec<PyInputFrame> {
         let inputs = self.inner.add_local_input(frame.inner);
-        inputs.into_iter().map(|inner| PyInputFrame { inner }).collect()
+        inputs
+            .into_iter()
+            .map(|inner| PyInputFrame { inner })
+            .collect()
     }
 
     /// Add remote player's confirmed input.
@@ -269,9 +307,15 @@ impl PyWorldSoA {
     ///
     /// GIL released for the batch operation.
     fn apply_motions(&mut self, py: Python<'_>, motions: Vec<(u32, i16, i16, i16)>) {
-        let motion_data: Vec<MotionData> = motions.iter().map(|&(e, dx, dy, dz)| {
-            MotionData { entity: e, delta_x: dx, delta_y: dy, delta_z: dz }
-        }).collect();
+        let motion_data: Vec<MotionData> = motions
+            .iter()
+            .map(|&(e, dx, dy, dz)| MotionData {
+                entity: e,
+                delta_x: dx,
+                delta_y: dy,
+                delta_z: dz,
+            })
+            .collect();
 
         py.allow_threads(|| {
             self.inner.apply_motions_demon(motion_data);
@@ -343,7 +387,9 @@ mod tests {
 
     #[test]
     fn test_input_frame_roundtrip() {
-        let frame = InputFrame::new(1, 0).with_movement(10, -5, 3).with_actions(0x7);
+        let frame = InputFrame::new(1, 0)
+            .with_movement(10, -5, 3)
+            .with_actions(0x7);
         let bytes = frame.to_bytes();
         let decoded = InputFrame::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.frame, 1);

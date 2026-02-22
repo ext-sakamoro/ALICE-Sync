@@ -20,8 +20,8 @@
 //!
 //! Uses bitcode for compact serialization
 
-use bitcode::{Decode, Encode};
 use crate::{Event, NodeId, WorldHash};
+use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Protocol message types
@@ -188,7 +188,11 @@ mod tests {
         let compact = hello.to_compact_bytes();
         let bincode_size = hello.to_bytes().len();
 
-        println!("Hello - Compact: {} bytes, Bincode: {} bytes", compact.len(), bincode_size);
+        println!(
+            "Hello - Compact: {} bytes, Bincode: {} bytes",
+            compact.len(),
+            bincode_size
+        );
         assert!(compact.len() <= bincode_size);
     }
 

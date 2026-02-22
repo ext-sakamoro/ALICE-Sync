@@ -25,7 +25,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Unique node identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct NodeId(pub u64);
 
 /// Node connection state
@@ -127,7 +138,10 @@ impl Node {
     /// Get events since a peer's last known sequence (ZERO-COPY: returns slice)
     #[inline]
     pub fn events_for_peer(&self, peer_id: NodeId) -> Result<&[Event]> {
-        let peer = self.peers.get(&peer_id).ok_or(SyncError::UnknownNode(peer_id))?;
+        let peer = self
+            .peers
+            .get(&peer_id)
+            .ok_or(SyncError::UnknownNode(peer_id))?;
         let seq = crate::event::SeqNum(peer.last_seq);
         Ok(self.events.since(seq))
     }
@@ -182,7 +196,11 @@ impl Node {
             events_count: self.events.len(),
             events_bytes: self.events.total_bytes(),
             peers_count: self.peers.len(),
-            synced_peers: self.peers.values().filter(|p| p.state == NodeState::Synced).count(),
+            synced_peers: self
+                .peers
+                .values()
+                .filter(|p| p.state == NodeState::Synced)
+                .count(),
             entity_count: self.world.entity_count(),
         }
     }

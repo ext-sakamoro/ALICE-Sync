@@ -32,7 +32,9 @@ use serde::{Deserialize, Serialize};
 pub struct EventId(pub u64);
 
 /// Sequence number for causal ordering
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Encode, Decode)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Encode, Decode,
+)]
 pub struct SeqNum(pub u64);
 
 /// Event kinds - all state changes expressible in few bytes
@@ -45,7 +47,11 @@ pub enum EventKind {
 
     /// Entity spawn: entity_id + type + position
     /// Network: 4 + 2 + 6 = 12 bytes (was 22 with f32)
-    Spawn { entity: u32, kind: u16, pos: [i16; 3] },
+    Spawn {
+        entity: u32,
+        kind: u16,
+        pos: [i16; 3],
+    },
 
     /// Entity despawn: entity_id
     /// Network: 4 bytes
@@ -249,7 +255,7 @@ pub struct EventMeta {
     pub seq: u64,
     pub origin: u64,
     pub event_type: EventType,
-    pub index: u32,  // Index into the type-specific array
+    pub index: u32, // Index into the type-specific array
 }
 
 // ============================================================================
@@ -310,7 +316,11 @@ impl EventStream {
             }
             EventKind::Spawn { entity, kind, pos } => {
                 let idx = self.spawns.len() as u32;
-                self.spawns.push(SpawnData { entity: *entity, kind: *kind, pos: *pos });
+                self.spawns.push(SpawnData {
+                    entity: *entity,
+                    kind: *kind,
+                    pos: *pos,
+                });
                 (EventType::Spawn, idx)
             }
             EventKind::Despawn { entity } => {
@@ -318,14 +328,25 @@ impl EventStream {
                 self.despawns.push(DespawnData { entity: *entity });
                 (EventType::Despawn, idx)
             }
-            EventKind::Property { entity, prop, value } => {
+            EventKind::Property {
+                entity,
+                prop,
+                value,
+            } => {
                 let idx = self.properties.len() as u32;
-                self.properties.push(PropertyData { entity: *entity, prop: *prop, value: *value });
+                self.properties.push(PropertyData {
+                    entity: *entity,
+                    prop: *prop,
+                    value: *value,
+                });
                 (EventType::Property, idx)
             }
             EventKind::Input { player, code } => {
                 let idx = self.inputs.len() as u32;
-                self.inputs.push(InputData { player: *player, code: *code });
+                self.inputs.push(InputData {
+                    player: *player,
+                    code: *code,
+                });
                 (EventType::Input, idx)
             }
             EventKind::Tick { frame } => {
@@ -335,7 +356,10 @@ impl EventStream {
             }
             EventKind::Custom { type_id, payload } => {
                 let idx = self.customs.len() as u32;
-                self.customs.push(CustomData { type_id: *type_id, payload: *payload });
+                self.customs.push(CustomData {
+                    type_id: *type_id,
+                    payload: *payload,
+                });
                 (EventType::Custom, idx)
             }
         };
@@ -450,7 +474,11 @@ mod tests {
         let compact = motion.to_compact_bytes();
         let bincode_size = motion.to_bytes().len();
 
-        println!("Compact: {} bytes, Bincode: {} bytes", compact.len(), bincode_size);
+        println!(
+            "Compact: {} bytes, Bincode: {} bytes",
+            compact.len(),
+            bincode_size
+        );
         // Compact should be significantly smaller
         assert!(compact.len() <= bincode_size);
     }

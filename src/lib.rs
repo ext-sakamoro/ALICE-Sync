@@ -16,6 +16,24 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+// Justified pedantic suppression for SIMD/fixed-point/networking code:
+// - inline_always: SIMD hot paths, fixed-point arithmetic, hash mixing
+// - cast_*: intentional type narrowing in network serialization and SIMD
+// - similar_names: dx/dy/dz, pos_x/pos_y/pos_z standard in spatial code
+// - too_many_lines: complex SIMD batching with multiple code paths
+// - module_name_repetitions: bridge module types mirror crate names
+#![allow(
+    clippy::inline_always,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap,
+    clippy::similar_names,
+    clippy::module_name_repetitions,
+    clippy::too_many_lines
+)]
+
 //! # ALICE-Sync
 //!
 //! P2P synchronization via event diffing, not data transfer.
@@ -95,49 +113,49 @@
 //! - **v0.2**: Fixed-point determinism, arena allocation, bitcode serialization
 //! - **v0.1**: Core event system, basic world state
 
-pub mod arena;
-pub mod event;
-pub mod fixed_point;
-pub mod node;
-pub mod protocol;
-pub mod world;
-pub mod world_soa;
-pub mod input_sync;
-#[cfg(feature = "physics")]
-pub mod physics_bridge;
-#[cfg(feature = "telemetry")]
-pub mod telemetry;
-#[cfg(feature = "cache")]
-pub mod cache_bridge;
-#[cfg(feature = "auth")]
-pub mod auth_bridge;
-#[cfg(feature = "codec")]
-pub mod codec_bridge;
 #[cfg(feature = "analytics")]
 pub mod analytics_bridge;
+pub mod arena;
+#[cfg(feature = "auth")]
+pub mod auth_bridge;
+#[cfg(feature = "cache")]
+pub mod cache_bridge;
 #[cfg(feature = "cloud")]
 pub mod cloud_bridge;
+#[cfg(feature = "codec")]
+pub mod codec_bridge;
+pub mod event;
+pub mod fixed_point;
+pub mod input_sync;
+pub mod node;
+#[cfg(feature = "physics")]
+pub mod physics_bridge;
+pub mod protocol;
 #[cfg(feature = "python")]
 mod python;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
+pub mod world;
+pub mod world_soa;
 
 pub use arena::{Arena, Handle};
 pub use event::{
-    Event, EventId, EventKind, EventMeta, EventStream, EventType,
-    MotionData, SpawnData, DespawnData, PropertyData, InputData, TickData, CustomData,
-    SeqNum, SoAStats,
+    CustomData, DespawnData, Event, EventId, EventKind, EventMeta, EventStream, EventType,
+    InputData, MotionData, PropertyData, SeqNum, SoAStats, SpawnData, TickData,
 };
 pub use fixed_point::{Fixed, Vec3Fixed, Vec3Simd};
+pub use input_sync::{
+    InputBuffer, InputFrame, LockstepSession, RollbackAction, RollbackSession, SyncResult,
+};
 pub use node::{Node, NodeId, NodeState};
-pub use protocol::{Message, Protocol};
-pub use world::{Entity, EntityProps, World, WorldHash, WorldState, MAX_PROPS};
-pub use world_soa::{WorldStorage, WorldSoA, Slot};
-pub use input_sync::{InputFrame, InputBuffer, LockstepSession, RollbackSession, SyncResult, RollbackAction};
 #[cfg(feature = "physics")]
 pub use physics_bridge::{
-    sync_input_to_physics, physics_input_to_sync, sync_inputs_to_physics,
-    physics_checksum_to_world_hash, world_hash_to_physics_checksum,
-    PhysicsRollbackSession,
+    physics_checksum_to_world_hash, physics_input_to_sync, sync_input_to_physics,
+    sync_inputs_to_physics, world_hash_to_physics_checksum, PhysicsRollbackSession,
 };
+pub use protocol::{Message, Protocol};
+pub use world::{Entity, EntityProps, World, WorldHash, WorldState, MAX_PROPS};
+pub use world_soa::{Slot, WorldSoA, WorldStorage};
 
 /// ALICE-Sync version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -159,7 +177,11 @@ impl std::fmt::Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CausalityViolation { expected, got } => {
-                write!(f, "Causality violation: expected seq {}, got {}", expected, got)
+                write!(
+                    f,
+                    "Causality violation: expected seq {}, got {}",
+                    expected, got
+                )
             }
             Self::StateDivergence { local, remote } => {
                 write!(

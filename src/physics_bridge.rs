@@ -34,11 +34,11 @@
 //!                    ALICE-Physics           ALICE-Sync
 //! ```
 
-use crate::input_sync::{InputFrame, RollbackSession, RollbackAction, SyncResult};
+use crate::input_sync::{InputFrame, RollbackAction, RollbackSession, SyncResult};
 use crate::world::WorldHash;
 use alice_physics::{
-    DeterministicSimulation, FrameInput, SimulationChecksum, NetcodeConfig,
-    Vec3Fix, InputApplicator,
+    DeterministicSimulation, FrameInput, InputApplicator, NetcodeConfig, SimulationChecksum,
+    Vec3Fix,
 };
 
 // ============================================================================
@@ -208,7 +208,9 @@ impl PhysicsRollbackSession {
         let physics_inputs: Vec<FrameInput> = sync_inputs_to_physics(&sync_inputs);
 
         self.sim.save_snapshot();
-        let checksum = self.sim.advance_frame_with_applicator(&physics_inputs, applicator);
+        let checksum = self
+            .sim
+            .advance_frame_with_applicator(&physics_inputs, applicator);
 
         let state = self.sim.world.serialize_state();
         self.sync.save_snapshot(frame, state, checksum.0);
@@ -272,7 +274,9 @@ impl PhysicsRollbackSession {
             let physics_inputs = sync_inputs_to_physics(&sync_inputs);
 
             self.sim.save_snapshot();
-            let checksum = self.sim.advance_frame_with_applicator(&physics_inputs, applicator);
+            let checksum = self
+                .sim
+                .advance_frame_with_applicator(&physics_inputs, applicator);
 
             let state = self.sim.world.serialize_state();
             self.sync.save_snapshot(frame, state, checksum.0);
@@ -354,10 +358,7 @@ mod tests {
 
         // Add player bodies
         for i in 0..2u8 {
-            let body = RigidBody::new_dynamic(
-                Vec3Fix::from_int(i as i64 * 5, 10, 0),
-                Fix128::ONE,
-            );
+            let body = RigidBody::new_dynamic(Vec3Fix::from_int(i as i64 * 5, 10, 0), Fix128::ONE);
             let idx = session.sim.add_body(body);
             session.sim.assign_player_body(i, idx);
         }
@@ -387,10 +388,7 @@ mod tests {
 
         // Add player bodies
         for i in 0..2u8 {
-            let body = RigidBody::new_dynamic(
-                Vec3Fix::from_int(i as i64 * 5, 10, 0),
-                Fix128::ONE,
-            );
+            let body = RigidBody::new_dynamic(Vec3Fix::from_int(i as i64 * 5, 10, 0), Fix128::ONE);
             let idx = session.sim.add_body(body);
             session.sim.assign_player_body(i, idx);
         }
@@ -403,9 +401,7 @@ mod tests {
         }
 
         // Remote sends frame 1 with different data → rollback
-        let action = session.add_remote_input(
-            InputFrame::new(1, 1).with_movement(5, 0, -5)
-        );
+        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(5, 0, -5));
         assert_eq!(action, RollbackAction::Rollback { to_frame: 1 });
 
         // Handle the rollback

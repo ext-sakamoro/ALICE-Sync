@@ -56,7 +56,10 @@ enum Slot<T> {
     /// Occupied slot with data and generation
     Occupied { data: T, generation: Generation },
     /// Free slot pointing to next free index
-    Free { next_free: u32, generation: Generation },
+    Free {
+        next_free: u32,
+        generation: Generation,
+    },
 }
 
 /// Generational arena for cache-friendly storage
@@ -112,10 +115,16 @@ impl<T> Arena<T> {
             // Reuse free slot
             let index = self.free_head as usize;
             match &self.slots[index] {
-                Slot::Free { next_free, generation } => {
+                Slot::Free {
+                    next_free,
+                    generation,
+                } => {
                     let gen = *generation;
                     self.free_head = *next_free;
-                    self.slots[index] = Slot::Occupied { data, generation: gen };
+                    self.slots[index] = Slot::Occupied {
+                        data,
+                        generation: gen,
+                    };
                     Handle::new(index as u32, gen)
                 }
                 _ => unreachable!(),
@@ -123,7 +132,10 @@ impl<T> Arena<T> {
         } else {
             // Allocate new slot
             let index = self.slots.len();
-            self.slots.push(Slot::Occupied { data, generation: 0 });
+            self.slots.push(Slot::Occupied {
+                data,
+                generation: 0,
+            });
             Handle::new(index as u32, 0)
         }
     }
@@ -213,26 +225,28 @@ impl<T> Arena<T> {
 
     /// Iterate over all occupied slots
     pub fn iter(&self) -> impl Iterator<Item = (Handle, &T)> {
-        self.slots.iter().enumerate().filter_map(|(i, slot)| {
-            match slot {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| match slot {
                 Slot::Occupied { data, generation } => {
                     Some((Handle::new(i as u32, *generation), data))
                 }
                 _ => None,
-            }
-        })
+            })
     }
 
     /// Iterate mutably over all occupied slots
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Handle, &mut T)> {
-        self.slots.iter_mut().enumerate().filter_map(|(i, slot)| {
-            match slot {
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, slot)| match slot {
                 Slot::Occupied { data, generation } => {
                     Some((Handle::new(i as u32, *generation), data))
                 }
                 _ => None,
-            }
-        })
+            })
     }
 }
 

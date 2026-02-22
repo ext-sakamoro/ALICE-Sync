@@ -1,5 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use alice_sync::{Event, EventKind, Node, NodeId, World, WorldSoA, Vec3Fixed, Vec3Simd, Fixed, MotionData};
+use alice_sync::{
+    Event, EventKind, Fixed, MotionData, Node, NodeId, Vec3Fixed, Vec3Simd, World, WorldSoA,
+};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn bench_event_apply(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_apply");
@@ -46,9 +48,7 @@ fn bench_world_hash(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("incremental_O1", entity_count),
             &entity_count,
-            |b, _| {
-                b.iter(|| black_box(world.hash()))
-            },
+            |b, _| b.iter(|| black_box(world.hash())),
         );
 
         // O(N) hash (full recalculation)
@@ -133,9 +133,7 @@ fn bench_serialization(c: &mut Criterion) {
         delta: [1000, 2000, 3000],
     });
 
-    group.bench_function("bincode_encode", |b| {
-        b.iter(|| black_box(event.to_bytes()))
-    });
+    group.bench_function("bincode_encode", |b| b.iter(|| black_box(event.to_bytes())));
 
     group.bench_function("bitcode_encode", |b| {
         b.iter(|| black_box(event.to_compact_bytes()))
@@ -218,11 +216,13 @@ fn bench_batch_processing(c: &mut Criterion) {
 
             // Spawn 100 entities
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             // Batch apply all motions
@@ -247,11 +247,13 @@ fn bench_batch_processing(c: &mut Criterion) {
             let mut world = World::new(42);
 
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             for e in &events {
@@ -275,11 +277,13 @@ fn bench_vertical_simd(c: &mut Criterion) {
 
             // Spawn 1024 entities (aligned for SIMD)
             for i in 0..1024u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             // Apply uniform motion to all 1024 using Vertical SIMD
@@ -305,11 +309,13 @@ fn bench_vertical_simd(c: &mut Criterion) {
             let mut world = World::new(42);
 
             for i in 0..1024u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             world.apply_motions_batch(black_box(&motions));
@@ -333,11 +339,13 @@ fn bench_vertical_simd(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
 
             for i in 0..1024u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             world.apply_motions_batch(black_box(&motions));
@@ -360,7 +368,7 @@ fn bench_demon_mode(c: &mut Criterion) {
     group.bench_function("random_access_1000", |b| {
         let motions: Vec<MotionData> = (0..1000)
             .map(|i| MotionData {
-                entity: ((i * 7 + 13) % 100) as u32,  // Pseudo-random pattern
+                entity: ((i * 7 + 13) % 100) as u32, // Pseudo-random pattern
                 delta_x: 1,
                 delta_y: 0,
                 delta_z: 0,
@@ -371,11 +379,13 @@ fn bench_demon_mode(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
 
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             // Unsorted batch (random access)
@@ -389,7 +399,7 @@ fn bench_demon_mode(c: &mut Criterion) {
     group.bench_function("sorted_batch_1000", |b| {
         let motions: Vec<MotionData> = (0..1000)
             .map(|i| MotionData {
-                entity: ((i * 7 + 13) % 100) as u32,  // Same pseudo-random pattern
+                entity: ((i * 7 + 13) % 100) as u32, // Same pseudo-random pattern
                 delta_x: 1,
                 delta_y: 0,
                 delta_z: 0,
@@ -400,11 +410,13 @@ fn bench_demon_mode(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
 
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             // Demon Mode: sorted batch
@@ -418,7 +430,7 @@ fn bench_demon_mode(c: &mut Criterion) {
     group.bench_function("sequential_ids_1000", |b| {
         let motions: Vec<MotionData> = (0..1000)
             .map(|i| MotionData {
-                entity: (i % 100) as u32,  // Sequential pattern
+                entity: (i % 100) as u32, // Sequential pattern
                 delta_x: 1,
                 delta_y: 0,
                 delta_z: 0,
@@ -429,11 +441,13 @@ fn bench_demon_mode(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
 
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             // Demon Mode with sequential IDs
@@ -448,7 +462,7 @@ fn bench_demon_mode(c: &mut Criterion) {
         // 1024 motions targeting 128 batches of 8 contiguous entities
         let motions: Vec<MotionData> = (0..1024)
             .map(|i| MotionData {
-                entity: i as u32,  // Perfectly contiguous
+                entity: i as u32, // Perfectly contiguous
                 delta_x: 1,
                 delta_y: 0,
                 delta_z: 0,
@@ -459,11 +473,13 @@ fn bench_demon_mode(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
 
             for i in 0..1024u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             world.apply_motions_sorted(black_box(motions.clone()));
@@ -488,11 +504,13 @@ fn bench_demon_mode(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
 
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             world.apply_motions_presorted(black_box(&motions));
@@ -525,11 +543,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_sorted(black_box(motions.clone()));
             black_box(world.hash())
@@ -550,11 +570,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_demon(black_box(motions.clone()));
             black_box(world.hash())
@@ -575,11 +597,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_nosort(black_box(&motions));
             black_box(world.hash())
@@ -595,32 +619,38 @@ fn bench_overengineering_check(c: &mut Criterion) {
             let mut world = WorldSoA::new(42);
             // Spawn 100
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             // Despawn 50% (even IDs)
             for i in (0..100u32).step_by(2) {
-                world.apply(&Event::new(EventKind::Despawn { entity: i })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Despawn { entity: i }))
+                    .unwrap();
             }
             // Re-spawn with new IDs (100-149)
             for i in 100..150u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             // Now motions target 0-99 but only odd exist + 100-149
             let frag_motions: Vec<MotionData> = (0..1000)
                 .map(|i| {
                     let entity = if i % 2 == 0 {
-                        (i % 50) * 2 + 1  // odd: 1,3,5...99
+                        (i % 50) * 2 + 1 // odd: 1,3,5...99
                     } else {
-                        100 + (i % 50)    // new: 100-149
+                        100 + (i % 50) // new: 100-149
                     };
                     MotionData {
                         entity: entity as u32,
@@ -640,21 +670,27 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             for i in (0..100u32).step_by(2) {
-                world.apply(&Event::new(EventKind::Despawn { entity: i })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Despawn { entity: i }))
+                    .unwrap();
             }
             for i in 100..150u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
 
             let frag_motions: Vec<MotionData> = (0..1000)
@@ -686,7 +722,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
     group.bench_function("case_c_coalesce_same_entity", |b| {
         let motions: Vec<MotionData> = (0..1000)
             .map(|_| MotionData {
-                entity: 50,  // Always same entity
+                entity: 50, // Always same entity
                 delta_x: 1,
                 delta_y: 0,
                 delta_z: 0,
@@ -696,11 +732,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_sorted(black_box(motions.clone()));
             black_box(world.hash())
@@ -720,11 +758,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_demon(black_box(motions.clone()));
             black_box(world.hash())
@@ -735,7 +775,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
     group.bench_function("case_c_coalesce_unique_entities", |b| {
         let motions: Vec<MotionData> = (0..100)
             .map(|i| MotionData {
-                entity: i as u32,  // All unique
+                entity: i as u32, // All unique
                 delta_x: 1,
                 delta_y: 0,
                 delta_z: 0,
@@ -745,11 +785,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_sorted(black_box(motions.clone()));
             black_box(world.hash())
@@ -769,11 +811,13 @@ fn bench_overengineering_check(c: &mut Criterion) {
         b.iter(|| {
             let mut world = WorldSoA::new(42);
             for i in 0..100u32 {
-                world.apply(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                })).unwrap();
+                world
+                    .apply(&Event::new(EventKind::Spawn {
+                        entity: i,
+                        kind: 0,
+                        pos: [0, 0, 0],
+                    }))
+                    .unwrap();
             }
             world.apply_motions_demon(black_box(motions.clone()));
             black_box(world.hash())

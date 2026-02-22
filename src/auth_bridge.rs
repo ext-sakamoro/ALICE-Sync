@@ -3,8 +3,8 @@
 //! P2P peer authentication using Ed25519 ZKP.
 //! Each sync node has an identity; events can be signed to prevent spoofing.
 
-use alice_auth::{Identity, AliceId, AliceSig, verify, ok};
-use crate::{NodeId, Event};
+use crate::{Event, NodeId};
+use alice_auth::{ok, verify, AliceId, AliceSig, Identity};
 
 /// Authenticated sync node that signs outgoing events.
 pub struct AuthenticatedNode {
