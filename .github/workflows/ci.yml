@@ -25,6 +25,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Bridge features (physics, telemetry, cache, auth, codec, analytics)
+      # depend on sibling ALICE crates via path deps. Create minimal stubs
+      # so Cargo can resolve the workspace, but we only build/test core features.
       - name: Create dependency stubs
         shell: bash
         run: |
@@ -52,26 +55,23 @@ jobs:
             echo "" > "../$dir/src/lib.rs"
           done
 
-      - name: Build (no default features) [T0]
+      - name: Build (no default features)
         run: cargo build --lib --no-default-features
 
-      - name: Test (default = std) [T1]
-        run: cargo test --lib
+      - name: Test (default = std)
+        run: cargo test --features std
 
-      - name: Build (async) [T3]
+      - name: Build (async)
         run: cargo build --lib --features "async"
 
-      - name: Build (simd) [T3]
+      - name: Build (simd)
         run: cargo build --lib --features "simd"
 
-      - name: Build (all bridges) [T3]
-        run: cargo build --lib --features "physics,telemetry,cache,auth"
-
-      - name: Build (media bridges) [T3]
-        run: cargo build --lib --features "codec,analytics"
-
-      - name: Build (cloud) [T3]
+      - name: Build (cloud)
         run: cargo build --lib --features "cloud"
+
+      - name: Doc tests
+        run: cargo test --features std --doc
 
   clippy:
     name: Clippy
@@ -112,9 +112,11 @@ jobs:
             echo "" > "../$dir/src/lib.rs"
           done
 
-      - name: Clippy
-        run: cargo clippy --lib -- --cap-lints warn
-        continue-on-error: true
+      - name: Clippy (core features)
+        run: cargo clippy --features std -- -W clippy::all
+
+      - name: Clippy (cloud)
+        run: cargo clippy --features cloud -- -W clippy::all
 
   fmt:
     name: Format
