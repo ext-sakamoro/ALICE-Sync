@@ -364,7 +364,7 @@ impl WorldStorage {
     /// XOR-reduce 8 hashes into one
     #[inline(always)]
     #[must_use]
-    pub fn reduce_hashes_xor(hashes: [u64; 8]) -> u64 {
+    pub const fn reduce_hashes_xor(hashes: [u64; 8]) -> u64 {
         hashes[0]
             ^ hashes[1]
             ^ hashes[2]
@@ -378,14 +378,14 @@ impl WorldStorage {
     /// Entity count
     #[inline(always)]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Check if empty
     #[inline(always)]
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.count == 0
     }
 
@@ -410,13 +410,13 @@ impl Slot {
 
     #[inline(always)]
     #[must_use]
-    pub fn new(index: u32, generation: u32) -> Self {
+    pub const fn new(index: u32, generation: u32) -> Self {
         Self { index, generation }
     }
 
     #[inline(always)]
     #[must_use]
-    pub fn is_valid(&self) -> bool {
+    pub const fn is_valid(&self) -> bool {
         self.index != u32::MAX
     }
 }
@@ -565,7 +565,7 @@ impl WorldSoA {
     /// Get world hash (O(1))
     #[inline(always)]
     #[must_use]
-    pub fn hash(&self) -> WorldHash {
+    pub const fn hash(&self) -> WorldHash {
         self.current_hash
     }
 
@@ -582,14 +582,14 @@ impl WorldSoA {
     /// Entity count
     #[inline(always)]
     #[must_use]
-    pub fn entity_count(&self) -> usize {
+    pub const fn entity_count(&self) -> usize {
         self.storage.len()
     }
 
     /// Current frame
     #[inline(always)]
     #[must_use]
-    pub fn frame(&self) -> u64 {
+    pub const fn frame(&self) -> u64 {
         self.storage.frame
     }
 

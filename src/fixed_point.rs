@@ -193,14 +193,14 @@ impl Vec3Fixed {
     /// Convert to SIMD vector for batch operations
     #[inline(always)]
     #[must_use]
-    pub fn to_simd(self) -> Vec3Simd {
+    pub const fn to_simd(self) -> Vec3Simd {
         Vec3Simd::from_vec3(self)
     }
 
     /// Hash for XOR rolling hash (optimized: no branching)
     #[inline(always)]
     #[must_use]
-    pub fn hash_bits(self) -> u64 {
+    pub const fn hash_bits(self) -> u64 {
         let x = self.x.0 as u64;
         let y = self.y.0 as u64;
         let z = self.z.0 as u64;
@@ -247,7 +247,7 @@ impl Vec3Simd {
     /// Create from individual components
     #[inline(always)]
     #[must_use]
-    pub fn new(x: i32, y: i32, z: i32) -> Self {
+    pub const fn new(x: i32, y: i32, z: i32) -> Self {
         Self {
             data: i32x4::new([x, y, z, 0]),
         }
@@ -256,7 +256,7 @@ impl Vec3Simd {
     /// Create from `Vec3Fixed`
     #[inline(always)]
     #[must_use]
-    pub fn from_vec3(v: Vec3Fixed) -> Self {
+    pub const fn from_vec3(v: Vec3Fixed) -> Self {
         Self {
             data: i32x4::new([v.x.0, v.y.0, v.z.0, 0]),
         }
@@ -265,7 +265,7 @@ impl Vec3Simd {
     /// Create from i16 array (network format)
     #[inline(always)]
     #[must_use]
-    pub fn from_i16_array(arr: [i16; 3]) -> Self {
+    pub const fn from_i16_array(arr: [i16; 3]) -> Self {
         Self {
             data: i32x4::new([
                 (arr[0] as i32) << 6,
@@ -311,7 +311,7 @@ impl Vec3Simd {
     /// Add and store back to `Vec3Fixed` (common pattern)
     #[inline(always)]
     pub fn add_to_vec3(self, target: &mut Vec3Fixed) {
-        let current = Vec3Simd::from_vec3(*target);
+        let current = Self::from_vec3(*target);
         *target = current.add(self).to_vec3();
     }
 
@@ -403,5 +403,188 @@ mod tests {
         let packed = v.to_i16_array();
         let unpacked = Vec3Fixed::from_i16_array(packed);
         assert!((v.x.to_f32() - unpacked.x.to_f32()).abs() < 0.1);
+    }
+
+    // --- Fixed 追加テスト ---
+
+    #[test]
+    fn test_fixed_zero_and_one() {
+        assert!(Fixed::ZERO.to_f32().abs() < f32::EPSILON);
+        assert!((Fixed::ONE.to_f32() - 1.0_f32).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_fixed_from_int() {
+        let f = Fixed::from_int(5);
+        assert!((f.to_f32() - 5.0_f32).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_fixed_subtraction() {
+        let a = Fixed::from_f32(3.0);
+        let b = Fixed::from_f32(1.5);
+        let diff = a - b;
+        assert!((diff.to_f32() - 1.5_f32).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_fixed_multiplication() {
+        let a = Fixed::from_f32(2.0);
+        let b = Fixed::from_f32(3.0);
+        let product = a * b;
+        assert!((product.to_f32() - 6.0_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fixed_saturating_add_no_overflow() {
+        let a = Fixed::from_f32(10.0);
+        let b = Fixed::from_f32(5.0);
+        let result = a.saturating_add(b);
+        assert!((result.to_f32() - 15.0_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fixed_saturating_sub_no_underflow() {
+        let a = Fixed::from_f32(10.0);
+        let b = Fixed::from_f32(3.0);
+        let result = a.saturating_sub(b);
+        assert!((result.to_f32() - 7.0_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fixed_saturating_mul() {
+        let a = Fixed::from_f32(2.5);
+        let b = Fixed::from_f32(4.0);
+        let result = a.saturating_mul(b);
+        assert!((result.to_f32() - 10.0_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fixed_add_assign() {
+        let mut a = Fixed::from_f32(1.0);
+        a += Fixed::from_f32(2.0);
+        assert!((a.to_f32() - 3.0_f32).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_fixed_to_i16_from_i16() {
+        let original: i16 = 127;
+        let f = Fixed::from_i16(original);
+        assert_eq!(f.to_i16(), original);
+    }
+
+    #[test]
+    fn test_fixed_bits_roundtrip() {
+        let bits = 0x0001_8000_i32; // 1.5 in Q16.16
+        let f = Fixed::from_bits(bits);
+        assert_eq!(f.to_bits(), bits);
+    }
+
+    // --- Vec3Fixed 追加テスト ---
+
+    #[test]
+    fn test_vec3fixed_add() {
+        let a = Vec3Fixed::from_f32(1.0, 2.0, 3.0);
+        let b = Vec3Fixed::from_f32(0.5, 0.5, 0.5);
+        let c = a + b;
+        assert!((c.x.to_f32() - 1.5_f32).abs() < 0.01);
+        assert!((c.y.to_f32() - 2.5_f32).abs() < 0.01);
+        assert!((c.z.to_f32() - 3.5_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_vec3fixed_add_assign() {
+        let mut a = Vec3Fixed::from_f32(1.0, 1.0, 1.0);
+        a += Vec3Fixed::from_f32(1.0, 2.0, 3.0);
+        assert!((a.x.to_f32() - 2.0_f32).abs() < 0.01);
+        assert!((a.y.to_f32() - 3.0_f32).abs() < 0.01);
+        assert!((a.z.to_f32() - 4.0_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_vec3fixed_to_f32_array() {
+        let v = Vec3Fixed::from_f32(1.0, -2.0, 0.5);
+        let arr = v.to_f32_array();
+        assert!((arr[0] - 1.0_f32).abs() < 0.01);
+        assert!((arr[1] - (-2.0_f32)).abs() < 0.01);
+        assert!((arr[2] - 0.5_f32).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_vec3fixed_hash_bits_differs_for_different_vectors() {
+        let a = Vec3Fixed::from_f32(1.0, 2.0, 3.0);
+        let b = Vec3Fixed::from_f32(1.0, 2.0, 4.0);
+        assert_ne!(a.hash_bits(), b.hash_bits());
+    }
+
+    #[test]
+    fn test_vec3fixed_zero() {
+        assert_eq!(Vec3Fixed::ZERO.x.0, 0);
+        assert_eq!(Vec3Fixed::ZERO.y.0, 0);
+        assert_eq!(Vec3Fixed::ZERO.z.0, 0);
+    }
+
+    // --- Vec3Simd 追加テスト ---
+
+    #[test]
+    fn test_vec3simd_sub() {
+        let a = Vec3Simd::new(500, 300, 200);
+        let b = Vec3Simd::new(100, 100, 100);
+        let result = a.sub(b).to_vec3();
+        assert_eq!(result.x.0, 400);
+        assert_eq!(result.y.0, 200);
+        assert_eq!(result.z.0, 100);
+    }
+
+    #[test]
+    fn test_vec3simd_add_assign() {
+        let mut a = Vec3Simd::new(10, 20, 30);
+        a += Vec3Simd::new(1, 2, 3);
+        let v = a.to_vec3();
+        assert_eq!(v.x.0, 11);
+        assert_eq!(v.y.0, 22);
+        assert_eq!(v.z.0, 33);
+    }
+
+    #[test]
+    fn test_vec3simd_hash_bits_stable() {
+        let a = Vec3Simd::new(100, 200, 300);
+        assert_eq!(a.hash_bits(), a.hash_bits());
+    }
+
+    #[test]
+    fn test_vec3simd_zero() {
+        let z = Vec3Simd::ZERO.to_vec3();
+        assert_eq!(z.x.0, 0);
+        assert_eq!(z.y.0, 0);
+        assert_eq!(z.z.0, 0);
+    }
+
+    #[test]
+    fn test_vec3simd_from_i16_array() {
+        let arr: [i16; 3] = [3, -5, 7];
+        let simd = Vec3Simd::from_i16_array(arr);
+        let v = simd.to_vec3();
+        // from_i16 shifts left by 6
+        assert_eq!(v.x.0, 3 << 6);
+        assert_eq!(v.y.0, -5_i32 << 6);
+        assert_eq!(v.z.0, 7 << 6);
+    }
+
+    // --- batch_add_vec3 ---
+
+    #[test]
+    fn test_batch_add_vec3() {
+        let mut positions = vec![
+            Vec3Fixed::from_f32(0.0, 0.0, 0.0),
+            Vec3Fixed::from_f32(1.0, 1.0, 1.0),
+        ];
+        let deltas = vec![
+            Vec3Fixed::from_f32(1.0, 0.0, 0.0),
+            Vec3Fixed::from_f32(0.0, 1.0, 0.0),
+        ];
+        batch_add_vec3(&mut positions, &deltas);
+        assert!((positions[0].x.to_f32() - 1.0_f32).abs() < 0.01);
+        assert!((positions[1].y.to_f32() - 2.0_f32).abs() < 0.01);
     }
 }

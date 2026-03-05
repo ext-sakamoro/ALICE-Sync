@@ -62,7 +62,7 @@ impl InputFrame {
     /// Create a new empty input for the given frame and player
     #[inline]
     #[must_use]
-    pub fn new(frame: u64, player_id: u8) -> Self {
+    pub const fn new(frame: u64, player_id: u8) -> Self {
         Self {
             frame,
             player_id,
@@ -75,7 +75,7 @@ impl InputFrame {
     /// Set movement
     #[inline]
     #[must_use]
-    pub fn with_movement(mut self, x: i16, y: i16, z: i16) -> Self {
+    pub const fn with_movement(mut self, x: i16, y: i16, z: i16) -> Self {
         self.movement = [x, y, z];
         self
     }
@@ -83,7 +83,7 @@ impl InputFrame {
     /// Set actions
     #[inline]
     #[must_use]
-    pub fn with_actions(mut self, actions: u32) -> Self {
+    pub const fn with_actions(mut self, actions: u32) -> Self {
         self.actions = actions;
         self
     }
@@ -91,7 +91,7 @@ impl InputFrame {
     /// Set aim direction
     #[inline]
     #[must_use]
-    pub fn with_aim(mut self, x: i16, y: i16, z: i16) -> Self {
+    pub const fn with_aim(mut self, x: i16, y: i16, z: i16) -> Self {
         self.aim = [x, y, z];
         self
     }
@@ -214,7 +214,7 @@ impl InputBuffer {
     /// Check if input is confirmed for a specific frame.
     #[inline]
     #[must_use]
-    pub fn is_confirmed(&self, frame: u64) -> bool {
+    pub const fn is_confirmed(&self, frame: u64) -> bool {
         frame <= self.confirmed_frame
     }
 
@@ -377,7 +377,7 @@ impl LockstepSession {
     /// Current confirmed frame.
     #[inline]
     #[must_use]
-    pub fn confirmed_frame(&self) -> u64 {
+    pub const fn confirmed_frame(&self) -> u64 {
         self.confirmed_frame
     }
 
@@ -498,13 +498,9 @@ impl RollbackSession {
         // Check if this input differs from what we predicted
         let needs_rollback = if frame <= self.predicted_frame {
             // We already simulated past this frame — check if prediction was correct
-            if let Some(existing) = self.buffers[pid].get(frame) {
-                // We had a confirmed/predicted input — compare
-                existing != &input
-            } else {
-                // No input was stored for this frame (never predicted) — no mismatch
-                false
-            }
+            self.buffers[pid]
+                .get(frame)
+                .is_some_and(|existing| existing != &input)
         } else {
             false
         };
@@ -588,21 +584,21 @@ impl RollbackSession {
     /// Current confirmed frame (all players' inputs received).
     #[inline]
     #[must_use]
-    pub fn confirmed_frame(&self) -> u64 {
+    pub const fn confirmed_frame(&self) -> u64 {
         self.confirmed_frame
     }
 
     /// Current predicted frame (local simulation is at this frame).
     #[inline]
     #[must_use]
-    pub fn predicted_frame(&self) -> u64 {
+    pub const fn predicted_frame(&self) -> u64 {
         self.predicted_frame
     }
 
     /// Number of frames ahead of confirmation (rollback risk).
     #[inline]
     #[must_use]
-    pub fn frames_ahead(&self) -> u64 {
+    pub const fn frames_ahead(&self) -> u64 {
         self.predicted_frame.saturating_sub(self.confirmed_frame)
     }
 
@@ -800,7 +796,7 @@ mod tests {
 
         // Save snapshot for frame 1
         let fake_state = vec![1, 2, 3, 4, 5];
-        session.save_snapshot(1, fake_state.clone(), 0xAAAA);
+        session.save_snapshot(1, fake_state, 0xAAAA);
 
         // Retrieve
         let restored = session.get_snapshot(1).unwrap();

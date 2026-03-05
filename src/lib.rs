@@ -166,7 +166,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub type Result<T> = std::result::Result<T, SyncError>;
 
 /// Error types for ALICE-Sync
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncError {
     CausalityViolation { expected: u64, got: u64 },
     StateDivergence { local: WorldHash, remote: WorldHash },

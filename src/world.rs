@@ -88,7 +88,7 @@ impl EntityProps {
 
     /// Set a property value
     #[inline(always)]
-    pub fn set(&mut self, prop: u16, value: i32) {
+    pub const fn set(&mut self, prop: u16, value: i32) {
         let idx = (prop as usize) & (MAX_PROPS - 1); // Mask to valid range
         self.values[idx] = value;
         self.active |= 1 << idx;
@@ -97,7 +97,7 @@ impl EntityProps {
     /// Get a property value (None if not set)
     #[inline(always)]
     #[must_use]
-    pub fn get(&self, prop: u16) -> Option<i32> {
+    pub const fn get(&self, prop: u16) -> Option<i32> {
         let idx = (prop as usize) & (MAX_PROPS - 1);
         if self.active & (1 << idx) != 0 {
             Some(self.values[idx])
@@ -365,7 +365,7 @@ impl World {
     /// Deterministic simulation tick
     #[inline]
     #[allow(clippy::unused_self)]
-    fn tick_simulation(&mut self) {
+    const fn tick_simulation(&self) {
         // Physics, AI, etc. would go here
         // All operations must use fixed-point for determinism
     }
@@ -373,7 +373,7 @@ impl World {
     /// Get world hash in O(1)
     #[inline(always)]
     #[must_use]
-    pub fn hash(&self) -> WorldHash {
+    pub const fn hash(&self) -> WorldHash {
         self.current_hash
     }
 
@@ -390,21 +390,21 @@ impl World {
     /// Get current state
     #[inline(always)]
     #[must_use]
-    pub fn state(&self) -> &WorldState {
+    pub const fn state(&self) -> &WorldState {
         &self.state
     }
 
     /// Get entity count
     #[inline(always)]
     #[must_use]
-    pub fn entity_count(&self) -> usize {
+    pub const fn entity_count(&self) -> usize {
         self.state.entities.len()
     }
 
     /// Get current frame
     #[inline(always)]
     #[must_use]
-    pub fn frame(&self) -> u64 {
+    pub const fn frame(&self) -> u64 {
         self.state.frame
     }
 
@@ -690,5 +690,305 @@ mod tests {
         assert!(world.get_entity(100).is_some());
         assert!(world.get_entity(1000).is_some());
         assert!(world.get_entity(999).is_none());
+    }
+
+    // --- EntityProps 追加テスト ---
+
+    #[test]
+    fn test_entity_props_overwrite() {
+        let mut props = EntityProps::EMPTY;
+        props.set(2, 42);
+        assert_eq!(props.get(2), Some(42));
+        props.set(2, 99);
+        assert_eq!(props.get(2), Some(99));
+    }
+
+    #[test]
+    fn test_entity_props_hash_differs_on_change() {
+        let mut props = EntityProps::EMPTY;
+        let hash_empty = props.hash_bits();
+
+        // prop 2 (rotate_left 8) の値 100 — active bit 4 と XOR が衝突しない
+        props.set(2, 100);
+        let hash_with_prop = props.hash_bits();
+        assert_ne!(hash_empty, hash_with_prop);
+
+        props.set(3, 200);
+        let hash_two_props = props.hash_bits();
+        assert_ne!(hash_with_prop, hash_two_props);
+    }
+
+    #[test]
+    fn test_entity_props_all_slots() {
+        let mut props = EntityProps::EMPTY;
+        // MAX_PROPS = 16 スロット全て設定できる
+        for i in 0..MAX_PROPS as u16 {
+            props.set(i, i32::from(i) * 10 + 1);
+        }
+        for i in 0..MAX_PROPS as u16 {
+            assert_eq!(props.get(i), Some(i32::from(i) * 10 + 1));
+        }
+    }
+
+    // --- WorldHash ---
+
+    #[test]
+    fn test_world_hash_xor_self_cancels() {
+        let h = WorldHash(0xDEAD_BEEF_1234_5678);
+        assert_eq!(h.xor(h.0).0, 0);
+    }
+
+    #[test]
+    fn test_world_hash_zero() {
+        assert_eq!(WorldHash::zero().0, 0);
+    }
+
+    // --- World 追加テスト ---
+
+    #[test]
+    fn test_world_entity_count() {
+        let mut world = World::new(0);
+        assert_eq!(world.entity_count(), 0);
+
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
+        assert_eq!(world.entity_count(), 1);
+
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 2,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
+        assert_eq!(world.entity_count(), 2);
+
+        world
+            .apply(&Event::new(EventKind::Despawn { entity: 1 }))
+            .unwrap();
+        assert_eq!(world.entity_count(), 1);
+    }
+
+    #[test]
+    fn test_world_frame_advances_on_tick() {
+        let mut world = World::new(0);
+        assert_eq!(world.frame(), 0);
+
+        world
+            .apply(&Event::new(EventKind::Tick { frame: 5 }))
+            .unwrap();
+        assert_eq!(world.frame(), 5);
+
+        world
+            .apply(&Event::new(EventKind::Tick { frame: 10 }))
+            .unwrap();
+        assert_eq!(world.frame(), 10);
+    }
+
+    #[test]
+    fn test_world_input_and_custom_events_do_not_change_hash() {
+        let mut world = World::new(0);
+        let hash_before = world.hash();
+
+        // Input と Custom は world state に影響しない
+        world
+            .apply(&Event::new(EventKind::Input { player: 0, code: 1 }))
+            .unwrap();
+        world
+            .apply(&Event::new(EventKind::Custom {
+                type_id: 0,
+                payload: [0u8; 16],
+            }))
+            .unwrap();
+
+        assert_eq!(world.hash(), hash_before);
+    }
+
+    #[test]
+    fn test_world_motion_ignored_for_missing_entity() {
+        let mut world = World::new(0);
+        let hash_before = world.hash();
+
+        // 存在しないエンティティへの Motion は無視される
+        world
+            .apply(&Event::new(EventKind::Motion {
+                entity: 999,
+                delta: [100, 0, 0],
+            }))
+            .unwrap();
+
+        assert_eq!(world.hash(), hash_before);
+        assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn test_world_property_ignored_for_missing_entity() {
+        let mut world = World::new(0);
+        let hash_before = world.hash();
+
+        world
+            .apply(&Event::new(EventKind::Property {
+                entity: 999,
+                prop: 0,
+                value: 42,
+            }))
+            .unwrap();
+
+        assert_eq!(world.hash(), hash_before);
+    }
+
+    #[test]
+    fn test_world_get_entity_mut() {
+        let mut world = World::new(0);
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 7,
+                kind: 2,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
+
+        {
+            let e = world.get_entity_mut(7).unwrap();
+            e.kind = 99;
+        }
+        assert_eq!(world.get_entity(7).unwrap().kind, 99);
+        assert!(world.get_entity_mut(999).is_none());
+    }
+
+    #[test]
+    fn test_world_iter_entities() {
+        let mut world = World::new(0);
+        for id in 1..=5_u32 {
+            world
+                .apply(&Event::new(EventKind::Spawn {
+                    entity: id,
+                    kind: 0,
+                    pos: [0, 0, 0],
+                }))
+                .unwrap();
+        }
+        let count = world.iter_entities().count();
+        assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn test_world_apply_motions_batch() {
+        use crate::MotionData;
+
+        let mut world = World::new(0);
+        world
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
+
+        let motions = vec![MotionData {
+            entity: 1,
+            delta_x: 10,
+            delta_y: 0,
+            delta_z: 0,
+        }];
+        world.apply_motions_batch(&motions);
+
+        let e = world.get_entity(1).unwrap();
+        // delta_x=10 は (10 << 6) = 640 fixed-point units
+        assert_eq!(e.position.x.0, 640);
+    }
+
+    #[test]
+    fn test_world_apply_spawns_batch() {
+        use crate::SpawnData;
+
+        let mut world = World::new(0);
+        let spawns = vec![
+            SpawnData {
+                entity: 10,
+                kind: 1,
+                pos: [5, 0, 0],
+            },
+            SpawnData {
+                entity: 20,
+                kind: 2,
+                pos: [0, 5, 0],
+            },
+        ];
+        world.apply_spawns_batch(&spawns);
+
+        assert_eq!(world.entity_count(), 2);
+        assert!(world.get_entity(10).is_some());
+        assert!(world.get_entity(20).is_some());
+        assert_eq!(world.get_entity(10).unwrap().kind, 1);
+        assert_eq!(world.get_entity(20).unwrap().kind, 2);
+    }
+
+    #[test]
+    fn test_world_apply_stream_batched() {
+        use crate::{Event, EventKind, EventStream};
+
+        let mut stream = EventStream::new();
+        stream.push(
+            Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }),
+            0,
+        );
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [5, 0, 0],
+            }),
+            0,
+        );
+
+        let mut world = World::new(0);
+        world.apply_stream_batched(&stream).unwrap();
+
+        assert_eq!(world.entity_count(), 1);
+        // delta=5 → (5 << 6) = 320 fixed-point units
+        assert_eq!(world.get_entity(1).unwrap().position.x.0, 320);
+    }
+
+    #[test]
+    fn test_world_recalculate_hash_matches_incremental() {
+        let mut world = World::new(0);
+        for id in 1..=10_u32 {
+            world
+                .apply(&Event::new(EventKind::Spawn {
+                    entity: id,
+                    kind: 0,
+                    pos: [id as i16, 0, 0],
+                }))
+                .unwrap();
+        }
+        let incremental = world.hash();
+        let recalculated = world.recalculate_hash();
+        assert_eq!(incremental, recalculated);
+    }
+
+    #[test]
+    fn test_world_state_id_map_capacity() {
+        let mut state = WorldState::default();
+        state.ensure_capacity(100);
+        assert!(state.id_map.len() >= 101);
+        // ensure_capacity は冪等
+        state.ensure_capacity(50);
+        assert!(state.id_map.len() >= 101);
+    }
+
+    #[test]
+    fn test_world_state_remove_handle_invalid() {
+        let mut state = WorldState::default();
+        // 存在しない ID は None を返す
+        assert!(state.remove_handle(999).is_none());
     }
 }

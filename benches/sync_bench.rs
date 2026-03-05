@@ -1,3 +1,10 @@
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
+
 use alice_sync::{
     Event, EventKind, Fixed, MotionData, Node, NodeId, Vec3Fixed, Vec3Simd, World, WorldSoA,
 };
@@ -22,7 +29,7 @@ fn bench_event_apply(c: &mut Criterion) {
     group.bench_function("motion_single", |b| {
         b.iter(|| {
             node.apply_event(black_box(&motion)).unwrap();
-        })
+        });
     });
 
     group.finish();
@@ -57,7 +64,7 @@ fn bench_world_hash(c: &mut Criterion) {
             &entity_count,
             |b, _| {
                 let mut w = world.clone();
-                b.iter(|| black_box(w.recalculate_hash()))
+                b.iter(|| black_box(w.recalculate_hash()));
             },
         );
     }
@@ -75,7 +82,7 @@ fn bench_simd_vs_scalar(c: &mut Criterion) {
         b.iter(|| {
             pos = black_box(pos) + black_box(delta);
             black_box(pos)
-        })
+        });
     });
 
     // SIMD Vec3 addition
@@ -89,7 +96,7 @@ fn bench_simd_vs_scalar(c: &mut Criterion) {
         b.iter(|| {
             black_box(&delta).add_to_vec3(black_box(&mut pos));
             black_box(pos)
-        })
+        });
     });
 
     group.finish();
@@ -117,7 +124,7 @@ fn bench_entity_lookup(c: &mut Criterion) {
             &entity_count,
             |b, &count| {
                 let target = count / 2;
-                b.iter(|| black_box(world.get_entity(black_box(target))))
+                b.iter(|| black_box(world.get_entity(black_box(target))));
             },
         );
     }
@@ -136,7 +143,7 @@ fn bench_serialization(c: &mut Criterion) {
     group.bench_function("bincode_encode", |b| b.iter(|| black_box(event.to_bytes())));
 
     group.bench_function("bitcode_encode", |b| {
-        b.iter(|| black_box(event.to_compact_bytes()))
+        b.iter(|| black_box(event.to_compact_bytes()));
     });
 
     let bincode_bytes = event.to_bytes();
@@ -150,11 +157,11 @@ fn bench_serialization(c: &mut Criterion) {
     );
 
     group.bench_function("bincode_decode", |b| {
-        b.iter(|| black_box(Event::from_bytes(&bincode_bytes)))
+        b.iter(|| black_box(Event::from_bytes(&bincode_bytes)));
     });
 
     group.bench_function("bitcode_decode", |b| {
-        b.iter(|| black_box(Event::from_compact_bytes(&bitcode_bytes)))
+        b.iter(|| black_box(Event::from_compact_bytes(&bitcode_bytes)));
     });
 
     group.finish();
@@ -190,7 +197,7 @@ fn bench_sync_throughput(c: &mut Criterion) {
             }
 
             black_box(node.world_hash())
-        })
+        });
     });
 
     group.finish();
@@ -229,7 +236,7 @@ fn bench_batch_processing(c: &mut Criterion) {
             world.apply_motions_batch(black_box(&motions));
 
             black_box(world.hash())
-        })
+        });
     });
 
     // Individual apply (for comparison)
@@ -261,7 +268,7 @@ fn bench_batch_processing(c: &mut Criterion) {
             }
 
             black_box(world.hash())
-        })
+        });
     });
 
     group.finish();
@@ -291,7 +298,7 @@ fn bench_vertical_simd(c: &mut Criterion) {
             world.apply_uniform_motion_vertical(0, 1024, 1, 0, 0);
 
             black_box(world.hash())
-        })
+        });
     });
 
     // Traditional AoS World for comparison
@@ -321,7 +328,7 @@ fn bench_vertical_simd(c: &mut Criterion) {
             world.apply_motions_batch(black_box(&motions));
 
             black_box(world.hash())
-        })
+        });
     });
 
     // WorldSoA batch (non-SIMD for comparison)
@@ -351,7 +358,7 @@ fn bench_vertical_simd(c: &mut Criterion) {
             world.apply_motions_batch(black_box(&motions));
 
             black_box(world.hash())
-        })
+        });
     });
 
     group.finish();
@@ -392,7 +399,7 @@ fn bench_demon_mode(c: &mut Criterion) {
             world.apply_motions_batch(black_box(&motions));
 
             black_box(world.hash())
-        })
+        });
     });
 
     // Sorted access pattern (Demon Mode)
@@ -423,7 +430,7 @@ fn bench_demon_mode(c: &mut Criterion) {
             world.apply_motions_sorted(black_box(motions.clone()));
 
             black_box(world.hash())
-        })
+        });
     });
 
     // Sequential ID pattern (best case for SIMD)
@@ -454,7 +461,7 @@ fn bench_demon_mode(c: &mut Criterion) {
             world.apply_motions_sorted(black_box(motions.clone()));
 
             black_box(world.hash())
-        })
+        });
     });
 
     // Contiguous 8-entity SIMD batch (ideal case)
@@ -485,7 +492,7 @@ fn bench_demon_mode(c: &mut Criterion) {
             world.apply_motions_sorted(black_box(motions.clone()));
 
             black_box(world.hash())
-        })
+        });
     });
 
     // Pre-sorted (skip sorting overhead)
@@ -516,7 +523,7 @@ fn bench_demon_mode(c: &mut Criterion) {
             world.apply_motions_presorted(black_box(&motions));
 
             black_box(world.hash())
-        })
+        });
     });
 
     group.finish();
@@ -553,7 +560,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_sorted(black_box(motions.clone()));
             black_box(world.hash())
-        })
+        });
     });
 
     // Gemini impl (ID-sort only, no coalesce, no slot-sort)
@@ -580,7 +587,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_demon(black_box(motions.clone()));
             black_box(world.hash())
-        })
+        });
     });
 
     // No sort baseline
@@ -607,7 +614,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_nosort(black_box(&motions));
             black_box(world.hash())
-        })
+        });
     });
 
     // ========================================================================
@@ -663,7 +670,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
 
             world.apply_motions_sorted(black_box(frag_motions));
             black_box(world.hash())
-        })
+        });
     });
 
     group.bench_function("case_b_demon_gemini_fragmented", |b| {
@@ -711,7 +718,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
 
             world.apply_motions_demon(black_box(frag_motions));
             black_box(world.hash())
-        })
+        });
     });
 
     // ========================================================================
@@ -742,7 +749,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_sorted(black_box(motions.clone()));
             black_box(world.hash())
-        })
+        });
     });
 
     group.bench_function("case_c_nocoalesce_same_entity", |b| {
@@ -768,7 +775,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_demon(black_box(motions.clone()));
             black_box(world.hash())
-        })
+        });
     });
 
     // Unique entities (coalesce overhead with no benefit)
@@ -795,7 +802,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_sorted(black_box(motions.clone()));
             black_box(world.hash())
-        })
+        });
     });
 
     group.bench_function("case_c_nocoalesce_unique_entities", |b| {
@@ -821,7 +828,7 @@ fn bench_overengineering_check(c: &mut Criterion) {
             }
             world.apply_motions_demon(black_box(motions.clone()));
             black_box(world.hash())
-        })
+        });
     });
 
     group.finish();

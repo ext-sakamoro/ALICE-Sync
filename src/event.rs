@@ -39,7 +39,7 @@ pub struct SeqNum(pub u64);
 
 /// Event kinds - all state changes expressible in few bytes
 /// Uses i16 for network-efficient coordinates (6 bytes vs 12 bytes for f32x3)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub enum EventKind {
     /// Entity motion: `entity_id` + delta vector
     /// Network: 4 + 6 = 10 bytes (was 16 with f32)
@@ -78,21 +78,21 @@ impl EventKind {
     /// Convert i16 delta to `Vec3Fixed`
     #[inline]
     #[must_use]
-    pub fn delta_to_fixed(delta: [i16; 3]) -> Vec3Fixed {
+    pub const fn delta_to_fixed(delta: [i16; 3]) -> Vec3Fixed {
         Vec3Fixed::from_i16_array(delta)
     }
 
     /// Convert `Vec3Fixed` to i16 delta
     #[inline]
     #[must_use]
-    pub fn fixed_to_delta(v: Vec3Fixed) -> [i16; 3] {
+    pub const fn fixed_to_delta(v: Vec3Fixed) -> [i16; 3] {
         v.to_i16_array()
     }
 
     /// Create motion event from `Vec3Fixed`
     #[inline]
     #[must_use]
-    pub fn motion(entity: u32, delta: Vec3Fixed) -> Self {
+    pub const fn motion(entity: u32, delta: Vec3Fixed) -> Self {
         Self::Motion {
             entity,
             delta: delta.to_i16_array(),
@@ -102,7 +102,7 @@ impl EventKind {
     /// Create spawn event from `Vec3Fixed`
     #[inline]
     #[must_use]
-    pub fn spawn(entity: u32, kind: u16, pos: Vec3Fixed) -> Self {
+    pub const fn spawn(entity: u32, kind: u16, pos: Vec3Fixed) -> Self {
         Self::Spawn {
             entity,
             kind,
@@ -112,7 +112,7 @@ impl EventKind {
 }
 
 /// A single event with metadata
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct Event {
     /// Unique identifier
     pub id: EventId,
@@ -129,7 +129,7 @@ pub struct Event {
 impl Event {
     /// Create a new event (ID and seq assigned later)
     #[must_use]
-    pub fn new(kind: EventKind) -> Self {
+    pub const fn new(kind: EventKind) -> Self {
         Self {
             id: EventId(0),
             seq: SeqNum(0),
@@ -165,7 +165,7 @@ impl Event {
 
     /// Get approximate size in bytes (compact format)
     #[must_use]
-    pub fn size_bytes(&self) -> usize {
+    pub const fn size_bytes(&self) -> usize {
         // Header: id(8) + seq(8) + origin(8) + timestamp(8) = 32
         // But with varint encoding, typically 8-16 bytes
         let header = 12; // Estimated compressed header
@@ -187,7 +187,7 @@ impl Event {
 
 /// Motion event data (cache-friendly, SIMD-ready)
 /// Layout: `[entity:4][dx:2][dy:2][dz:2]` = 10 bytes + 2 padding = 12 bytes
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct MotionData {
     pub entity: u32,
@@ -197,7 +197,7 @@ pub struct MotionData {
 }
 
 /// Spawn event data (packed)
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct SpawnData {
     pub entity: u32,
@@ -206,14 +206,14 @@ pub struct SpawnData {
 }
 
 /// Despawn event data (minimal)
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct DespawnData {
     pub entity: u32,
 }
 
 /// Property event data
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct PropertyData {
     pub entity: u32,
@@ -222,7 +222,7 @@ pub struct PropertyData {
 }
 
 /// Input event data
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct InputData {
     pub player: u16,
@@ -230,14 +230,14 @@ pub struct InputData {
 }
 
 /// Tick event data
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct TickData {
     pub frame: u64,
 }
 
 /// Custom event data
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct CustomData {
     pub type_id: u16,
@@ -258,7 +258,7 @@ pub enum EventType {
 }
 
 /// Event metadata (sequence, origin, type)
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 #[repr(C)]
 pub struct EventMeta {
     pub seq: u64,
@@ -426,19 +426,19 @@ impl EventStream {
 
     /// Current sequence number
     #[must_use]
-    pub fn current_seq(&self) -> SeqNum {
+    pub const fn current_seq(&self) -> SeqNum {
         SeqNum(self.next_seq.saturating_sub(1))
     }
 
     /// Total events count
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.events.len()
     }
 
     /// Check if empty
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
 
@@ -456,7 +456,7 @@ impl EventStream {
 
     /// Get `SoA` statistics
     #[must_use]
-    pub fn soa_stats(&self) -> SoAStats {
+    pub const fn soa_stats(&self) -> SoAStats {
         SoAStats {
             motions: self.motions.len(),
             spawns: self.spawns.len(),
@@ -526,5 +526,352 @@ mod tests {
 
         // Precision loss is acceptable for network
         assert!((v.x.to_f32() - back.x.to_f32()).abs() < 0.1);
+    }
+
+    // --- EventKind ヘルパーメソッド ---
+
+    #[test]
+    fn test_eventkind_motion_helper() {
+        let v = Vec3Fixed::from_f32(1.0, -2.0, 3.0);
+        let kind = EventKind::motion(7, v);
+        match kind {
+            EventKind::Motion { entity, delta } => {
+                assert_eq!(entity, 7);
+                let back = EventKind::delta_to_fixed(delta);
+                assert!((back.x.to_f32() - 1.0_f32).abs() < 0.1);
+                assert!((back.y.to_f32() - (-2.0_f32)).abs() < 0.1);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_eventkind_spawn_helper() {
+        let pos = Vec3Fixed::from_f32(5.0, 0.0, -3.0);
+        let kind = EventKind::spawn(99, 3, pos);
+        match kind {
+            EventKind::Spawn { entity, kind, pos } => {
+                assert_eq!(entity, 99);
+                assert_eq!(kind, 3);
+                let back = EventKind::delta_to_fixed(pos);
+                assert!((back.x.to_f32() - 5.0_f32).abs() < 0.1);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_event_size_bytes_all_variants() {
+        // size_bytes() はコンパイル時定数なので各バリアントで検証
+        assert_eq!(
+            Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0]
+            })
+            .size_bytes(),
+            24
+        );
+        assert_eq!(
+            Event::new(EventKind::Despawn { entity: 1 }).size_bytes(),
+            16
+        );
+        assert_eq!(
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [0, 0, 0]
+            })
+            .size_bytes(),
+            22
+        );
+        assert_eq!(
+            Event::new(EventKind::Property {
+                entity: 1,
+                prop: 0,
+                value: 0
+            })
+            .size_bytes(),
+            22
+        );
+        assert_eq!(
+            Event::new(EventKind::Input { player: 0, code: 0 }).size_bytes(),
+            18
+        );
+        assert_eq!(Event::new(EventKind::Tick { frame: 0 }).size_bytes(), 20);
+        assert_eq!(
+            Event::new(EventKind::Custom {
+                type_id: 0,
+                payload: [0u8; 16]
+            })
+            .size_bytes(),
+            30
+        );
+    }
+
+    #[test]
+    fn test_event_bincode_roundtrip_all_kinds() {
+        let kinds = vec![
+            EventKind::Despawn { entity: 42 },
+            EventKind::Property {
+                entity: 1,
+                prop: 5,
+                value: -999,
+            },
+            EventKind::Input {
+                player: 3,
+                code: 0xFF_FF,
+            },
+            EventKind::Tick { frame: 12345 },
+            EventKind::Custom {
+                type_id: 7,
+                payload: [0xAB; 16],
+            },
+        ];
+        for kind in kinds {
+            let original = Event::new(kind);
+            let bytes = original.to_bytes();
+            let restored = Event::from_bytes(&bytes).unwrap();
+            assert_eq!(original.kind, restored.kind);
+        }
+    }
+
+    #[test]
+    fn test_event_compact_bytes_roundtrip_all_kinds() {
+        let kinds = vec![
+            EventKind::Despawn { entity: 1 },
+            EventKind::Property {
+                entity: 2,
+                prop: 0,
+                value: 100,
+            },
+            EventKind::Input { player: 0, code: 1 },
+            EventKind::Tick { frame: 9999 },
+            EventKind::Custom {
+                type_id: 1,
+                payload: [1u8; 16],
+            },
+        ];
+        for kind in kinds {
+            let original = Event::new(kind);
+            let bytes = original.to_compact_bytes();
+            let restored = Event::from_compact_bytes(&bytes).unwrap();
+            assert_eq!(original.kind, restored.kind);
+        }
+    }
+
+    #[test]
+    fn test_event_from_bytes_invalid_returns_none() {
+        assert!(Event::from_bytes(b"garbage").is_none());
+        assert!(Event::from_compact_bytes(b"garbage").is_none());
+    }
+
+    // --- EventStream ---
+
+    #[test]
+    fn test_event_stream_push_increments_seq() {
+        let mut stream = EventStream::new();
+        assert!(stream.is_empty());
+
+        let id0 = stream.push(Event::new(EventKind::Tick { frame: 1 }), 1);
+        let id1 = stream.push(Event::new(EventKind::Tick { frame: 2 }), 1);
+
+        assert_eq!(stream.len(), 2);
+        assert_eq!(id0.0, 0);
+        assert_eq!(id1.0, 1);
+        assert_eq!(stream.current_seq(), SeqNum(1));
+    }
+
+    #[test]
+    fn test_event_stream_soa_routing() {
+        let mut stream = EventStream::new();
+
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [1, 0, 0],
+            }),
+            0,
+        );
+        stream.push(
+            Event::new(EventKind::Spawn {
+                entity: 2,
+                kind: 0,
+                pos: [0, 0, 0],
+            }),
+            0,
+        );
+        stream.push(Event::new(EventKind::Despawn { entity: 3 }), 0);
+        stream.push(
+            Event::new(EventKind::Property {
+                entity: 4,
+                prop: 1,
+                value: 7,
+            }),
+            0,
+        );
+        stream.push(
+            Event::new(EventKind::Input {
+                player: 0,
+                code: 99,
+            }),
+            0,
+        );
+        stream.push(Event::new(EventKind::Tick { frame: 5 }), 0);
+        stream.push(
+            Event::new(EventKind::Custom {
+                type_id: 2,
+                payload: [0u8; 16],
+            }),
+            0,
+        );
+
+        let stats = stream.soa_stats();
+        assert_eq!(stats.motions, 1);
+        assert_eq!(stats.spawns, 1);
+        assert_eq!(stats.despawns, 1);
+        assert_eq!(stats.properties, 1);
+        assert_eq!(stats.inputs, 1);
+        assert_eq!(stats.ticks, 1);
+        assert_eq!(stats.customs, 1);
+    }
+
+    #[test]
+    fn test_event_stream_all_motions_accessor() {
+        let mut stream = EventStream::new();
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 10,
+                delta: [5, -3, 2],
+            }),
+            0,
+        );
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 20,
+                delta: [0, 0, 1],
+            }),
+            0,
+        );
+
+        let motions = stream.all_motions();
+        assert_eq!(motions.len(), 2);
+        assert_eq!(motions[0].entity, 10);
+        assert_eq!(motions[0].delta_x, 5);
+        assert_eq!(motions[0].delta_y, -3);
+        assert_eq!(motions[1].entity, 20);
+    }
+
+    #[test]
+    fn test_event_stream_all_spawns_accessor() {
+        let mut stream = EventStream::new();
+        stream.push(
+            Event::new(EventKind::Spawn {
+                entity: 5,
+                kind: 3,
+                pos: [1, 2, 3],
+            }),
+            0,
+        );
+
+        let spawns = stream.all_spawns();
+        assert_eq!(spawns.len(), 1);
+        assert_eq!(spawns[0].entity, 5);
+        assert_eq!(spawns[0].kind, 3);
+        assert_eq!(spawns[0].pos, [1, 2, 3]);
+    }
+
+    #[test]
+    fn test_event_stream_since() {
+        let mut stream = EventStream::new();
+        for i in 0..10_u32 {
+            stream.push(
+                Event::new(EventKind::Tick {
+                    frame: u64::from(i),
+                }),
+                0,
+            );
+        }
+
+        let tail = stream.since(SeqNum(7));
+        assert_eq!(tail.len(), 3); // seqs 7, 8, 9
+        assert_eq!(tail[0].seq, SeqNum(7));
+    }
+
+    #[test]
+    fn test_event_stream_since_zero_returns_all() {
+        let mut stream = EventStream::new();
+        stream.push(Event::new(EventKind::Tick { frame: 0 }), 0);
+        stream.push(Event::new(EventKind::Tick { frame: 1 }), 0);
+
+        assert_eq!(stream.since(SeqNum(0)).len(), 2);
+    }
+
+    #[test]
+    fn test_event_stream_metadata_ordering() {
+        let mut stream = EventStream::new();
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [1, 0, 0],
+            }),
+            42,
+        );
+        stream.push(
+            Event::new(EventKind::Spawn {
+                entity: 2,
+                kind: 0,
+                pos: [0, 0, 0],
+            }),
+            42,
+        );
+
+        let meta = stream.metadata();
+        assert_eq!(meta.len(), 2);
+        assert_eq!(meta[0].event_type, EventType::Motion);
+        assert_eq!(meta[0].origin, 42);
+        assert_eq!(meta[0].index, 0);
+        assert_eq!(meta[1].event_type, EventType::Spawn);
+        assert_eq!(meta[1].index, 0);
+    }
+
+    #[test]
+    fn test_event_stream_total_bytes_increases() {
+        let mut stream = EventStream::new();
+        assert_eq!(stream.total_bytes(), 0);
+
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [0, 0, 0],
+            }),
+            0,
+        );
+        let after_one = stream.total_bytes();
+        assert!(after_one > 0);
+
+        stream.push(
+            Event::new(EventKind::Spawn {
+                entity: 2,
+                kind: 0,
+                pos: [0, 0, 0],
+            }),
+            0,
+        );
+        assert!(stream.total_bytes() > after_one);
+    }
+
+    #[test]
+    fn test_event_stream_to_compact_bytes_nonempty() {
+        let mut stream = EventStream::new();
+        stream.push(
+            Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [10, 0, 0],
+            }),
+            0,
+        );
+
+        let bytes = stream.to_compact_bytes();
+        assert!(!bytes.is_empty());
     }
 }

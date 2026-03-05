@@ -99,7 +99,7 @@ pub struct Protocol {
 impl Protocol {
     /// Create a new protocol handler
     #[must_use]
-    pub fn new(node_id: NodeId) -> Self {
+    pub const fn new(node_id: NodeId) -> Self {
         Self {
             node_id,
             hash_check_interval: 100,
@@ -109,7 +109,7 @@ impl Protocol {
 
     /// Create hello message
     #[must_use]
-    pub fn hello(&self, seq: u64, world_hash: WorldHash) -> Message {
+    pub const fn hello(&self, seq: u64, world_hash: WorldHash) -> Message {
         Message::Hello {
             node_id: self.node_id,
             seq,
@@ -119,36 +119,36 @@ impl Protocol {
 
     /// Create sync request
     #[must_use]
-    pub fn request_sync(&self, since_seq: u64) -> Message {
+    pub const fn request_sync(&self, since_seq: u64) -> Message {
         Message::RequestSync { since_seq }
     }
 
     /// Create events message
     #[must_use]
-    pub fn events(&self, events: Vec<Event>) -> Message {
+    pub const fn events(&self, events: Vec<Event>) -> Message {
         Message::Events { events }
     }
 
     /// Check if hash check is due
     #[must_use]
-    pub fn should_hash_check(&self) -> bool {
+    pub const fn should_hash_check(&self) -> bool {
         self.events_since_check >= self.hash_check_interval
     }
 
     /// Create hash check message
-    pub fn hash_check(&mut self, seq: u64, world_hash: WorldHash) -> Message {
+    pub const fn hash_check(&mut self, seq: u64, world_hash: WorldHash) -> Message {
         self.events_since_check = 0;
         Message::HashCheck { seq, world_hash }
     }
 
     /// Record event processed
-    pub fn event_processed(&mut self) {
+    pub const fn event_processed(&mut self) {
         self.events_since_check += 1;
     }
 
     /// Create ack message
     #[must_use]
-    pub fn ack(&self, seq: u64) -> Message {
+    pub const fn ack(&self, seq: u64) -> Message {
         Message::Ack { seq }
     }
 }
@@ -232,5 +232,189 @@ mod tests {
             bincode_size
         );
         assert!(compact.len() <= bincode_size);
+    }
+
+    // --- Message ラウンドトリップ (全バリアント) ---
+
+    #[test]
+    fn test_message_roundtrip_hello() {
+        let msg = Message::Hello {
+            node_id: NodeId(7),
+            seq: 42,
+            world_hash: WorldHash(0xDEAD_BEEF),
+        };
+        let bytes = msg.to_compact_bytes();
+        let restored = Message::from_compact_bytes(&bytes).unwrap();
+        match restored {
+            Message::Hello {
+                node_id,
+                seq,
+                world_hash,
+            } => {
+                assert_eq!(node_id.0, 7);
+                assert_eq!(seq, 42);
+                assert_eq!(world_hash.0, 0xDEAD_BEEF);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_request_sync() {
+        let msg = Message::RequestSync { since_seq: 999 };
+        let bytes = msg.to_compact_bytes();
+        let restored = Message::from_compact_bytes(&bytes).unwrap();
+        match restored {
+            Message::RequestSync { since_seq } => assert_eq!(since_seq, 999),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_hash_check() {
+        let msg = Message::HashCheck {
+            seq: 100,
+            world_hash: WorldHash(0xABCD),
+        };
+        let bytes = msg.to_compact_bytes();
+        let restored = Message::from_compact_bytes(&bytes).unwrap();
+        match restored {
+            Message::HashCheck { seq, world_hash } => {
+                assert_eq!(seq, 100);
+                assert_eq!(world_hash.0, 0xABCD);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_diverged() {
+        let msg = Message::Diverged {
+            my_hash: WorldHash(1),
+            your_hash: WorldHash(2),
+        };
+        let bytes = msg.to_compact_bytes();
+        let restored = Message::from_compact_bytes(&bytes).unwrap();
+        match restored {
+            Message::Diverged { my_hash, your_hash } => {
+                assert_eq!(my_hash.0, 1);
+                assert_eq!(your_hash.0, 2);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_ack_and_bye() {
+        let ack = Message::Ack { seq: 55 };
+        let bytes = ack.to_compact_bytes();
+        match Message::from_compact_bytes(&bytes).unwrap() {
+            Message::Ack { seq } => assert_eq!(seq, 55),
+            _ => panic!("wrong variant"),
+        }
+
+        let bye = Message::Bye;
+        let bytes = bye.to_compact_bytes();
+        assert!(matches!(
+            Message::from_compact_bytes(&bytes).unwrap(),
+            Message::Bye
+        ));
+    }
+
+    #[test]
+    fn test_message_from_bytes_invalid_returns_none() {
+        assert!(Message::from_bytes(b"junk").is_none());
+        assert!(Message::from_compact_bytes(b"junk").is_none());
+    }
+
+    #[test]
+    fn test_message_size_bytes_is_compact_len() {
+        let msg = Message::Ack { seq: 1 };
+        assert_eq!(msg.size_bytes(), msg.to_compact_bytes().len());
+    }
+
+    // --- Protocol ハンドラ ---
+
+    #[test]
+    fn test_protocol_hello() {
+        let p = Protocol::new(NodeId(3));
+        let msg = p.hello(10, WorldHash(0x1234));
+        match msg {
+            Message::Hello {
+                node_id,
+                seq,
+                world_hash,
+            } => {
+                assert_eq!(node_id.0, 3);
+                assert_eq!(seq, 10);
+                assert_eq!(world_hash.0, 0x1234);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_protocol_request_sync() {
+        let p = Protocol::new(NodeId(1));
+        let msg = p.request_sync(50);
+        match msg {
+            Message::RequestSync { since_seq } => assert_eq!(since_seq, 50),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_protocol_ack() {
+        let p = Protocol::new(NodeId(1));
+        let msg = p.ack(77);
+        match msg {
+            Message::Ack { seq } => assert_eq!(seq, 77),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_protocol_hash_check_resets_counter() {
+        let mut p = Protocol::new(NodeId(1));
+        // hash_check_interval = 100 なので 100 回処理後にトリガー
+        for _ in 0..100 {
+            p.event_processed();
+        }
+        assert!(p.should_hash_check());
+        p.hash_check(1, WorldHash(0));
+        assert!(!p.should_hash_check());
+    }
+
+    // --- BandwidthStats ---
+
+    #[test]
+    fn test_bandwidth_stats_bytes_per_event_zero_events() {
+        let stats = BandwidthStats::default();
+        assert!(stats.bytes_per_event().abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bandwidth_stats_bytes_per_event() {
+        let stats = BandwidthStats {
+            bytes_sent: 200,
+            events_synced: 10,
+            ..Default::default()
+        };
+        assert!((stats.bytes_per_event() - 20.0_f64).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_bandwidth_stats_compression_ratio_zero_sent() {
+        let stats = BandwidthStats::default();
+        assert!(stats.compression_ratio(1000).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bandwidth_stats_compression_ratio() {
+        let stats = BandwidthStats {
+            bytes_sent: 100,
+            ..Default::default()
+        };
+        assert!((stats.compression_ratio(400) - 4.0_f64).abs() < 0.001);
     }
 }

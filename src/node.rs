@@ -95,14 +95,14 @@ impl Node {
     /// Get current world hash (O(1))
     #[inline(always)]
     #[must_use]
-    pub fn world_hash(&self) -> WorldHash {
+    pub const fn world_hash(&self) -> WorldHash {
         self.world.hash()
     }
 
     /// Get current state
     #[inline(always)]
     #[must_use]
-    pub fn state(&self) -> NodeState {
+    pub const fn state(&self) -> NodeState {
         self.state
     }
 
@@ -210,14 +210,14 @@ impl Node {
     /// Get world reference
     #[inline(always)]
     #[must_use]
-    pub fn world(&self) -> &World {
+    pub const fn world(&self) -> &World {
         &self.world
     }
 
     /// Get event stream reference
     #[inline(always)]
     #[must_use]
-    pub fn events(&self) -> &EventStream {
+    pub const fn events(&self) -> &EventStream {
         &self.events
     }
 
@@ -326,5 +326,110 @@ mod tests {
 
         assert_eq!(node_a.world_hash(), node_b.world_hash());
         assert_eq!(node_a.world().entity_count(), 1000);
+    }
+
+    // --- Node 追加テスト ---
+
+    #[test]
+    fn test_node_initial_state() {
+        let node = Node::new(NodeId(42));
+        assert_eq!(node.id.0, 42);
+        assert_eq!(node.state(), NodeState::Disconnected);
+        assert_eq!(node.events().len(), 0);
+        assert_eq!(node.world().entity_count(), 0);
+    }
+
+    #[test]
+    fn test_node_with_seed() {
+        let node = Node::with_seed(NodeId(1), 0xCAFE);
+        // with_seed は正常に生成できる
+        assert_eq!(node.id.0, 1);
+    }
+
+    #[test]
+    fn test_node_stats() {
+        let mut node = Node::new(NodeId(1));
+        node.add_peer(NodeId(2));
+
+        node.emit(Event::new(EventKind::Spawn {
+            entity: 1,
+            kind: 0,
+            pos: [0, 0, 0],
+        }))
+        .unwrap();
+
+        let stats = node.stats();
+        assert_eq!(stats.events_count, 1);
+        assert_eq!(stats.peers_count, 1);
+        assert_eq!(stats.synced_peers, 0);
+        assert_eq!(stats.entity_count, 1);
+        assert!(stats.events_bytes > 0);
+    }
+
+    #[test]
+    fn test_node_update_peer_diverged() {
+        let mut node = Node::new(NodeId(1));
+        node.add_peer(NodeId(2));
+
+        // ノードに何かスポーンさせて hash != zero にする
+        node.emit(Event::new(EventKind::Spawn {
+            entity: 1,
+            kind: 0,
+            pos: [0, 0, 0],
+        }))
+        .unwrap();
+
+        // 間違ったハッシュを渡すと StateDivergence エラー
+        let wrong_hash = WorldHash(0xDEAD);
+        let result = node.update_peer(NodeId(2), 1, wrong_hash);
+        assert!(result.is_err());
+        match result {
+            Err(crate::SyncError::StateDivergence { .. }) => {}
+            _ => panic!("expected StateDivergence"),
+        }
+    }
+
+    #[test]
+    fn test_node_update_peer_synced() {
+        let mut node = Node::new(NodeId(1));
+        node.add_peer(NodeId(2));
+
+        // ハッシュが一致すれば Synced になる
+        let local_hash = node.world_hash();
+        node.update_peer(NodeId(2), 0, local_hash).unwrap();
+
+        let synced = node
+            .peers()
+            .filter(|p| p.state == NodeState::Synced)
+            .count();
+        assert_eq!(synced, 1);
+    }
+
+    #[test]
+    fn test_node_events_for_peer_unknown_returns_error() {
+        let node = Node::new(NodeId(1));
+        let result = node.events_for_peer(NodeId(99));
+        assert!(result.is_err());
+        match result {
+            Err(crate::SyncError::UnknownNode(id)) => assert_eq!(id.0, 99),
+            _ => panic!("expected UnknownNode"),
+        }
+    }
+
+    #[test]
+    fn test_node_update_peer_unknown_returns_error() {
+        let mut node = Node::new(NodeId(1));
+        let result = node.update_peer(NodeId(99), 0, WorldHash(0));
+        assert!(matches!(result, Err(crate::SyncError::UnknownNode(_))));
+    }
+
+    #[test]
+    fn test_node_peers_iterator() {
+        let mut node = Node::new(NodeId(1));
+        node.add_peer(NodeId(2));
+        node.add_peer(NodeId(3));
+
+        let count = node.peers().count();
+        assert_eq!(count, 2);
     }
 }

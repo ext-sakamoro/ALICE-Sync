@@ -82,7 +82,7 @@ impl<T> Default for Arena<T> {
 impl<T> Arena<T> {
     /// Create empty arena
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             slots: Vec::new(),
             free_head: u32::MAX,
@@ -103,14 +103,14 @@ impl<T> Arena<T> {
     /// Number of active elements
     #[inline]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
     /// Check if empty
     #[inline]
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -306,5 +306,103 @@ mod tests {
 
         let sum: i32 = arena.iter().map(|(_, v)| *v).sum();
         assert_eq!(sum, 6);
+    }
+
+    // --- Arena 追加テスト ---
+
+    #[test]
+    fn test_arena_empty() {
+        let arena: Arena<i32> = Arena::new();
+        assert!(arena.is_empty());
+        assert_eq!(arena.len(), 0);
+    }
+
+    #[test]
+    fn test_arena_with_capacity() {
+        let mut arena: Arena<i32> = Arena::with_capacity(8);
+        assert!(arena.is_empty());
+        let h = arena.insert(42);
+        assert_eq!(arena.get(h), Some(&42));
+    }
+
+    #[test]
+    fn test_arena_handle_invalid() {
+        assert!(!Handle::INVALID.is_valid());
+        assert!(Handle::new(0, 0).is_valid());
+    }
+
+    #[test]
+    fn test_arena_remove_nonexistent_returns_none() {
+        let mut arena: Arena<i32> = Arena::new();
+        let h = Handle::new(999, 0);
+        assert!(arena.remove(h).is_none());
+    }
+
+    #[test]
+    fn test_arena_stale_handle_returns_none_after_remove() {
+        let mut arena: Arena<i32> = Arena::new();
+        let h = arena.insert(100);
+        arena.remove(h);
+        // ハンドルは世代が変わるため取得できない
+        assert!(arena.get(h).is_none());
+        assert!(arena.remove(h).is_none());
+    }
+
+    #[test]
+    fn test_arena_iter_mut() {
+        let mut arena: Arena<i32> = Arena::new();
+        arena.insert(1);
+        arena.insert(2);
+        arena.insert(3);
+
+        // 各値を2倍にする
+        for (_, v) in arena.iter_mut() {
+            *v *= 2;
+        }
+
+        let sum: i32 = arena.iter().map(|(_, v)| *v).sum();
+        assert_eq!(sum, 12);
+    }
+
+    #[test]
+    fn test_arena_iter_handles_are_valid() {
+        let mut arena: Arena<i32> = Arena::new();
+        let h1 = arena.insert(10);
+        let h2 = arena.insert(20);
+
+        let handles: Vec<Handle> = arena.iter().map(|(h, _)| h).collect();
+        assert!(handles.contains(&h1));
+        assert!(handles.contains(&h2));
+    }
+
+    #[test]
+    fn test_arena_multiple_remove_reinsert_cycles() {
+        let mut arena: Arena<i32> = Arena::new();
+
+        // 3回 insert→remove→insert を繰り返して世代が正しく進むか確認
+        let h0 = arena.insert(0);
+        arena.remove(h0);
+        let h1 = arena.insert(1);
+        assert_eq!(h1.index, h0.index);
+        assert!(h1.generation > h0.generation);
+
+        arena.remove(h1);
+        let h2 = arena.insert(2);
+        assert_eq!(h2.index, h0.index);
+        assert!(h2.generation > h1.generation);
+
+        assert_eq!(arena.get(h2), Some(&2));
+    }
+
+    #[test]
+    fn test_arena_get_mut() {
+        let mut arena: Arena<i32> = Arena::new();
+        let h = arena.insert(5);
+
+        *arena.get_mut(h).unwrap() = 99;
+        assert_eq!(arena.get(h), Some(&99));
+
+        // 無効なハンドルは None
+        assert!(arena.get_mut(Handle::INVALID).is_none());
     }
 }
