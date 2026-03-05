@@ -290,8 +290,36 @@ match rollback.add_remote_input(confirmed_input) {
 | `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |
 | `codec` | No | Wavelet + rANS event stream compression via ALICE-Codec |
 | `analytics` | No | DDSketch/HLL/CMS probabilistic telemetry via ALICE-Analytics |
+| `ffi` | No | C-ABI FFI for Unity/UE5 (71 functions) |
 | `cloud` | No | Cloud-side multi-device spatial synchronization hub |
 | `all-bridges` | No | Enable all integration bridges (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
+
+## C-ABI FFI (Unity / UE5)
+
+71 `extern "C"` functions covering all core types. Enable with `--features ffi`.
+
+### Coverage
+
+| Module | Functions | Description |
+|--------|-----------|-------------|
+| World (AoS) | 8 | new, free, hash, entity_count, frame, apply_event, get_position, recalculate_hash |
+| WorldSoA | 5 | new, free, hash, entity_count, apply_event |
+| Node | 11 | new, with_seed, free, hash, state, emit, apply, add_peer, entity_count, events_count, events_bytes |
+| Event | 8 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes |
+| EventStream | 7 | new, free, push, len, is_empty, current_seq, total_bytes |
+| InputFrame | 10 | new, free, set/get movement, set/get actions, set/get aim, get_frame, get_player_id |
+| InputFrameArray | 3 | free, len, get |
+| Lockstep | 5 | new, free, add_local/remote_input, ready, advance, confirmed_frame, record_checksum |
+| Rollback | 7 | new, free, add_local/remote_input, confirmed/predicted_frame, frames_ahead |
+| Utilities | 4 | fixed_from_f32, fixed_to_f32, vec3_hash, version |
+
+### Unity C# (`bindings/unity/AliceSync.cs`)
+
+71 `[DllImport]` declarations with RAII `IDisposable` handles.
+
+### UE5 C++ (`bindings/ue5/AliceSync.h`)
+
+71 `extern "C"` declarations with 9 RAII `std::unique_ptr` handles.
 
 ## Python Bindings (PyO3 + NumPy Zero-Copy)
 
@@ -535,19 +563,20 @@ Consistency Check:
 
 ## Test Suite
 
-78 tests across core modules and bridge integrations:
+88 tests across core modules, bridge integrations, and FFI:
 
 | Scope | Command | Tests |
 |-------|---------|-------|
 | Core | `cargo test --features std` | 52 |
+| + FFI | `cargo test --features ffi` | 62 |
 | + Physics | `cargo test --features std,physics` | 58 |
 | + Telemetry | `cargo test --features std,telemetry` | 55 |
-| All bridges | `cargo test --features all-bridges,cloud` | 77 |
+| All features | `cargo test --features all-bridges,cloud,ffi` | 88 |
 
 ```bash
-cargo test --features std                  # Core tests (52)
-cargo test --features all-bridges,cloud    # All tests (77)
-cargo bench                                # Benchmarks
+cargo test --features std                       # Core tests (52)
+cargo test --features all-bridges,cloud,ffi     # All tests (88)
+cargo bench                                     # Benchmarks
 ```
 
 ### Codec Compression Note

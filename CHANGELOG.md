@@ -15,11 +15,14 @@ All notable changes to ALICE-Sync will be documented in this file.
 - `cache_bridge` (feature `cache`): Markov oracle entity prefetching via ALICE-Cache
 - `cloud_bridge` (feature `cloud`): star-topology multi-device spatial sync hub
 - Python bindings: `WorldSoA`, `InputFrame`, `LockstepSession`, `RollbackSession`
+- C-ABI FFI bindings: 71 `extern "C"` functions (feature `ffi`)
+- Unity C# bindings: 71 `[DllImport]` wrappers + RAII handles (`bindings/unity/AliceSync.cs`)
+- UE5 C++ bindings: 71 `extern "C"` declarations + 9 RAII handles (`bindings/ue5/AliceSync.h`)
 - "Demon Mode" batch optimizations: sort by entity_id, coalesce same-entity updates
 - Auto-SIMD detection for contiguous 8-slot ranges
 - Comprehensive module documentation in `lib.rs`
 - `CHANGELOG.md` and `CONTRIBUTING.md`
-- 78 tests across core + bridge modules
+- 88 tests across core + bridge + FFI modules
 
 ### Changed
 

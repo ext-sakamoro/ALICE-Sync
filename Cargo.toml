@@ -43,6 +43,7 @@ cache = ["alice-cache"]     # Entity state prefetching via Markov oracle
 auth = ["alice-auth"]       # P2P peer authentication with Ed25519 ZKP
 codec = ["dep:alice-codec", "std"]  # ALICE-Codec wavelet compression for event streams
 analytics = ["dep:alice-analytics", "std"]  # ALICE-Analytics sync telemetry
+ffi = ["std"]     # C-ABI FFI for Unity/UE5
 cloud = ["std"]  # Cloud-side multi-device spatial synchronization
 all-bridges = ["physics", "telemetry", "cache", "auth", "codec", "analytics"]  # All integration bridges
 

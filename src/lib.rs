@@ -125,6 +125,8 @@ pub mod cloud_bridge;
 #[cfg(feature = "codec")]
 pub mod codec_bridge;
 pub mod event;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod fixed_point;
 pub mod input_sync;
 pub mod node;
