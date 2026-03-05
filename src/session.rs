@@ -11,23 +11,24 @@
 //!
 //! # Sync Modes
 //!
-//! | Mode | Best For | Characteristics |
-//! |------|----------|-----------------|
-//! | `Lockstep` | RTS, turn-based, < 4 players | Waits for all inputs |
-//! | `Rollback` | Fighting games, FPS, action | Predicts + corrects |
-//! | `Crdt` | Collaboration, IoT, databases | Eventual consistency |
-//! | `EventSourcing` | Audit logs, financial, legal | Append-only + replay |
+//! | Mode | Best For | Implementation |
+//! |------|----------|----------------|
+//! | `Lockstep` | RTS, turn-based, < 4 players | Wraps [`LockstepSession`] |
+//! | `Rollback` | Fighting games, FPS, action | Wraps [`RollbackSession`] |
+//! | `Crdt` | Collaboration, IoT, databases | `LwwMap` eventual consistency |
+//! | `EventSourcing` | Audit logs, financial, legal | Append-only log + replay |
 //! | `Snapshot` | Late-join, recovery | Full state transfer |
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::channel::PubSub;
 use crate::crdt::{CrdtMergeable, LwwMap};
 use crate::discovery::Discovery;
+use crate::input_sync::{InputFrame, LockstepSession, RollbackAction, RollbackSession, SyncResult};
 use crate::protocol::Message;
 use crate::transport::{Envelope, SyncTransport, TransportError};
 use crate::{NodeId, WorldHash};
@@ -36,13 +37,13 @@ use crate::{NodeId, WorldHash};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncMode {
     /// Lockstep: all inputs collected before advancing.
-    /// Deterministic, high latency tolerance.
+    /// Uses [`LockstepSession`] from `input_sync`.
     Lockstep,
     /// Rollback: predict and advance immediately, correct on mismatch.
-    /// Low perceived latency, CPU cost on rollback.
+    /// Uses [`RollbackSession`] from `input_sync`.
     Rollback,
     /// CRDT: conflict-free replicated data types.
-    /// Eventual consistency, no coordination needed.
+    /// Uses `LwwMap` for eventual consistency.
     Crdt,
     /// Event Sourcing: append-only event log with replay.
     /// Full audit trail, deterministic rebuild.
@@ -50,6 +51,28 @@ pub enum SyncMode {
     /// Snapshot: periodic full state transfer.
     /// Simple, good for late-join and recovery.
     Snapshot,
+}
+
+/// Event log entry for `EventSourcing` mode.
+#[derive(Debug, Clone)]
+pub struct EventEntry {
+    /// Sequence number (auto-incremented, starts at 1)
+    pub seq: u64,
+    /// Serialized event data
+    pub data: Vec<u8>,
+    /// Node that originated this event
+    pub origin: NodeId,
+}
+
+/// Snapshot data for Snapshot mode.
+#[derive(Debug, Clone)]
+pub struct SnapshotData {
+    /// Frame/tick this snapshot was taken at
+    pub frame: u64,
+    /// Serialized state data
+    pub data: Vec<u8>,
+    /// State checksum for verification
+    pub checksum: u64,
 }
 
 /// Session configuration
@@ -71,6 +94,12 @@ pub struct SessionConfig {
     pub enable_discovery: bool,
     /// Human-readable instance name
     pub instance_name: String,
+    /// Number of players (used by Lockstep and Rollback modes)
+    pub player_count: u8,
+    /// Local player ID (used by Rollback mode)
+    pub local_player: u8,
+    /// Maximum rollback frames (used by Rollback mode)
+    pub max_rollback: u64,
 }
 
 impl Default for SessionConfig {
@@ -84,6 +113,9 @@ impl Default for SessionConfig {
             max_peers: 0,
             instance_name: "alice-sync-node".to_string(),
             enable_discovery: true,
+            player_count: 2,
+            local_player: 0,
+            max_rollback: 8,
         }
     }
 }
@@ -142,6 +174,24 @@ pub enum SessionEvent {
     /// Tick completed
     Tick { seq: u64 },
 }
+
+// ============================================================================
+// Mode-specific internal state
+// ============================================================================
+
+/// Internal state that varies by sync mode.
+/// Not exposed publicly — access through mode-specific methods on `SyncSession`.
+enum ModeState {
+    Lockstep(Arc<Mutex<LockstepSession>>),
+    Rollback(Arc<Mutex<RollbackSession>>),
+    Crdt(Arc<RwLock<LwwMap<String, Vec<u8>>>>),
+    EventSourcing(Arc<RwLock<Vec<EventEntry>>>),
+    Snapshot(Arc<RwLock<Option<SnapshotData>>>),
+}
+
+// ============================================================================
+// Session Builder
+// ============================================================================
 
 /// Builder for constructing a `SyncSession`.
 pub struct SessionBuilder {
@@ -213,6 +263,27 @@ impl SessionBuilder {
         self
     }
 
+    /// Set number of players (for Lockstep / Rollback modes).
+    #[must_use]
+    pub const fn player_count(mut self, count: u8) -> Self {
+        self.config.player_count = count;
+        self
+    }
+
+    /// Set local player ID (for Rollback mode).
+    #[must_use]
+    pub const fn local_player(mut self, id: u8) -> Self {
+        self.config.local_player = id;
+        self
+    }
+
+    /// Set maximum rollback frames (for Rollback mode).
+    #[must_use]
+    pub const fn max_rollback(mut self, frames: u64) -> Self {
+        self.config.max_rollback = frames;
+        self
+    }
+
     /// Build the session (does not start it yet).
     pub fn build<T: SyncTransport + 'static>(self, transport: T) -> SyncSession<T> {
         let local_addr = transport
@@ -223,7 +294,22 @@ impl SessionBuilder {
         let pubsub = Arc::new(PubSub::new());
         let (event_tx, _) = broadcast::channel(1024);
 
-        let replica_id = self.config.node_id.0;
+        let mode_state = match self.config.mode {
+            SyncMode::Lockstep => ModeState::Lockstep(Arc::new(Mutex::new(LockstepSession::new(
+                self.config.player_count,
+            )))),
+            SyncMode::Rollback => ModeState::Rollback(Arc::new(Mutex::new(RollbackSession::new(
+                self.config.player_count,
+                self.config.local_player,
+                self.config.max_rollback,
+            )))),
+            SyncMode::Crdt => {
+                ModeState::Crdt(Arc::new(RwLock::new(LwwMap::new(self.config.node_id.0))))
+            }
+            SyncMode::EventSourcing => ModeState::EventSourcing(Arc::new(RwLock::new(Vec::new()))),
+            SyncMode::Snapshot => ModeState::Snapshot(Arc::new(RwLock::new(None))),
+        };
+
         SyncSession {
             config: self.config,
             transport: Arc::new(transport),
@@ -232,7 +318,7 @@ impl SessionBuilder {
             state: Arc::new(RwLock::new(SessionState::Building)),
             stats: Arc::new(RwLock::new(SessionStats::default())),
             event_tx,
-            crdt_state: Arc::new(RwLock::new(LwwMap::new(replica_id))),
+            mode_state,
         }
     }
 }
@@ -243,10 +329,16 @@ impl Default for SessionBuilder {
     }
 }
 
+// ============================================================================
+// Sync Session
+// ============================================================================
+
 /// A live P2P sync session.
 ///
 /// Composes transport, discovery, pub/sub, and sync mode into
-/// a single orchestrated session.
+/// a single orchestrated session. Use mode-specific methods
+/// (`lockstep_*`, `rollback_*`, `crdt_*`, `event_*`, `snapshot_*`)
+/// to interact with the session's sync logic.
 pub struct SyncSession<T: SyncTransport> {
     config: SessionConfig,
     transport: Arc<T>,
@@ -255,11 +347,14 @@ pub struct SyncSession<T: SyncTransport> {
     state: Arc<RwLock<SessionState>>,
     stats: Arc<RwLock<SessionStats>>,
     event_tx: broadcast::Sender<SessionEvent>,
-    /// CRDT shared state (used when mode = Crdt)
-    crdt_state: Arc<RwLock<LwwMap<String, Vec<u8>>>>,
+    mode_state: ModeState,
 }
 
 impl<T: SyncTransport + 'static> SyncSession<T> {
+    // ========================================================================
+    // Generic accessors
+    // ========================================================================
+
     /// Get a reference to the transport.
     #[must_use]
     pub const fn transport(&self) -> &Arc<T> {
@@ -300,6 +395,10 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
         self.event_tx.subscribe()
     }
 
+    // ========================================================================
+    // Peer management
+    // ========================================================================
+
     /// Add a manual peer.
     pub async fn add_peer(&self, addr: SocketAddr) {
         use std::collections::HashMap;
@@ -337,28 +436,271 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
     /// Receive the next message from any peer.
     pub async fn recv(&self) -> Result<Envelope, TransportError> {
         let envelope = self.transport.recv().await?;
-        // Update discovery timestamp
         self.discovery.peer_seen(&envelope.from).await;
         let mut stats = self.stats.write().await;
         stats.messages_received += 1;
         Ok(envelope)
     }
 
-    /// Set a CRDT key-value (for CRDT mode).
+    // ========================================================================
+    // Lockstep mode methods
+    // ========================================================================
+
+    /// Add a local or remote input (Lockstep mode).
+    /// No-op if session is not in Lockstep mode.
+    pub async fn lockstep_add_input(&self, input: InputFrame) {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.add_local_input(input);
+        }
+    }
+
+    /// Add a remote player's input (Lockstep mode).
+    /// No-op if session is not in Lockstep mode.
+    pub async fn lockstep_add_remote(&self, input: InputFrame) {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.add_remote_input(input);
+        }
+    }
+
+    /// Check if all inputs are ready for the next frame (Lockstep mode).
+    /// Returns `false` if session is not in Lockstep mode.
+    pub async fn lockstep_ready(&self) -> bool {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.ready_to_advance()
+        } else {
+            false
+        }
+    }
+
+    /// Advance to the next frame, returning all players' inputs (Lockstep mode).
+    /// Returns `None` if not ready or session is not in Lockstep mode.
+    pub async fn lockstep_advance(&self) -> Option<Vec<InputFrame>> {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.advance()
+        } else {
+            None
+        }
+    }
+
+    /// Record a checksum for verification (Lockstep mode).
+    pub async fn lockstep_record_checksum(&self, frame: u64, checksum: u64) {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.record_checksum(frame, checksum);
+        }
+    }
+
+    /// Verify a remote checksum (Lockstep mode).
+    pub async fn lockstep_verify_checksum(&self, frame: u64, remote: u64) -> SyncResult {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.verify_checksum(frame, remote)
+        } else {
+            SyncResult::Ok
+        }
+    }
+
+    /// Current confirmed frame (Lockstep mode). Returns 0 if wrong mode.
+    pub async fn lockstep_confirmed_frame(&self) -> u64 {
+        if let ModeState::Lockstep(ref session) = self.mode_state {
+            session.lock().await.confirmed_frame()
+        } else {
+            0
+        }
+    }
+
+    // ========================================================================
+    // Rollback mode methods
+    // ========================================================================
+
+    /// Add local input and get all players' inputs for the frame (Rollback mode).
+    /// Remote players' inputs are predicted if not yet received.
+    /// Returns empty vec if session is not in Rollback mode.
+    pub async fn rollback_add_local(&self, input: InputFrame) -> Vec<InputFrame> {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.add_local_input(input)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Add a remote player's confirmed input (Rollback mode).
+    /// Returns the action the game should take (None, Rollback, or Desync).
+    pub async fn rollback_add_remote(&self, input: InputFrame) -> RollbackAction {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.add_remote_input(input)
+        } else {
+            RollbackAction::None
+        }
+    }
+
+    /// Save a state snapshot for potential rollback (Rollback mode).
+    pub async fn rollback_save_snapshot(&self, frame: u64, state: Vec<u8>, checksum: u64) {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.save_snapshot(frame, state, checksum);
+        }
+    }
+
+    /// Get a snapshot for rollback to a specific frame (Rollback mode).
+    pub async fn rollback_get_snapshot(&self, frame: u64) -> Option<Vec<u8>> {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.get_snapshot(frame).map(<[u8]>::to_vec)
+        } else {
+            None
+        }
+    }
+
+    /// Get inputs for a frame during re-simulation after rollback (Rollback mode).
+    pub async fn rollback_inputs_for_frame(&self, frame: u64) -> Vec<InputFrame> {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.inputs_for_frame(frame)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// How many frames ahead of confirmation (Rollback mode). Returns 0 if wrong mode.
+    pub async fn rollback_frames_ahead(&self) -> u64 {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.frames_ahead()
+        } else {
+            0
+        }
+    }
+
+    /// Current confirmed frame (Rollback mode). Returns 0 if wrong mode.
+    pub async fn rollback_confirmed_frame(&self) -> u64 {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.confirmed_frame()
+        } else {
+            0
+        }
+    }
+
+    /// Verify a remote checksum (Rollback mode).
+    pub async fn rollback_verify_checksum(&self, frame: u64, remote: u64) -> SyncResult {
+        if let ModeState::Rollback(ref session) = self.mode_state {
+            session.lock().await.verify_checksum(frame, remote)
+        } else {
+            SyncResult::Ok
+        }
+    }
+
+    // ========================================================================
+    // CRDT mode methods
+    // ========================================================================
+
+    /// Set a CRDT key-value (CRDT mode).
     pub async fn crdt_set(&self, key: String, value: Vec<u8>) {
-        self.crdt_state.write().await.insert(key, value);
+        if let ModeState::Crdt(ref state) = self.mode_state {
+            state.write().await.insert(key, value);
+        }
     }
 
-    /// Get a CRDT value by key.
+    /// Get a CRDT value by key (CRDT mode).
     pub async fn crdt_get(&self, key: &str) -> Option<Vec<u8>> {
-        let key_owned = key.to_string();
-        self.crdt_state.read().await.get(&key_owned).cloned()
+        if let ModeState::Crdt(ref state) = self.mode_state {
+            let key_owned = key.to_string();
+            state.read().await.get(&key_owned).cloned()
+        } else {
+            None
+        }
     }
 
-    /// Merge remote CRDT state.
+    /// Merge remote CRDT state (CRDT mode).
     pub async fn crdt_merge(&self, remote: &LwwMap<String, Vec<u8>>) {
-        self.crdt_state.write().await.merge(remote);
+        if let ModeState::Crdt(ref state) = self.mode_state {
+            state.write().await.merge(remote);
+        }
     }
+
+    // ========================================================================
+    // EventSourcing mode methods
+    // ========================================================================
+
+    /// Append an event to the log (`EventSourcing` mode).
+    /// The event is tagged with this node's ID and auto-assigned a sequence number.
+    pub async fn event_append(&self, data: Vec<u8>) {
+        self.event_append_from(data, self.config.node_id).await;
+    }
+
+    /// Append an event with an explicit origin node (`EventSourcing` mode).
+    pub async fn event_append_from(&self, data: Vec<u8>, origin: NodeId) {
+        if let ModeState::EventSourcing(ref log) = self.mode_state {
+            let mut log = log.write().await;
+            let seq = log.len() as u64 + 1;
+            log.push(EventEntry { seq, data, origin });
+        }
+    }
+
+    /// Get all events since a given sequence number (exclusive).
+    /// Returns events where `entry.seq > since_seq`.
+    pub async fn event_log_since(&self, since_seq: u64) -> Vec<EventEntry> {
+        if let ModeState::EventSourcing(ref log) = self.mode_state {
+            log.read()
+                .await
+                .iter()
+                .filter(|e| e.seq > since_seq)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Total number of events in the log (`EventSourcing` mode).
+    pub async fn event_count(&self) -> usize {
+        if let ModeState::EventSourcing(ref log) = self.mode_state {
+            log.read().await.len()
+        } else {
+            0
+        }
+    }
+
+    /// Last sequence number in the log. Returns 0 if empty or wrong mode.
+    pub async fn event_last_seq(&self) -> u64 {
+        if let ModeState::EventSourcing(ref log) = self.mode_state {
+            log.read().await.last().map_or(0, |e| e.seq)
+        } else {
+            0
+        }
+    }
+
+    // ========================================================================
+    // Snapshot mode methods
+    // ========================================================================
+
+    /// Save a state snapshot (Snapshot mode).
+    /// Replaces any previous snapshot.
+    pub async fn snapshot_save(&self, frame: u64, data: Vec<u8>, checksum: u64) {
+        if let ModeState::Snapshot(ref store) = self.mode_state {
+            *store.write().await = Some(SnapshotData {
+                frame,
+                data,
+                checksum,
+            });
+        }
+    }
+
+    /// Get the current snapshot (Snapshot mode).
+    pub async fn snapshot_get(&self) -> Option<SnapshotData> {
+        if let ModeState::Snapshot(ref store) = self.mode_state {
+            store.read().await.clone()
+        } else {
+            None
+        }
+    }
+
+    /// Get the current snapshot's frame number. Returns `None` if no snapshot or wrong mode.
+    pub async fn snapshot_frame(&self) -> Option<u64> {
+        if let ModeState::Snapshot(ref store) = self.mode_state {
+            store.read().await.as_ref().map(|s| s.frame)
+        } else {
+            None
+        }
+    }
+
+    // ========================================================================
+    // Session lifecycle
+    // ========================================================================
 
     /// Start the session tick loop.
     ///
@@ -452,7 +794,6 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
 
     /// Stop the session.
     pub async fn stop(&self) {
-        // Send Bye to all peers
         let peers = self.discovery.peer_addrs().await;
         for peer in &peers {
             let _ = self.transport.send_to(&Message::Bye, *peer).await;
@@ -482,6 +823,9 @@ mod tests {
         assert_eq!(session.config().mode, SyncMode::Crdt);
         assert_eq!(session.config().tick_rate, 60);
         assert_eq!(session.config().node_id, NodeId(1));
+        assert_eq!(session.config().player_count, 2);
+        assert_eq!(session.config().local_player, 0);
+        assert_eq!(session.config().max_rollback, 8);
     }
 
     #[tokio::test]
@@ -494,6 +838,9 @@ mod tests {
             .max_peers(8)
             .name("test-node")
             .discovery(false)
+            .player_count(4)
+            .local_player(1)
+            .max_rollback(12)
             .build(a);
 
         assert_eq!(session.config().mode, SyncMode::Rollback);
@@ -502,6 +849,9 @@ mod tests {
         assert_eq!(session.config().max_peers, 8);
         assert_eq!(session.config().instance_name, "test-node");
         assert!(!session.config().enable_discovery);
+        assert_eq!(session.config().player_count, 4);
+        assert_eq!(session.config().local_player, 1);
+        assert_eq!(session.config().max_rollback, 12);
     }
 
     #[tokio::test]
@@ -605,7 +955,6 @@ mod tests {
             .tick_rate(0)
             .build(a);
 
-        // Register peer
         session_a.add_peer(addr_b).await;
 
         session_a.broadcast(&Message::Bye).await.unwrap();
@@ -629,5 +978,280 @@ mod tests {
 
         let msg = rx.recv().await.unwrap();
         assert_eq!(msg.payload, b"hello");
+    }
+
+    // ========================================================================
+    // Lockstep mode tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_session_lockstep_basic() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::Lockstep)
+            .player_count(2)
+            .build(a);
+
+        // Player 0 input
+        session
+            .lockstep_add_input(InputFrame::new(1, 0).with_movement(1, 0, 0))
+            .await;
+        assert!(!session.lockstep_ready().await);
+
+        // Player 1 input
+        session
+            .lockstep_add_remote(InputFrame::new(1, 1).with_movement(0, 0, -1))
+            .await;
+        assert!(session.lockstep_ready().await);
+
+        // Advance
+        let inputs = session.lockstep_advance().await.unwrap();
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[0].movement[0], 1);
+        assert_eq!(inputs[1].movement[2], -1);
+        assert_eq!(session.lockstep_confirmed_frame().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_session_lockstep_checksum() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::Lockstep)
+            .player_count(2)
+            .build(a);
+
+        session.lockstep_record_checksum(1, 0xABCD).await;
+        assert_eq!(
+            session.lockstep_verify_checksum(1, 0xABCD).await,
+            SyncResult::Ok
+        );
+        assert_eq!(
+            session.lockstep_verify_checksum(1, 0xDEAD).await,
+            SyncResult::Desync {
+                frame: 1,
+                local: 0xABCD,
+                remote: 0xDEAD
+            }
+        );
+    }
+
+    // ========================================================================
+    // Rollback mode tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_session_rollback_basic() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::Rollback)
+            .player_count(2)
+            .local_player(0)
+            .max_rollback(8)
+            .build(a);
+
+        // Local input for frame 1
+        let inputs = session
+            .rollback_add_local(InputFrame::new(1, 0).with_movement(1, 0, 0))
+            .await;
+        assert_eq!(inputs.len(), 2);
+
+        // Remote input matches prediction → no rollback
+        let action = session.rollback_add_remote(InputFrame::new(1, 1)).await;
+        assert_eq!(action, RollbackAction::None);
+    }
+
+    #[tokio::test]
+    async fn test_session_rollback_mismatch() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::Rollback)
+            .player_count(2)
+            .local_player(0)
+            .max_rollback(8)
+            .build(a);
+
+        // Advance 2 frames
+        session
+            .rollback_add_local(InputFrame::new(1, 0).with_movement(1, 0, 0))
+            .await;
+        session
+            .rollback_add_local(InputFrame::new(2, 0).with_movement(1, 0, 0))
+            .await;
+
+        // Remote for frame 1 differs from prediction → rollback
+        let action = session
+            .rollback_add_remote(InputFrame::new(1, 1).with_movement(5, 5, 5))
+            .await;
+        assert_eq!(action, RollbackAction::Rollback { to_frame: 1 });
+    }
+
+    #[tokio::test]
+    async fn test_session_rollback_snapshot() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::Rollback)
+            .player_count(2)
+            .local_player(0)
+            .build(a);
+
+        session
+            .rollback_save_snapshot(1, vec![1, 2, 3], 0xAAAA)
+            .await;
+        let snap = session.rollback_get_snapshot(1).await.unwrap();
+        assert_eq!(snap, vec![1, 2, 3]);
+        assert_eq!(
+            session.rollback_verify_checksum(1, 0xAAAA).await,
+            SyncResult::Ok
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_rollback_frames_ahead() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::Rollback)
+            .player_count(2)
+            .local_player(0)
+            .build(a);
+
+        session.rollback_add_local(InputFrame::new(1, 0)).await;
+        session.rollback_add_local(InputFrame::new(2, 0)).await;
+        session.rollback_add_local(InputFrame::new(3, 0)).await;
+
+        assert_eq!(session.rollback_frames_ahead().await, 3);
+
+        session.rollback_add_remote(InputFrame::new(1, 1)).await;
+        assert_eq!(session.rollback_confirmed_frame().await, 1);
+        assert_eq!(session.rollback_frames_ahead().await, 2);
+    }
+
+    // ========================================================================
+    // EventSourcing mode tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_session_event_sourcing_basic() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::EventSourcing)
+            .node_id(1)
+            .build(a);
+
+        session.event_append(b"event-1".to_vec()).await;
+        session.event_append(b"event-2".to_vec()).await;
+        session.event_append(b"event-3".to_vec()).await;
+
+        assert_eq!(session.event_count().await, 3);
+        assert_eq!(session.event_last_seq().await, 3);
+    }
+
+    #[tokio::test]
+    async fn test_session_event_sourcing_replay() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::EventSourcing)
+            .node_id(1)
+            .build(a);
+
+        session.event_append(b"a".to_vec()).await;
+        session.event_append(b"b".to_vec()).await;
+        session.event_append(b"c".to_vec()).await;
+
+        // Get events since seq 1 (exclusive) → seq 2, 3
+        let events = session.event_log_since(1).await;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq, 2);
+        assert_eq!(events[0].data, b"b");
+        assert_eq!(events[1].seq, 3);
+        assert_eq!(events[1].data, b"c");
+
+        // Get all events (since 0)
+        let all = session.event_log_since(0).await;
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_session_event_sourcing_origin() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new()
+            .mode(SyncMode::EventSourcing)
+            .node_id(1)
+            .build(a);
+
+        session.event_append(b"local".to_vec()).await;
+        session
+            .event_append_from(b"remote".to_vec(), NodeId(99))
+            .await;
+
+        let events = session.event_log_since(0).await;
+        assert_eq!(events[0].origin, NodeId(1));
+        assert_eq!(events[1].origin, NodeId(99));
+    }
+
+    // ========================================================================
+    // Snapshot mode tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_session_snapshot_basic() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new().mode(SyncMode::Snapshot).build(a);
+
+        assert!(session.snapshot_get().await.is_none());
+        assert!(session.snapshot_frame().await.is_none());
+
+        session.snapshot_save(42, vec![10, 20, 30], 0xDEAD).await;
+
+        let snap = session.snapshot_get().await.unwrap();
+        assert_eq!(snap.frame, 42);
+        assert_eq!(snap.data, vec![10, 20, 30]);
+        assert_eq!(snap.checksum, 0xDEAD);
+        assert_eq!(session.snapshot_frame().await, Some(42));
+    }
+
+    #[tokio::test]
+    async fn test_session_snapshot_overwrites() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new().mode(SyncMode::Snapshot).build(a);
+
+        session.snapshot_save(1, vec![1], 0x1).await;
+        session.snapshot_save(2, vec![2], 0x2).await;
+
+        let snap = session.snapshot_get().await.unwrap();
+        assert_eq!(snap.frame, 2);
+        assert_eq!(snap.data, vec![2]);
+    }
+
+    // ========================================================================
+    // Wrong-mode safety tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_wrong_mode_returns_defaults() {
+        let (a, _b) = ChannelTransport::pair();
+        let session = SessionBuilder::new().mode(SyncMode::Crdt).build(a);
+
+        // Lockstep methods on CRDT session → safe defaults
+        assert!(!session.lockstep_ready().await);
+        assert!(session.lockstep_advance().await.is_none());
+        assert_eq!(session.lockstep_confirmed_frame().await, 0);
+
+        // Rollback methods on CRDT session → safe defaults
+        assert!(session
+            .rollback_add_local(InputFrame::new(1, 0))
+            .await
+            .is_empty());
+        assert_eq!(
+            session.rollback_add_remote(InputFrame::new(1, 1)).await,
+            RollbackAction::None
+        );
+        assert_eq!(session.rollback_frames_ahead().await, 0);
+
+        // EventSourcing on CRDT → safe defaults
+        assert_eq!(session.event_count().await, 0);
+        assert!(session.event_log_since(0).await.is_empty());
+
+        // Snapshot on CRDT → safe defaults
+        assert!(session.snapshot_get().await.is_none());
     }
 }

@@ -195,7 +195,8 @@ pub use discovery::{Discovery, DiscoverySource, PeerEvent, PeerInfo};
 pub use reliability::{ReassemblyBuffer, ReliableEndpoint};
 #[cfg(feature = "async")]
 pub use session::{
-    SessionBuilder, SessionConfig, SessionEvent, SessionState, SyncMode, SyncSession,
+    EventEntry, SessionBuilder, SessionConfig, SessionEvent, SessionState, SessionStats,
+    SnapshotData, SyncMode, SyncSession,
 };
 #[cfg(feature = "async")]
 pub use transport::{

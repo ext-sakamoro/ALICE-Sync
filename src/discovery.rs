@@ -286,6 +286,119 @@ impl Discovery {
             }
         })
     }
+
+    /// Start full mDNS discovery with multicast announce + browse + GC.
+    ///
+    /// This spawns a tokio task that:
+    /// 1. Registers this node as an mDNS service on the local network
+    /// 2. Browses for other ALICE-Sync peers via mDNS
+    /// 3. Periodically garbage-collects timed-out peers
+    ///
+    /// Discovered peers are automatically registered and emit `PeerEvent` callbacks.
+    ///
+    /// Requires the `mdns` feature (`cargo build --features mdns`).
+    #[cfg(feature = "mdns")]
+    pub fn start_mdns(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let mdns = match ServiceDaemon::new() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("ALICE-Sync: failed to create mDNS daemon: {e}");
+                    return;
+                }
+            };
+
+            // Register our service
+            let local = this.local_info().await;
+            let host_name = format!("{}.local.", local.name);
+            let ip_str = local.addr.ip().to_string();
+            let port = local.addr.port();
+
+            let mut properties = std::collections::HashMap::new();
+            for (k, v) in &local.metadata {
+                properties.insert(k.clone(), v.clone());
+            }
+
+            let service_type = MDNS_SERVICE_TYPE.trim_end_matches('.');
+            match ServiceInfo::new(
+                service_type,
+                &local.name,
+                &host_name,
+                &*ip_str,
+                port,
+                Some(properties),
+            ) {
+                Ok(info) => {
+                    if let Err(e) = mdns.register(info) {
+                        eprintln!("ALICE-Sync: mDNS register failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ALICE-Sync: mDNS ServiceInfo creation failed: {e}");
+                }
+            }
+
+            // Browse for peers
+            let receiver = match mdns.browse(service_type) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("ALICE-Sync: mDNS browse failed: {e}");
+                    return;
+                }
+            };
+
+            let mut gc_interval = tokio::time::interval(ANNOUNCE_INTERVAL);
+
+            loop {
+                // GC tick
+                gc_interval.tick().await;
+                this.gc().await;
+
+                // Drain pending mDNS events
+                while let Ok(event) = receiver.try_recv() {
+                    match event {
+                        ServiceEvent::ServiceResolved(info) => {
+                            let addrs = info.get_addresses();
+                            let svc_port = info.get_port();
+                            for ip in addrs {
+                                let addr = SocketAddr::new(*ip, svc_port);
+                                // Skip self
+                                if addr == this.local_info().await.addr {
+                                    continue;
+                                }
+                                let name = info.get_fullname().to_string();
+                                let meta: HashMap<String, String> = info
+                                    .get_properties()
+                                    .iter()
+                                    .map(|p| (p.key().to_string(), p.val_str().to_string()))
+                                    .collect();
+                                let mut peer_meta = meta;
+                                peer_meta.insert("source".to_string(), "mdns".to_string());
+                                this.register_peer(addr, &name, peer_meta).await;
+                            }
+                        }
+                        ServiceEvent::ServiceRemoved(_, fullname) => {
+                            // Find and remove peer by name
+                            let peers = this.peers.read().await;
+                            let to_remove: Vec<SocketAddr> = peers
+                                .iter()
+                                .filter(|(_, info)| info.name == fullname)
+                                .map(|(addr, _)| *addr)
+                                .collect();
+                            drop(peers);
+                            for addr in to_remove {
+                                this.remove_peer(&addr).await;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        })
+    }
 }
 
 // ============================================================================

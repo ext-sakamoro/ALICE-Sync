@@ -26,6 +26,7 @@ alice-cache = { path = "../ALICE-Cache", optional = true }
 alice-auth = { path = "../ALICE-Auth", optional = true, default-features = false, features = ["std"] }
 alice-codec = { path = "../ALICE-Codec", optional = true, default-features = false, features = ["std"] }
 alice-analytics = { path = "../ALICE-Analytics", optional = true, default-features = false, features = ["std"] }
+mdns-sd = { version = "0.11", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -45,6 +46,7 @@ codec = ["dep:alice-codec", "std"]  # ALICE-Codec wavelet compression for event 
 analytics = ["dep:alice-analytics", "std"]  # ALICE-Analytics sync telemetry
 ffi = ["std"]     # C-ABI FFI for Unity/UE5
 cloud = ["std"]  # Cloud-side multi-device spatial synchronization
+mdns = ["dep:mdns-sd", "async"]  # mDNS LAN auto-discovery
 all-bridges = ["physics", "telemetry", "cache", "auth", "codec", "analytics"]  # All integration bridges
 
 [profile.release]
