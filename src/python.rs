@@ -4,18 +4,24 @@
 //!
 //! | Layer | Technique | Effect |
 //! |-------|-----------|--------|
-//! | L1 | GIL Release (`py.allow_threads`) | Parallel batch processing |
-//! | L2 | Zero-Copy NumPy (`into_pyarray`) | No memcpy for positions/motions |
-//! | L3 | Batch API (SoA world operations) | FFI amortization |
-//! | L4 | Rust backend (8-wide SIMD, Demon Mode) | Hardware-speed apply |
+//! | L1 | Zero-Copy NumPy (`into_pyarray`) | No memcpy for positions/motions |
+//! | L2 | Batch API (SoA world operations) | FFI amortization |
+//! | L3 | Rust backend (8-wide SIMD, Demon Mode) | Hardware-speed apply |
 
-use numpy::{IntoPyArray, PyArray1, PyArray2};
+#![allow(
+    clippy::missing_const_for_fn,
+    clippy::doc_markdown,
+    clippy::unnecessary_wraps,
+    clippy::needless_pass_by_value,
+    clippy::struct_excessive_bools,
+    clippy::too_many_arguments
+)]
+
+use numpy::{IntoPyArray, PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
 
 use crate::event::MotionData;
-use crate::input_sync::{
-    InputBuffer, InputFrame, LockstepSession, RollbackAction, RollbackSession,
-};
+use crate::input_sync::{InputFrame, LockstepSession, RollbackAction, RollbackSession};
 use crate::world_soa::WorldSoA;
 
 // ============================================================================
@@ -25,7 +31,7 @@ use crate::world_soa::WorldSoA;
 /// A single player's input for one simulation frame (~24 bytes).
 ///
 /// Fixed-point i16 for deterministic network transmission.
-#[pyclass(name = "InputFrame")]
+#[pyclass(name = "InputFrame", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyInputFrame {
     inner: InputFrame,
@@ -62,8 +68,8 @@ impl PyInputFrame {
 
     /// Deserialize from bitcode bytes. Returns None on failure.
     #[staticmethod]
-    fn from_bytes(data: Vec<u8>) -> Option<PyInputFrame> {
-        InputFrame::from_bytes(&data).map(|inner| PyInputFrame { inner })
+    fn from_bytes(data: Vec<u8>) -> Option<Self> {
+        InputFrame::from_bytes(&data).map(|inner| Self { inner })
     }
 
     #[getter]
@@ -145,7 +151,7 @@ impl PyLockstepSession {
         self.inner.ready_to_advance()
     }
 
-    /// Advance and collect all inputs. Returns list of InputFrame or None.
+    /// Advance and collect all inputs. Returns list of `InputFrame` or None.
     fn advance(&mut self) -> Option<Vec<PyInputFrame>> {
         self.inner.advance().map(|inputs| {
             inputs
@@ -169,10 +175,7 @@ impl PyLockstepSession {
                 local,
                 remote,
             } => {
-                format!(
-                    "desync:frame={},local={:x},remote={:x}",
-                    frame, local, remote
-                )
+                format!("desync:frame={frame},local={local:x},remote={remote:x}")
             }
         }
     }
@@ -183,10 +186,8 @@ impl PyLockstepSession {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "<LockstepSession confirmed_frame={}>",
-            self.inner.confirmed_frame()
-        )
+        let cf = self.inner.confirmed_frame();
+        format!("<LockstepSession confirmed_frame={cf}>")
     }
 }
 
@@ -222,8 +223,8 @@ impl PyRollbackSession {
 
     /// Add local player's input. Returns list of all inputs (confirmed + predicted).
     fn add_local_input(&mut self, frame: &PyInputFrame) -> Vec<PyInputFrame> {
-        let inputs = self.inner.add_local_input(frame.inner);
-        inputs
+        self.inner
+            .add_local_input(frame.inner)
             .into_iter()
             .map(|inner| PyInputFrame { inner })
             .collect()
@@ -238,8 +239,8 @@ impl PyRollbackSession {
     fn add_remote_input(&mut self, frame: &PyInputFrame) -> String {
         match self.inner.add_remote_input(frame.inner) {
             RollbackAction::None => "none".to_string(),
-            RollbackAction::Rollback { to_frame } => format!("rollback:{}", to_frame),
-            RollbackAction::Desync { frame } => format!("desync:{}", frame),
+            RollbackAction::Rollback { to_frame } => format!("rollback:{to_frame}"),
+            RollbackAction::Desync { frame } => format!("desync:{frame}"),
         }
     }
 
@@ -248,9 +249,9 @@ impl PyRollbackSession {
         self.inner.save_snapshot(frame, state, checksum);
     }
 
-    /// Get a state snapshot. Returns state_bytes or None.
+    /// Get a state snapshot. Returns `state_bytes` or None.
     fn get_snapshot(&self, frame: u64) -> Option<Vec<u8>> {
-        self.inner.get_snapshot(frame).map(|s| s.to_vec())
+        self.inner.get_snapshot(frame).map(<[u8]>::to_vec)
     }
 
     /// Current predicted frame.
@@ -259,10 +260,8 @@ impl PyRollbackSession {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "<RollbackSession predicted_frame={}>",
-            self.inner.predicted_frame(),
-        )
+        let pf = self.inner.predicted_frame();
+        format!("<RollbackSession predicted_frame={pf}>")
     }
 }
 
@@ -272,7 +271,7 @@ impl PyRollbackSession {
 
 /// Structure-of-Arrays world for high-performance batch operations.
 ///
-/// Entities stored in decomposed arrays: pos_x[], pos_y[], pos_z[], ...
+/// Entities stored in decomposed arrays: `pos_x[]`, `pos_y[]`, `pos_z[]`, ...
 /// Enables 8-wide vertical SIMD for position updates.
 #[pyclass(name = "WorldSoA")]
 pub struct PyWorldSoA {
@@ -281,7 +280,7 @@ pub struct PyWorldSoA {
 
 #[pymethods]
 impl PyWorldSoA {
-    /// Create a new SoA world.
+    /// Create a new `SoA` world.
     #[new]
     #[pyo3(signature = (seed=0))]
     fn new(seed: u64) -> Self {
@@ -292,21 +291,19 @@ impl PyWorldSoA {
 
     /// Spawn an entity. Returns slot index.
     fn spawn(&mut self, entity_id: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
-        self.inner.spawn(entity_id, kind, x, y, z)
+        self.inner.storage.spawn(entity_id, kind, x, y, z)
     }
 
     /// Despawn an entity by slot.
     fn despawn(&mut self, slot: u32) -> bool {
-        self.inner.despawn(slot)
+        self.inner.storage.despawn(slot)
     }
 
     /// Apply batch motions using Demon Mode (sort + coalesce + 8-wide SIMD).
     ///
     /// Args:
     ///     motions: list of `(entity_id, dx, dy, dz)` tuples
-    ///
-    /// GIL released for the batch operation.
-    fn apply_motions(&mut self, py: Python<'_>, motions: Vec<(u32, i16, i16, i16)>) {
+    fn apply_motions(&mut self, motions: Vec<(u32, i16, i16, i16)>) {
         let motion_data: Vec<MotionData> = motions
             .iter()
             .map(|&(e, dx, dy, dz)| MotionData {
@@ -317,14 +314,12 @@ impl PyWorldSoA {
             })
             .collect();
 
-        py.allow_threads(|| {
-            self.inner.apply_motions_demon(motion_data);
-        });
+        self.inner.apply_motions_demon(motion_data);
     }
 
     /// Get all entity positions as NumPy (N, 3) int32 array.
     ///
-    /// Reads from SoA arrays directly — zero intermediate copy.
+    /// Reads from `SoA` arrays directly — zero intermediate copy.
     fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<i32>> {
         let n = self.inner.storage.capacity;
         let mut data = Vec::with_capacity(n * 3);
@@ -333,7 +328,8 @@ impl PyWorldSoA {
             data.push(self.inner.storage.pos_y[i]);
             data.push(self.inner.storage.pos_z[i]);
         }
-        data.into_pyarray(py).reshape([n, 3]).unwrap()
+        let arr = data.into_pyarray(py);
+        arr.reshape([n, 3]).unwrap()
     }
 
     /// Get world hash (XOR rolling hash, O(1) amortized).
@@ -352,12 +348,10 @@ impl PyWorldSoA {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "<WorldSoA entities={} capacity={} hash={:016x}>",
-            self.inner.entity_count(),
-            self.inner.storage.capacity,
-            self.inner.hash().0,
-        )
+        let ec = self.inner.entity_count();
+        let cap = self.inner.storage.capacity;
+        let h = self.inner.hash().0;
+        format!("<WorldSoA entities={ec} capacity={cap} hash={h:016x}>")
     }
 }
 

@@ -8,7 +8,7 @@
 //! obtained from the corresponding `_new` / `_create` functions.
 //! Caller must free handles with the matching `_free` function.
 
-#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::missing_safety_doc, clippy::missing_const_for_fn)]
 
 use crate::event::{Event, EventKind, EventStream};
 use crate::fixed_point::{Fixed, Vec3Fixed};
@@ -115,16 +115,13 @@ pub unsafe extern "C" fn as_sync_world_get_entity_position(
     if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
         return -1;
     }
-    match (*ptr).0.get_entity(entity_id) {
-        Some(e) => {
-            let pos = e.position.to_f32_array();
-            *out_x = pos[0];
-            *out_y = pos[1];
-            *out_z = pos[2];
-            0
-        }
-        None => -1,
-    }
+    (*ptr).0.get_entity(entity_id).map_or(-1, |e| {
+        let pos = e.position.to_f32_array();
+        *out_x = pos[0];
+        *out_y = pos[1];
+        *out_z = pos[2];
+        0
+    })
 }
 
 #[no_mangle]
@@ -210,7 +207,7 @@ pub unsafe extern "C" fn as_sync_node_world_hash(ptr: *const AsSyncNode) -> u64 
     (*ptr).0.world_hash().0
 }
 
-/// NodeState: 0=Disconnected, 1=Connecting, 2=Synced, 3=Diverged
+/// `NodeState`: 0=Disconnected, 1=Connecting, 2=Synced, 3=Diverged
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_state(ptr: *const AsSyncNode) -> u8 {
     if ptr.is_null() {
@@ -573,7 +570,7 @@ pub unsafe extern "C" fn as_sync_lockstep_ready(ptr: *const AsSyncLockstep) -> i
     i32::from((*ptr).0.ready_to_advance())
 }
 
-/// advance成功時: InputFrameArrayへのポインタ（as_sync_input_frame_array_freeで解放）
+/// advance成功時: `InputFrameArray`へのポインタ（`as_sync_input_frame_array_free`で解放）
 /// 未ready時: null
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_lockstep_advance(
@@ -582,10 +579,9 @@ pub unsafe extern "C" fn as_sync_lockstep_advance(
     if ptr.is_null() {
         return ptr::null_mut();
     }
-    match (*ptr).0.advance() {
-        Some(inputs) => Box::into_raw(Box::new(AsSyncInputFrameArray(inputs))),
-        None => ptr::null_mut(),
-    }
+    (*ptr).0.advance().map_or(ptr::null_mut(), |inputs| {
+        Box::into_raw(Box::new(AsSyncInputFrameArray(inputs)))
+    })
 }
 
 #[no_mangle]
@@ -645,8 +641,8 @@ pub unsafe extern "C" fn as_sync_rollback_add_local_input(
     Box::into_raw(Box::new(AsSyncInputFrameArray(inputs)))
 }
 
-/// リモート入力追加 → RollbackAction: 0=None, 1=Rollback, 2=Desync
-/// rollback_frame: Rollback/Desyncの場合のフレーム番号（out）
+/// リモート入力追加 → `RollbackAction`: 0=None, 1=Rollback, 2=Desync
+/// `rollback_frame`: Rollback/Desyncの場合のフレーム番号（out）
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_rollback_add_remote_input(
     ptr: *mut AsSyncRollback,
@@ -716,7 +712,7 @@ pub unsafe extern "C" fn as_sync_input_frame_array_len(ptr: *const AsSyncInputFr
     (*ptr).0.len() as u32
 }
 
-/// 配列のi番目のInputFrameをコピーして返す。解放はas_sync_input_frame_free
+/// 配列のi番目の`InputFrame`をコピーして返す。解放は`as_sync_input_frame_free`
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_array_get(
     ptr: *const AsSyncInputFrameArray,
@@ -726,10 +722,9 @@ pub unsafe extern "C" fn as_sync_input_frame_array_get(
         return ptr::null_mut();
     }
     let arr = &(*ptr).0;
-    match arr.get(index as usize) {
-        Some(f) => Box::into_raw(Box::new(AsSyncInputFrame(*f))),
-        None => ptr::null_mut(),
-    }
+    arr.get(index as usize).map_or(ptr::null_mut(), |f| {
+        Box::into_raw(Box::new(AsSyncInputFrame(*f)))
+    })
 }
 
 // ============================================================================

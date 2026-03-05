@@ -18,8 +18,8 @@ tokio = { version = "1.0", features = ["full"], optional = true }
 crossbeam-channel = "0.5"
 rustc-hash = "2.1"
 wide = "0.7"
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
-numpy = { version = "0.22", optional = true }
+pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
+numpy = { version = "0.28", optional = true }
 alice-physics = { path = "../ALICE-Physics", optional = true }
 alice-db = { path = "../ALICE-DB", optional = true }
 alice-cache = { path = "../ALICE-Cache", optional = true }
@@ -34,7 +34,7 @@ tempfile = "3.10"
 [features]
 default = ["std"]
 std = []
-async = ["tokio"]
+async = ["tokio"]  # Transport, discovery, pub/sub, session driver
 simd = []
 python = ["pyo3", "numpy"]  # Python bindings (PyO3 + NumPy zero-copy)
 physics = ["alice-physics"]  # ALICE-Physics bridge (InputFrame ↔ FrameInput, rollback)

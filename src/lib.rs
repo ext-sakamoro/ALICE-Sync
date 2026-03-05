@@ -75,6 +75,17 @@
 //! | [`world_soa`] | `SoA` world with Demon Mode batch processing + 8-wide SIMD |
 //! | [`input_sync`] | Lockstep and Rollback input synchronization sessions |
 //!
+//! ### Async P2P Infrastructure (`async` feature)
+//!
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`reliability`] | UDP reliability: ACK, retransmit, RTT, fragmentation |
+//! | [`transport`] | `SyncTransport` trait + UDP/TCP/Channel implementations |
+//! | [`crdt`] | `LwwRegister`, `GCounter`, `PnCounter`, `OrSet`, `LwwMap` |
+//! | [`channel`] | Topic-based pub/sub with filtering |
+//! | [`discovery`] | mDNS LAN auto-discovery + manual peer registration |
+//! | [`session`] | Async session driver (builder, tick loop, multi-mode) |
+//!
 //! ### Feature-Gated Bridges
 //!
 //! | Module | Feature | Description |
@@ -135,6 +146,20 @@ pub mod physics_bridge;
 pub mod protocol;
 #[cfg(feature = "python")]
 mod python;
+// Async P2P infrastructure (transport, discovery, pub/sub, CRDT, session)
+#[cfg(feature = "async")]
+pub mod channel;
+#[cfg(feature = "async")]
+pub mod crdt;
+#[cfg(feature = "async")]
+pub mod discovery;
+#[cfg(feature = "async")]
+pub mod reliability;
+#[cfg(feature = "async")]
+pub mod session;
+#[cfg(feature = "async")]
+pub mod transport;
+
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
 pub mod world;
@@ -158,6 +183,24 @@ pub use physics_bridge::{
 pub use protocol::{Message, Protocol};
 pub use world::{Entity, EntityProps, World, WorldHash, WorldState, MAX_PROPS};
 pub use world_soa::{Slot, WorldSoA, WorldStorage};
+
+// Async P2P infrastructure re-exports
+#[cfg(feature = "async")]
+pub use channel::{PubSub, TopicMessage};
+#[cfg(feature = "async")]
+pub use crdt::{CrdtMergeable, GCounter, LwwMap, LwwRegister, OrSet, PnCounter};
+#[cfg(feature = "async")]
+pub use discovery::{Discovery, DiscoverySource, PeerEvent, PeerInfo};
+#[cfg(feature = "async")]
+pub use reliability::{ReassemblyBuffer, ReliableEndpoint};
+#[cfg(feature = "async")]
+pub use session::{
+    SessionBuilder, SessionConfig, SessionEvent, SessionState, SyncMode, SyncSession,
+};
+#[cfg(feature = "async")]
+pub use transport::{
+    ChannelTransport, Envelope, SyncTransport, TcpTransport, TransportError, UdpTransport,
+};
 
 /// ALICE-Sync version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

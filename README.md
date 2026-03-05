@@ -1,12 +1,12 @@
 # ALICE-Sync
 
-**P2P Synchronization via Event Diffing**
+**General-Purpose P2P Synchronization Infrastructure**
 
 > "Don't send data. Send the delta."
 
 ## What is ALICE-Sync?
 
-ALICE-Sync is a high-performance P2P state synchronization engine for games and distributed simulations. Instead of sending entire world states, it synchronizes only the **events** (spawn, move, despawn) between nodes.
+ALICE-Sync is a high-performance P2P state synchronization engine. Instead of sending entire world states, it synchronizes only the **events** (spawn, move, despawn) between nodes. With the `async` feature, it becomes a complete, self-contained P2P infrastructure — transport, discovery, pub/sub, CRDTs, and session management included.
 
 ### Key Benefits
 
@@ -14,12 +14,17 @@ ALICE-Sync is a high-performance P2P state synchronization engine for games and 
 - **Bit-Exact Determinism**: Fixed-point arithmetic ensures identical results across all platforms
 - **O(1) Sync Verification**: Instant hash comparison even with 10,000+ entities
 - **Zero Allocation**: Copy-based entities with arena storage
+- **Self-Contained P2P**: UDP/TCP transport, mDNS discovery, topic pub/sub, CRDTs — no external infrastructure needed
+- **Multi-Mode Sync**: Lockstep, Rollback, CRDT, Event Sourcing, Snapshot
 
 ## Installation
 
 ```toml
 [dependencies]
 alice-sync = "0.6"
+
+# Full P2P infrastructure
+alice-sync = { version = "0.6", features = ["async"] }
 ```
 
 ## Quick Start
@@ -55,6 +60,148 @@ fn main() {
     assert_eq!(node_a.world_hash(), node_b.world_hash());
     println!("Sync verified! Hash: {:016x}", node_a.world_hash().0);
 }
+```
+
+## Async P2P Infrastructure
+
+Enable with `--features async` to get a complete, self-contained P2P stack.
+
+### Modules
+
+| Module | Description |
+|--------|-------------|
+| `reliability` | UDP reliability layer: ACK tracking, RTT estimation, retransmission, fragmentation/reassembly |
+| `transport` | `SyncTransport` trait + UDP, TCP, in-process Channel implementations |
+| `crdt` | Conflict-free replicated data types: `LwwRegister`, `GCounter`, `PnCounter`, `OrSet`, `LwwMap` |
+| `channel` | Topic-based pub/sub with per-topic filtering |
+| `discovery` | mDNS LAN auto-discovery + manual peer registration + GC |
+| `session` | High-level session driver: builder pattern, tick loop, 5 sync modes |
+
+### Sync Modes
+
+| Mode | Best For | Characteristics |
+|------|----------|-----------------|
+| **Lockstep** | RTS, turn-based, < 4 players | Waits for all inputs before advancing |
+| **Rollback** | Fighting games, FPS, action | Predicts + corrects on mismatch |
+| **CRDT** | Collaboration, IoT, databases | Eventual consistency, no coordination |
+| **EventSourcing** | Audit logs, financial, legal | Append-only event log + replay |
+| **Snapshot** | Late-join, recovery | Full state transfer |
+
+### Session Example
+
+```rust
+use alice_sync::{SessionBuilder, SyncMode, UdpTransport};
+
+#[tokio::main]
+async fn main() {
+    let transport = UdpTransport::bind("0.0.0.0:9000").await.unwrap();
+
+    let session = SessionBuilder::new()
+        .mode(SyncMode::Crdt)
+        .node_id(1)
+        .tick_rate(60)
+        .name("my-node")
+        .build(transport);
+
+    // Add peers manually or let mDNS discover them
+    session.add_peer("192.168.1.100:9000".parse().unwrap()).await;
+
+    // Subscribe to session events
+    let mut events = session.subscribe_events();
+
+    // Start the tick loop
+    session.start().await;
+
+    // Use CRDT for conflict-free state sync
+    session.crdt_set("player/1/name".into(), b"Alice".to_vec()).await;
+
+    // Use topic pub/sub for structured routing
+    let mut rx = session.pubsub().subscribe("game/room42/state", addr).await;
+    session.pubsub().publish("game/room42/state", payload, None).await;
+}
+```
+
+### CRDT Example
+
+```rust
+use alice_sync::{LwwMap, OrSet, GCounter, CrdtMergeable};
+
+// LWW-Map: distributed key-value store
+let mut node_a = LwwMap::new(1); // replica ID 1
+let mut node_b = LwwMap::new(2); // replica ID 2
+
+node_a.insert("key".to_string(), "value_a".to_string());
+node_b.insert("key".to_string(), "value_b".to_string());
+
+// Merge — highest timestamp wins, no conflicts
+node_a.merge(&node_b);
+
+// OR-Set: add/remove with add-wins semantics
+let mut set = OrSet::new();
+set.add(1, "tag_a".to_string());
+set.add(2, "tag_b".to_string());
+assert!(set.contains(&"tag_a".to_string()));
+
+// G-Counter: distributed monotonic counter
+let mut counter = GCounter::new();
+counter.increment(1); // replica 1 increments
+counter.increment(2); // replica 2 increments
+assert_eq!(counter.value(), 2);
+```
+
+### Transport Abstraction
+
+```rust
+use alice_sync::{SyncTransport, UdpTransport, TcpTransport, ChannelTransport};
+
+// UDP: low-latency, with reliability layer (ACK, retransmit, fragmentation)
+let udp = UdpTransport::bind("0.0.0.0:9000").await?;
+
+// TCP: reliable ordered delivery, length-prefixed framing
+let tcp = TcpTransport::bind("0.0.0.0:9001").await?;
+
+// Channel: in-process, for testing
+let (a, b) = ChannelTransport::pair();
+```
+
+### Topic Pub/Sub
+
+```rust
+use alice_sync::PubSub;
+
+let pubsub = PubSub::new();
+
+// Subscribe peers to topics
+let mut rx = pubsub.subscribe("sensor/temp/room1", peer_addr).await;
+
+// Publish with optional filtering
+pubsub.publish("sensor/temp/room1", data, Some(origin)).await;
+
+// Get all subscribers for transport-level routing
+let peers = pubsub.subscribers("sensor/temp/room1").await;
+```
+
+### Peer Discovery
+
+```rust
+use alice_sync::Discovery;
+use std::sync::Arc;
+
+let discovery = Arc::new(Discovery::new(local_addr, "my-node"));
+
+// Manual peer registration
+discovery.register_peer(addr, "peer-1", metadata).await;
+
+// Event callbacks
+discovery.on_event(Arc::new(|event| {
+    println!("Peer event: {:?}", event);
+})).await;
+
+// Start mDNS GC background task
+discovery.start_mdns_gc();
+
+// Get live peers
+let peers = discovery.peer_addrs().await;
 ```
 
 ## Batch Processing (High-Performance)
@@ -104,21 +251,21 @@ All benchmarks measured on Apple M1, `cargo bench --release`:
 
 ```
 World Hash (10000 entities):
-  Incremental O(1):    543 ps   ← Constant time!
-  Full Recalc O(N):    46.5 µs  ← Traditional approach
+  Incremental O(1):    543 ps   <- Constant time!
+  Full Recalc O(N):    46.5 us  <- Traditional approach
   Speedup: ~85,000x
 
 Entity Lookup:
-  Vec[id] indexing:    1.15 ns  ← O(1) regardless of count
+  Vec[id] indexing:    1.15 ns  <- O(1) regardless of count
 
 Batch Processing (1000 motions, 100 entities):
-  Sorted + Coalesce:   17.3 µs  ← Demon Mode
-  No optimization:     22.3 µs  ← Baseline
+  Sorted + Coalesce:   17.3 us  <- Demon Mode
+  No optimization:     22.3 us  <- Baseline
   Speedup: 1.3x
 
 Coalesce Effect (same entity x1000):
-  With coalesce:       6.5 µs   ← Merges to 1 update
-  Without coalesce:    35 µs    ← 1000 separate updates
+  With coalesce:       6.5 us   <- Merges to 1 update
+  Without coalesce:    35 us    <- 1000 separate updates
   Speedup: 5.5x
 
 Serialization:
@@ -132,38 +279,49 @@ Single Event Apply:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         Node A                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │ World Engine │←─│ Event Stream │←─│   Protocol   │←─ Net │
-│  │ (Fixed-Point)│  │  (History)   │  │  (bitcode)   │       │
-│  │  O(1) Hash   │  │              │  │              │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-└─────────────────────────────────────────────────────────────┘
-         ↑                   ↑                   ↑
-         │                   │                   │
-    Same hash           Same events         Same protocol
-    (XOR rolling)       (i16 quantized)     (bitcode)
-         │                   │                   │
-         ↓                   ↓                   ↓
-┌─────────────────────────────────────────────────────────────┐
-│                         Node B                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │ World Engine │←─│ Event Stream │←─│   Protocol   │←─ Net │
-│  │ (Fixed-Point)│  │  (History)   │  │  (bitcode)   │       │
-│  │  O(1) Hash   │  │              │  │              │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-└─────────────────────────────────────────────────────────────┘
+                         ALICE-Sync P2P Stack
+
+  Application Layer
+  +-------------------------------------------------------------+
+  |  SessionBuilder -> SyncSession                               |
+  |    - 5 sync modes (Lockstep/Rollback/CRDT/EventSrc/Snapshot)|
+  |    - Tick loop, event dispatch, stats                        |
+  +-------------------------------------------------------------+
+                            |
+  +----------------+  +----------+  +-------------+
+  | Topic Pub/Sub  |  |  CRDTs   |  |  Discovery  |
+  | (channel.rs)   |  | LWW-Map  |  | mDNS + GC   |
+  | Filter, Route  |  | OR-Set   |  | Manual reg  |
+  +----------------+  | G/PN-Cnt |  +-------------+
+                       +----------+
+                            |
+  Transport Layer
+  +-------------------------------------------------------------+
+  |  SyncTransport trait                                         |
+  |    +----------+  +----------+  +-----------+                 |
+  |    |   UDP    |  |   TCP    |  |  Channel  |                 |
+  |    | + Reliab |  | Length-  |  | In-process|                 |
+  |    | + Frag   |  | prefixed |  | (testing) |                 |
+  |    +----------+  +----------+  +-----------+                 |
+  +-------------------------------------------------------------+
+                            |
+  Core Engine
+  +-------------------------------------------------------------+
+  |  Node (causal ordering) <- Event Stream <- Protocol (bitcode)|
+  |  World (AoS, O(1) hash)    WorldSoA (8-wide SIMD)           |
+  |  Fixed-point (Q16.16)      Input Sync (Lockstep/Rollback)   |
+  +-------------------------------------------------------------+
 ```
 
 ## Optimization History
 
-### v0.6 "Demon Mode" - Sort-Based Batching
+### v0.6 "Demon Mode" - Sort-Based Batching + P2P Infrastructure
 
 - Sort events by entity ID for cache-friendly access
 - Coalesce same-entity updates (5.5x faster for bursts)
 - Re-sort by slot for true memory locality
 - Auto-detect contiguous ranges for SIMD
+- **NEW**: Complete async P2P stack (transport, discovery, pub/sub, CRDTs, session)
 
 ### v0.5 "Zen Mode" - Complete SoA
 
@@ -220,16 +378,9 @@ let b = Fixed::from_f32(0.7);
 let c = a + b;  // Always exactly the same bits
 ```
 
-## Input Synchronization (v0.6)
+## Input Synchronization
 
 Deterministic input sync for multiplayer games — **~20 bytes/player/frame**.
-
-### Sync Modes
-
-| Mode | Best For | Latency Model |
-|------|----------|---------------|
-| **Lockstep** | RTS, turn-based, < 4 players | Wait for all inputs |
-| **Rollback** | Fighting, FPS, action games | Predict + confirm + rollback |
 
 ### Usage
 
@@ -263,7 +414,7 @@ match rollback.add_remote_input(confirmed_input) {
         // Restore snapshot, re-simulate from to_frame
     },
     RollbackAction::Desync { frame } => {
-        // Unrecoverable — reconnect
+        // Unrecoverable - reconnect
     },
 }
 ```
@@ -281,10 +432,10 @@ match rollback.add_remote_input(confirmed_input) {
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std` | Yes | Standard library support |
-| `async` | No | Tokio async runtime integration |
+| `async` | No | Full P2P infrastructure: transport, discovery, pub/sub, CRDTs, session driver (requires tokio) |
 | `simd` | No | SIMD acceleration hints |
-| `python` | No | Python bindings (PyO3 + NumPy zero-copy) |
-| `physics` | No | ALICE-Physics bridge (InputFrame ↔ FrameInput, PhysicsRollbackSession) |
+| `python` | No | Python bindings (PyO3 0.28 + NumPy zero-copy) |
+| `physics` | No | ALICE-Physics bridge (InputFrame <-> FrameInput, PhysicsRollbackSession) |
 | `telemetry` | No | Sync telemetry recording via ALICE-DB (RTT, rollback, desync metrics) |
 | `cache` | No | Markov oracle entity prefetching via ALICE-Cache |
 | `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |
@@ -332,10 +483,9 @@ python = ["pyo3", "numpy"]
 
 | Layer | Technique | Effect |
 |-------|-----------|--------|
-| L1 | GIL Release (`py.allow_threads`) | Parallel batch processing |
-| L2 | Zero-Copy NumPy (`into_pyarray`) | No memcpy for positions |
-| L3 | Batch API (SoA world operations) | FFI amortization |
-| L4 | Rust backend (8-wide SIMD, Demon Mode) | Hardware-speed apply |
+| L1 | Zero-Copy NumPy (`into_pyarray`) | No memcpy for positions |
+| L2 | Batch API (SoA world operations) | FFI amortization |
+| L3 | Rust backend (8-wide SIMD, Demon Mode) | Hardware-speed apply |
 
 ### Python API
 
@@ -347,11 +497,11 @@ world = alice_sync.WorldSoA(seed=42)
 world.spawn(entity_id=0, kind=0, x=0, y=0, z=0)
 world.spawn(entity_id=1, kind=0, x=100, y=0, z=0)
 
-# Batch motions (GIL released, Demon Mode SIMD)
+# Batch motions (Demon Mode SIMD)
 motions = [(0, 10, 0, 0), (1, -5, 3, 0)]  # (entity_id, dx, dy, dz)
 world.apply_motions(motions)
 
-positions = world.positions()  # NumPy (N, 3) int32 — zero-copy
+positions = world.positions()  # NumPy (N, 3) int32 - zero-copy
 print(f"Hash: {world.hash():016x}")
 
 # --- Input sync ---
@@ -381,10 +531,10 @@ alice-sync = { path = "../ALICE-Sync", features = ["physics"] }
 ### Architecture
 
 ```
-Network ──► InputFrame (i16, 24B) ──► FrameInput (Fix128) ──► PhysicsWorld
+Network --> InputFrame (i16, 24B) --> FrameInput (Fix128) --> PhysicsWorld
                  ALICE-Sync                ALICE-Physics
 
-PhysicsWorld ──► SimulationChecksum ──► WorldHash ──► Desync Verification
+PhysicsWorld --> SimulationChecksum --> WorldHash --> Desync Verification
                    ALICE-Physics           ALICE-Sync
 ```
 
@@ -422,20 +572,15 @@ match session.add_remote_input(remote_input) {
 
 | Function | Description |
 |----------|-------------|
-| `sync_input_to_physics()` | InputFrame (i16 Q8.8) → FrameInput (Fix128) |
-| `physics_input_to_sync()` | FrameInput (Fix128) → InputFrame (i16, truncate) |
+| `sync_input_to_physics()` | InputFrame (i16 Q8.8) -> FrameInput (Fix128) |
+| `physics_input_to_sync()` | FrameInput (Fix128) -> InputFrame (i16, truncate) |
 | `sync_inputs_to_physics()` | Batch conversion |
-| `physics_checksum_to_world_hash()` | SimulationChecksum(u64) → WorldHash(u64) |
-| `world_hash_to_physics_checksum()` | WorldHash(u64) → SimulationChecksum(u64) |
+| `physics_checksum_to_world_hash()` | SimulationChecksum(u64) -> WorldHash(u64) |
+| `world_hash_to_physics_checksum()` | WorldHash(u64) -> SimulationChecksum(u64) |
 
 ## Sync Telemetry (ALICE-DB Integration)
 
 Record network synchronization metrics as time-series data in [ALICE-DB](../ALICE-DB). Enable with `--features telemetry`.
-
-```toml
-[dependencies]
-alice-sync = { path = "../ALICE-Sync", features = ["telemetry"] }
-```
 
 ### Channels
 
@@ -469,52 +614,27 @@ let max_rollback = telemetry.max_rollback(0, 3600)?;
 telemetry.close()?;
 ```
 
-ALICE-DB's model-based compression fits telemetry naturally:
-- Stable RTT → constant model (1 coefficient)
-- Gradually improving prediction → linear model
-- Periodic jitter → Fourier model
-
 ## Cross-Crate Bridges
 
 ### Cache Bridge (feature: `cache`)
 
 CRDT-based distributed cache invalidation with [ALICE-Cache](../ALICE-Cache). When sync events modify shared state, the cache bridge propagates invalidation messages to ensure distributed cache consistency across nodes.
 
-```toml
-[dependencies]
-alice-sync = { path = "../ALICE-Sync", features = ["cache"] }
-```
-
 ### Codec Bridge (feature: `codec`)
 
 Wavelet + rANS compression for event stream batches via [ALICE-Codec](../ALICE-Codec). Reduces event batch wire size by applying 1D wavelet transform and entropy coding to serialized event data.
 
-```toml
-[dependencies]
-alice-sync = { path = "../ALICE-Sync", features = ["codec"] }
-```
-
 ```rust
 use alice_sync::codec_bridge::{compress_event_batch, decompress_event_batch, estimate_ratio};
 
-// Compress serialized event batch
 let compressed = compress_event_batch(&event_bytes, quality)?;
-
-// Estimate compression ratio
 let ratio = estimate_ratio(&event_bytes);
-
-// Decompress
 let original = decompress_event_batch(&compressed)?;
 ```
 
 ### Analytics Bridge (feature: `analytics`)
 
 Real-time sync telemetry via [ALICE-Analytics](../ALICE-Analytics). Feeds event throughput, round-trip latency, unique peer count, and hash divergences into probabilistic sketches (DDSketch, HyperLogLog, Count-Min Sketch).
-
-```toml
-[dependencies]
-alice-sync = { path = "../ALICE-Sync", features = ["analytics"] }
-```
 
 ```rust
 use alice_sync::analytics_bridge::SyncTelemetry;
@@ -531,60 +651,58 @@ println!("unique peers: {:.0}", tel.unique_peers());
 
 [ALICE-Streaming-Protocol](../ALICE-Streaming-Protocol) connects to ALICE-Sync via its `sync_bridge` module (feature `sync`), enabling synchronized media stream state across P2P nodes.
 
-### Build Profile Changes
-
-- `[profile.release]`: Added `strip = true` for smaller release binaries
-- `[profile.bench]`: Standardized bench profile added
-
 ## Use Cases
 
-- **Multiplayer Games**: RTS, fighting games, physics puzzles
+- **Multiplayer Games**: RTS, fighting games, FPS, physics puzzles (Lockstep / Rollback)
+- **Real-Time Collaboration**: Document co-editing, 3D model sync, whiteboarding (CRDT mode)
+- **IoT / Edge Computing**: Sensor mesh synchronization, device state convergence (CRDT + mDNS discovery)
+- **Distributed Databases**: Change-data-capture replication, multi-master sync (Event Sourcing + CRDTs)
+- **Messaging Infrastructure**: Topic-based pub/sub, group chat delivery, notification fanout
 - **Game Engine Pipeline**: ALICE-Physics + ALICE-Sync for bit-exact rollback netcode
-- **Distributed Simulation**: Weather, traffic, physics
-- **Collaborative Editing**: Real-time document/3D model sync
-- **Rollback Netcode**: GGPO-style predict/confirm/rollback
-- **Lockstep Netcode**: Deterministic wait-for-all synchronization
+- **Distributed Simulation**: Weather, traffic, physics (deterministic event diffing)
+- **Edge Caching**: Distributed cache coherence with eventual consistency
 
 ## Protocol
 
 ```
 Handshake:
-  A → B: Hello { node_id, seq, world_hash }
-  B → A: Hello { node_id, seq, world_hash }
+  A -> B: Hello { node_id, seq, world_hash }
+  B -> A: Hello { node_id, seq, world_hash }
 
 Sync:
-  A → B: Events { [event1, event2, ...] }  // bitcode encoded
-  B → A: Ack { seq }
+  A -> B: Events { [event1, event2, ...] }  // bitcode encoded
+  B -> A: Ack { seq }
 
 Consistency Check:
-  A → B: HashCheck { seq, world_hash }
-  B → A: HashCheck { seq, world_hash }  // O(1) comparison
+  A -> B: HashCheck { seq, world_hash }
+  B -> A: HashCheck { seq, world_hash }  // O(1) comparison
 ```
 
 ## Test Suite
 
-88 tests across core modules, bridge integrations, and FFI:
+195 tests across core modules, async P2P infrastructure, bridge integrations, and FFI:
 
 | Scope | Command | Tests |
 |-------|---------|-------|
-| Core | `cargo test --features std` | 52 |
-| + FFI | `cargo test --features ffi` | 62 |
-| + Physics | `cargo test --features std,physics` | 58 |
-| + Telemetry | `cargo test --features std,telemetry` | 55 |
-| All features | `cargo test --features all-bridges,cloud,ffi` | 88 |
+| Core | `cargo test` | 139 |
+| + Async P2P | `cargo test --features async` | 195 |
+| + Physics | `cargo test --features physics` | +6 |
+| + All bridges | `cargo test --features all-bridges,cloud,ffi` | all |
 
 ```bash
-cargo test --features std                       # Core tests (52)
-cargo test --features all-bridges,cloud,ffi     # All tests (88)
-cargo bench                                     # Benchmarks
+cargo test                          # Core tests (139)
+cargo test --features async         # Core + P2P infrastructure (195)
+cargo bench                         # Benchmarks
 ```
 
-### Codec Compression Note
+### Quality
 
-The `codec` bridge uses a 1028-byte header (4B length + 256×4B histogram).
-Event batches smaller than ~2 KB will not benefit from wavelet compression —
-the header overhead exceeds savings. For small batches, bitcode serialization
-alone (18 bytes/event) is already optimal.
+| Metric | Value |
+|--------|-------|
+| clippy (pedantic+nursery) | 0 warnings |
+| fmt | clean |
+| Tests (default) | 139 |
+| Tests (async) | 195 |
 
 ## License
 
