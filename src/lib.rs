@@ -135,6 +135,7 @@ pub mod cache_bridge;
 pub mod cloud_bridge;
 #[cfg(feature = "codec")]
 pub mod codec_bridge;
+pub mod determinism;
 pub mod event;
 #[cfg(feature = "ffi")]
 pub mod ffi;
@@ -166,6 +167,7 @@ pub mod world;
 pub mod world_soa;
 
 pub use arena::{Arena, Handle};
+pub use determinism::{DeterminismChecker, Divergence, StateSnapshot};
 pub use event::{
     CustomData, DespawnData, Event, EventId, EventKind, EventMeta, EventStream, EventType,
     InputData, MotionData, PropertyData, SeqNum, SoAStats, SpawnData, TickData,
