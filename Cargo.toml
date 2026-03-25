@@ -2,7 +2,7 @@
 name = "alice-sync"
 version = "0.6.0"
 edition = "2021"
-authors = ["Moroya Sakamoto"]
+authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
 license = "AGPL-3.0"
 description = "P2P synchronization via event diffing, not data transfer"
 repository = "https://github.com/ext-sakamoro/ALICE-Sync"
