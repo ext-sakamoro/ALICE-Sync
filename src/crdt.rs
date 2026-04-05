@@ -374,13 +374,21 @@ impl<K: Clone + Ord, V: Clone> LwwMap<K, V> {
 
     /// Get a value by key
     #[must_use]
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         self.entries.get(key).and_then(|r| r.value.as_ref())
     }
 
     /// Check if key exists (not tombstoned)
     #[must_use]
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         self.entries.get(key).is_some_and(|r| r.value.is_some())
     }
 

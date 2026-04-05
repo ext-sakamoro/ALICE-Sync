@@ -598,8 +598,7 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
     /// Get a CRDT value by key (CRDT mode).
     pub async fn crdt_get(&self, key: &str) -> Option<Vec<u8>> {
         if let ModeState::Crdt(ref state) = self.mode_state {
-            let key_owned = key.to_string();
-            state.read().await.get(&key_owned).cloned()
+            state.read().await.get(key).cloned()
         } else {
             None
         }
