@@ -8,6 +8,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - bridge 系 sibling 6 crate (`alice-physics` 1.4 / `alice-db` 0.2.0-beta.2 / `alice-cache` 0.2 / `alice-auth` 0.5.1 (0.5.0 は release build 不能) / `alice-codec` 0.1 / `alice-analytics` 0.1) の依存を path から crates.io version に変更、CI の manifest-only stub (version 0.1.0 固定で `^1` / `^0.5` を満たせず 2026-09-14 から red) を撤去し `cargo check --lib --all-features` を追加 (bridge feature が公開版 API で compile することを CI が初めて確認)
 
 ### Fixed
+- **FFI 71 関数の panic 隔離** (`src/ffi.rs`): 全 `extern "C"` の本体を `ffi_guard(sentinel, || ..)` で包み、panic は host を落とさず sentinel (null / 0 / −1 / NaN / ()) + `as_sync_last_error()` (新規、`as_sync_clear_last_error` / `as_sync_free_error_string` も) で通知 `[profile.release] panic = "abort"` を撤去 (abort では `catch_unwind` が機能しない、cdylib size が数 % 増) release profile で guard test 通過
 - `analytics_bridge`: `alice_analytics::prelude` は存在しない module だった (bridge 追加以来 stub で一度も compile されていなかった) → `alice_analytics::sketch::{CountMinSketch1024x5, DDSketch256, HyperLogLog12}`
 - `codec_bridge` test: 常に真の `u8 <= 255` assert (clippy `absurd_extreme_comparisons`) を長さ検証に置換、誤差上限 oracle `roundtrip_error_is_bounded` を追加 — 実測 MAE 24.6 / max 101 (0..63 鋸波) で定数予測より悪いため `#[ignore]` (bridge の量子化は要修正、未解決)
 

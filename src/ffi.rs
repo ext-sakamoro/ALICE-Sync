@@ -55,38 +55,48 @@ pub struct AsSyncInputFrameArray(Vec<InputFrame>);
 
 #[no_mangle]
 pub extern "C" fn as_sync_world_new(seed: u64) -> *mut AsSyncWorld {
-    Box::into_raw(Box::new(AsSyncWorld(World::new(seed))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncWorld(World::new(seed))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_free(ptr: *mut AsSyncWorld) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_hash(ptr: *const AsSyncWorld) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.hash().0
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.hash().0
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_entity_count(ptr: *const AsSyncWorld) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.entity_count() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.entity_count() as u32
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_frame(ptr: *const AsSyncWorld) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.frame()
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.frame()
+    })
 }
 
 #[no_mangle]
@@ -94,13 +104,15 @@ pub unsafe extern "C" fn as_sync_world_apply_event(
     ptr: *mut AsSyncWorld,
     event: *const AsSyncEvent,
 ) -> i32 {
-    if ptr.is_null() || event.is_null() {
-        return -1;
-    }
-    match (*ptr).0.apply(&(*event).0) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
+    ffi_guard(-1, || {
+        if ptr.is_null() || event.is_null() {
+            return -1;
+        }
+        match (*ptr).0.apply(&(*event).0) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
 }
 
 /// entity位置を取得。成功=0, 失敗=-1
@@ -112,24 +124,28 @@ pub unsafe extern "C" fn as_sync_world_get_entity_position(
     out_y: *mut f32,
     out_z: *mut f32,
 ) -> i32 {
-    if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
-        return -1;
-    }
-    (*ptr).0.get_entity(entity_id).map_or(-1, |e| {
-        let pos = e.position.to_f32_array();
-        *out_x = pos[0];
-        *out_y = pos[1];
-        *out_z = pos[2];
-        0
+    ffi_guard(-1, || {
+        if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
+            return -1;
+        }
+        (*ptr).0.get_entity(entity_id).map_or(-1, |e| {
+            let pos = e.position.to_f32_array();
+            *out_x = pos[0];
+            *out_y = pos[1];
+            *out_z = pos[2];
+            0
+        })
     })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_recalculate_hash(ptr: *mut AsSyncWorld) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.recalculate_hash().0
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.recalculate_hash().0
+    })
 }
 
 // ============================================================================
@@ -138,30 +154,38 @@ pub unsafe extern "C" fn as_sync_world_recalculate_hash(ptr: *mut AsSyncWorld) -
 
 #[no_mangle]
 pub extern "C" fn as_sync_world_soa_new(seed: u64) -> *mut AsSyncWorldSoA {
-    Box::into_raw(Box::new(AsSyncWorldSoA(WorldSoA::new(seed))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncWorldSoA(WorldSoA::new(seed))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_soa_free(ptr: *mut AsSyncWorldSoA) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_soa_hash(ptr: *const AsSyncWorldSoA) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.hash().0
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.hash().0
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_world_soa_entity_count(ptr: *const AsSyncWorldSoA) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.entity_count() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.entity_count() as u32
+    })
 }
 
 #[no_mangle]
@@ -169,13 +193,15 @@ pub unsafe extern "C" fn as_sync_world_soa_apply_event(
     ptr: *mut AsSyncWorldSoA,
     event: *const AsSyncEvent,
 ) -> i32 {
-    if ptr.is_null() || event.is_null() {
-        return -1;
-    }
-    match (*ptr).0.apply(&(*event).0) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
+    ffi_guard(-1, || {
+        if ptr.is_null() || event.is_null() {
+            return -1;
+        }
+        match (*ptr).0.apply(&(*event).0) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
 }
 
 // ============================================================================
@@ -184,52 +210,64 @@ pub unsafe extern "C" fn as_sync_world_soa_apply_event(
 
 #[no_mangle]
 pub extern "C" fn as_sync_node_new(node_id: u64) -> *mut AsSyncNode {
-    Box::into_raw(Box::new(AsSyncNode(Node::new(NodeId(node_id)))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncNode(Node::new(NodeId(node_id)))))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn as_sync_node_with_seed(node_id: u64, seed: u64) -> *mut AsSyncNode {
-    Box::into_raw(Box::new(AsSyncNode(Node::with_seed(NodeId(node_id), seed))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncNode(Node::with_seed(NodeId(node_id), seed))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_free(ptr: *mut AsSyncNode) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_world_hash(ptr: *const AsSyncNode) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.world_hash().0
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.world_hash().0
+    })
 }
 
 /// `NodeState`: 0=Disconnected, 1=Connecting, 2=Synced, 3=Diverged
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_state(ptr: *const AsSyncNode) -> u8 {
-    if ptr.is_null() {
-        return 0;
-    }
-    match (*ptr).0.state() {
-        NodeState::Disconnected => 0,
-        NodeState::Connecting => 1,
-        NodeState::Synced => 2,
-        NodeState::Diverged => 3,
-    }
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        match (*ptr).0.state() {
+            NodeState::Disconnected => 0,
+            NodeState::Connecting => 1,
+            NodeState::Synced => 2,
+            NodeState::Diverged => 3,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_emit(ptr: *mut AsSyncNode, event: *const AsSyncEvent) -> i32 {
-    if ptr.is_null() || event.is_null() {
-        return -1;
-    }
-    match (*ptr).0.emit((*event).0.clone()) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
+    ffi_guard(-1, || {
+        if ptr.is_null() || event.is_null() {
+            return -1;
+        }
+        match (*ptr).0.emit((*event).0.clone()) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
 }
 
 #[no_mangle]
@@ -237,45 +275,55 @@ pub unsafe extern "C" fn as_sync_node_apply_event(
     ptr: *mut AsSyncNode,
     event: *const AsSyncEvent,
 ) -> i32 {
-    if ptr.is_null() || event.is_null() {
-        return -1;
-    }
-    match (*ptr).0.apply_event(&(*event).0) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
+    ffi_guard(-1, || {
+        if ptr.is_null() || event.is_null() {
+            return -1;
+        }
+        match (*ptr).0.apply_event(&(*event).0) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_add_peer(ptr: *mut AsSyncNode, peer_id: u64) {
-    if ptr.is_null() {
-        return;
-    }
-    (*ptr).0.add_peer(NodeId(peer_id));
+    ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        (*ptr).0.add_peer(NodeId(peer_id));
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_entity_count(ptr: *const AsSyncNode) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.world().entity_count() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.world().entity_count() as u32
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_events_count(ptr: *const AsSyncNode) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.events().len() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.events().len() as u32
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_events_bytes(ptr: *const AsSyncNode) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.events().total_bytes() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.events().total_bytes() as u32
+    })
 }
 
 // ============================================================================
@@ -289,10 +337,12 @@ pub extern "C" fn as_sync_event_new_motion(
     dy: i16,
     dz: i16,
 ) -> *mut AsSyncEvent {
-    Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Motion {
-        entity,
-        delta: [dx, dy, dz],
-    }))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Motion {
+            entity,
+            delta: [dx, dy, dz],
+        }))))
+    })
 }
 
 #[no_mangle]
@@ -303,18 +353,22 @@ pub extern "C" fn as_sync_event_new_spawn(
     py: i16,
     pz: i16,
 ) -> *mut AsSyncEvent {
-    Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Spawn {
-        entity,
-        kind,
-        pos: [px, py, pz],
-    }))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Spawn {
+            entity,
+            kind,
+            pos: [px, py, pz],
+        }))))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn as_sync_event_new_despawn(entity: u32) -> *mut AsSyncEvent {
-    Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Despawn {
-        entity,
-    }))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Despawn {
+            entity,
+        }))))
+    })
 }
 
 #[no_mangle]
@@ -323,39 +377,49 @@ pub extern "C" fn as_sync_event_new_property(
     prop: u16,
     value: i32,
 ) -> *mut AsSyncEvent {
-    Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Property {
-        entity,
-        prop,
-        value,
-    }))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Property {
+            entity,
+            prop,
+            value,
+        }))))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn as_sync_event_new_input(player: u16, code: u32) -> *mut AsSyncEvent {
-    Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Input {
-        player,
-        code,
-    }))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Input {
+            player,
+            code,
+        }))))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn as_sync_event_new_tick(frame: u64) -> *mut AsSyncEvent {
-    Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Tick { frame }))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEvent(Event::new(EventKind::Tick { frame }))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_free(ptr: *mut AsSyncEvent) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_size_bytes(ptr: *const AsSyncEvent) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.size_bytes() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.size_bytes() as u32
+    })
 }
 
 // ============================================================================
@@ -364,14 +428,18 @@ pub unsafe extern "C" fn as_sync_event_size_bytes(ptr: *const AsSyncEvent) -> u3
 
 #[no_mangle]
 pub extern "C" fn as_sync_event_stream_new() -> *mut AsSyncEventStream {
-    Box::into_raw(Box::new(AsSyncEventStream(EventStream::new())))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncEventStream(EventStream::new())))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_stream_free(ptr: *mut AsSyncEventStream) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
@@ -380,42 +448,52 @@ pub unsafe extern "C" fn as_sync_event_stream_push(
     event: *const AsSyncEvent,
     origin: u64,
 ) -> u64 {
-    if ptr.is_null() || event.is_null() {
-        return 0;
-    }
-    (*ptr).0.push((*event).0.clone(), origin).0
+    ffi_guard(0, || {
+        if ptr.is_null() || event.is_null() {
+            return 0;
+        }
+        (*ptr).0.push((*event).0.clone(), origin).0
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_stream_len(ptr: *const AsSyncEventStream) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.len() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.len() as u32
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_stream_is_empty(ptr: *const AsSyncEventStream) -> i32 {
-    if ptr.is_null() {
-        return 1;
-    }
-    i32::from((*ptr).0.is_empty())
+    ffi_guard(1, || {
+        if ptr.is_null() {
+            return 1;
+        }
+        i32::from((*ptr).0.is_empty())
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_stream_current_seq(ptr: *const AsSyncEventStream) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.current_seq().0
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.current_seq().0
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_event_stream_total_bytes(ptr: *const AsSyncEventStream) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.total_bytes() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.total_bytes() as u32
+    })
 }
 
 // ============================================================================
@@ -424,16 +502,20 @@ pub unsafe extern "C" fn as_sync_event_stream_total_bytes(ptr: *const AsSyncEven
 
 #[no_mangle]
 pub extern "C" fn as_sync_input_frame_new(frame: u64, player_id: u8) -> *mut AsSyncInputFrame {
-    Box::into_raw(Box::new(AsSyncInputFrame(InputFrame::new(
-        frame, player_id,
-    ))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncInputFrame(InputFrame::new(
+            frame, player_id,
+        ))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_free(ptr: *mut AsSyncInputFrame) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
@@ -443,18 +525,22 @@ pub unsafe extern "C" fn as_sync_input_frame_set_movement(
     y: i16,
     z: i16,
 ) {
-    if ptr.is_null() {
-        return;
-    }
-    (*ptr).0.movement = [x, y, z];
+    ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        (*ptr).0.movement = [x, y, z];
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_set_actions(ptr: *mut AsSyncInputFrame, actions: u32) {
-    if ptr.is_null() {
-        return;
-    }
-    (*ptr).0.actions = actions;
+    ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        (*ptr).0.actions = actions;
+    })
 }
 
 #[no_mangle]
@@ -464,26 +550,32 @@ pub unsafe extern "C" fn as_sync_input_frame_set_aim(
     y: i16,
     z: i16,
 ) {
-    if ptr.is_null() {
-        return;
-    }
-    (*ptr).0.aim = [x, y, z];
+    ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        (*ptr).0.aim = [x, y, z];
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_get_frame(ptr: *const AsSyncInputFrame) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.frame
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.frame
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_get_player_id(ptr: *const AsSyncInputFrame) -> u8 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.player_id
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.player_id
+    })
 }
 
 #[no_mangle]
@@ -493,20 +585,24 @@ pub unsafe extern "C" fn as_sync_input_frame_get_movement(
     out_y: *mut i16,
     out_z: *mut i16,
 ) {
-    if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
-        return;
-    }
-    *out_x = (*ptr).0.movement[0];
-    *out_y = (*ptr).0.movement[1];
-    *out_z = (*ptr).0.movement[2];
+    ffi_guard((), || {
+        if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
+            return;
+        }
+        *out_x = (*ptr).0.movement[0];
+        *out_y = (*ptr).0.movement[1];
+        *out_z = (*ptr).0.movement[2];
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_get_actions(ptr: *const AsSyncInputFrame) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.actions
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.actions
+    })
 }
 
 #[no_mangle]
@@ -516,12 +612,14 @@ pub unsafe extern "C" fn as_sync_input_frame_get_aim(
     out_y: *mut i16,
     out_z: *mut i16,
 ) {
-    if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
-        return;
-    }
-    *out_x = (*ptr).0.aim[0];
-    *out_y = (*ptr).0.aim[1];
-    *out_z = (*ptr).0.aim[2];
+    ffi_guard((), || {
+        if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
+            return;
+        }
+        *out_x = (*ptr).0.aim[0];
+        *out_y = (*ptr).0.aim[1];
+        *out_z = (*ptr).0.aim[2];
+    })
 }
 
 // ============================================================================
@@ -530,14 +628,18 @@ pub unsafe extern "C" fn as_sync_input_frame_get_aim(
 
 #[no_mangle]
 pub extern "C" fn as_sync_lockstep_new(player_count: u8) -> *mut AsSyncLockstep {
-    Box::into_raw(Box::new(AsSyncLockstep(LockstepSession::new(player_count))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncLockstep(LockstepSession::new(player_count))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_lockstep_free(ptr: *mut AsSyncLockstep) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
@@ -545,10 +647,12 @@ pub unsafe extern "C" fn as_sync_lockstep_add_local_input(
     ptr: *mut AsSyncLockstep,
     input: *const AsSyncInputFrame,
 ) {
-    if ptr.is_null() || input.is_null() {
-        return;
-    }
-    (*ptr).0.add_local_input((*input).0);
+    ffi_guard((), || {
+        if ptr.is_null() || input.is_null() {
+            return;
+        }
+        (*ptr).0.add_local_input((*input).0);
+    })
 }
 
 #[no_mangle]
@@ -556,18 +660,22 @@ pub unsafe extern "C" fn as_sync_lockstep_add_remote_input(
     ptr: *mut AsSyncLockstep,
     input: *const AsSyncInputFrame,
 ) {
-    if ptr.is_null() || input.is_null() {
-        return;
-    }
-    (*ptr).0.add_remote_input((*input).0);
+    ffi_guard((), || {
+        if ptr.is_null() || input.is_null() {
+            return;
+        }
+        (*ptr).0.add_remote_input((*input).0);
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_lockstep_ready(ptr: *const AsSyncLockstep) -> i32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    i32::from((*ptr).0.ready_to_advance())
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        i32::from((*ptr).0.ready_to_advance())
+    })
 }
 
 /// advance成功時: `InputFrameArray`へのポインタ（`as_sync_input_frame_array_free`で解放）
@@ -576,20 +684,24 @@ pub unsafe extern "C" fn as_sync_lockstep_ready(ptr: *const AsSyncLockstep) -> i
 pub unsafe extern "C" fn as_sync_lockstep_advance(
     ptr: *mut AsSyncLockstep,
 ) -> *mut AsSyncInputFrameArray {
-    if ptr.is_null() {
-        return ptr::null_mut();
-    }
-    (*ptr).0.advance().map_or(ptr::null_mut(), |inputs| {
-        Box::into_raw(Box::new(AsSyncInputFrameArray(inputs)))
+    ffi_guard(ptr::null_mut(), || {
+        if ptr.is_null() {
+            return ptr::null_mut();
+        }
+        (*ptr).0.advance().map_or(ptr::null_mut(), |inputs| {
+            Box::into_raw(Box::new(AsSyncInputFrameArray(inputs)))
+        })
     })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_lockstep_confirmed_frame(ptr: *const AsSyncLockstep) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.confirmed_frame()
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.confirmed_frame()
+    })
 }
 
 #[no_mangle]
@@ -598,10 +710,12 @@ pub unsafe extern "C" fn as_sync_lockstep_record_checksum(
     frame: u64,
     checksum: u64,
 ) {
-    if ptr.is_null() {
-        return;
-    }
-    (*ptr).0.record_checksum(frame, checksum);
+    ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        (*ptr).0.record_checksum(frame, checksum);
+    })
 }
 
 // ============================================================================
@@ -614,18 +728,22 @@ pub extern "C" fn as_sync_rollback_new(
     local_player: u8,
     max_rollback: u64,
 ) -> *mut AsSyncRollback {
-    Box::into_raw(Box::new(AsSyncRollback(RollbackSession::new(
-        player_count,
-        local_player,
-        max_rollback,
-    ))))
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncRollback(RollbackSession::new(
+            player_count,
+            local_player,
+            max_rollback,
+        ))))
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_rollback_free(ptr: *mut AsSyncRollback) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 /// ローカル入力追加 → 全プレイヤーのフレーム入力を返す
@@ -634,11 +752,13 @@ pub unsafe extern "C" fn as_sync_rollback_add_local_input(
     ptr: *mut AsSyncRollback,
     input: *const AsSyncInputFrame,
 ) -> *mut AsSyncInputFrameArray {
-    if ptr.is_null() || input.is_null() {
-        return ptr::null_mut();
-    }
-    let inputs = (*ptr).0.add_local_input((*input).0);
-    Box::into_raw(Box::new(AsSyncInputFrameArray(inputs)))
+    ffi_guard(ptr::null_mut(), || {
+        if ptr.is_null() || input.is_null() {
+            return ptr::null_mut();
+        }
+        let inputs = (*ptr).0.add_local_input((*input).0);
+        Box::into_raw(Box::new(AsSyncInputFrameArray(inputs)))
+    })
 }
 
 /// リモート入力追加 → `RollbackAction`: 0=None, 1=Rollback, 2=Desync
@@ -649,48 +769,56 @@ pub unsafe extern "C" fn as_sync_rollback_add_remote_input(
     input: *const AsSyncInputFrame,
     out_rollback_frame: *mut u64,
 ) -> u8 {
-    if ptr.is_null() || input.is_null() {
-        return 0;
-    }
-    match (*ptr).0.add_remote_input((*input).0) {
-        RollbackAction::None => 0,
-        RollbackAction::Rollback { to_frame } => {
-            if !out_rollback_frame.is_null() {
-                *out_rollback_frame = to_frame;
-            }
-            1
+    ffi_guard(0, || {
+        if ptr.is_null() || input.is_null() {
+            return 0;
         }
-        RollbackAction::Desync { frame } => {
-            if !out_rollback_frame.is_null() {
-                *out_rollback_frame = frame;
+        match (*ptr).0.add_remote_input((*input).0) {
+            RollbackAction::None => 0,
+            RollbackAction::Rollback { to_frame } => {
+                if !out_rollback_frame.is_null() {
+                    *out_rollback_frame = to_frame;
+                }
+                1
             }
-            2
+            RollbackAction::Desync { frame } => {
+                if !out_rollback_frame.is_null() {
+                    *out_rollback_frame = frame;
+                }
+                2
+            }
         }
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_rollback_confirmed_frame(ptr: *const AsSyncRollback) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.confirmed_frame()
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.confirmed_frame()
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_rollback_predicted_frame(ptr: *const AsSyncRollback) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.predicted_frame()
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.predicted_frame()
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_rollback_frames_ahead(ptr: *const AsSyncRollback) -> u64 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.frames_ahead()
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.frames_ahead()
+    })
 }
 
 // ============================================================================
@@ -699,17 +827,21 @@ pub unsafe extern "C" fn as_sync_rollback_frames_ahead(ptr: *const AsSyncRollbac
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_array_free(ptr: *mut AsSyncInputFrameArray) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_array_len(ptr: *const AsSyncInputFrameArray) -> u32 {
-    if ptr.is_null() {
-        return 0;
-    }
-    (*ptr).0.len() as u32
+    ffi_guard(0, || {
+        if ptr.is_null() {
+            return 0;
+        }
+        (*ptr).0.len() as u32
+    })
 }
 
 /// 配列のi番目の`InputFrame`をコピーして返す。解放は`as_sync_input_frame_free`
@@ -718,12 +850,14 @@ pub unsafe extern "C" fn as_sync_input_frame_array_get(
     ptr: *const AsSyncInputFrameArray,
     index: u32,
 ) -> *mut AsSyncInputFrame {
-    if ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let arr = &(*ptr).0;
-    arr.get(index as usize).map_or(ptr::null_mut(), |f| {
-        Box::into_raw(Box::new(AsSyncInputFrame(*f)))
+    ffi_guard(ptr::null_mut(), || {
+        if ptr.is_null() {
+            return ptr::null_mut();
+        }
+        let arr = &(*ptr).0;
+        arr.get(index as usize).map_or(ptr::null_mut(), |f| {
+            Box::into_raw(Box::new(AsSyncInputFrame(*f)))
+        })
     })
 }
 
@@ -733,17 +867,17 @@ pub unsafe extern "C" fn as_sync_input_frame_array_get(
 
 #[no_mangle]
 pub extern "C" fn as_sync_fixed_from_f32(f: f32) -> i32 {
-    Fixed::from_f32(f).0
+    ffi_guard(0, || Fixed::from_f32(f).0)
 }
 
 #[no_mangle]
 pub extern "C" fn as_sync_fixed_to_f32(bits: i32) -> f32 {
-    Fixed::from_bits(bits).to_f32()
+    ffi_guard(f32::NAN, || Fixed::from_bits(bits).to_f32())
 }
 
 #[no_mangle]
 pub extern "C" fn as_sync_vec3_hash(x: f32, y: f32, z: f32) -> u64 {
-    Vec3Fixed::from_f32(x, y, z).hash_bits()
+    ffi_guard(0, || Vec3Fixed::from_f32(x, y, z).hash_bits())
 }
 
 // ============================================================================
@@ -752,8 +886,10 @@ pub extern "C" fn as_sync_vec3_hash(x: f32, y: f32, z: f32) -> u64 {
 
 #[no_mangle]
 pub extern "C" fn as_sync_version() -> u32 {
-    // 0.6.0 → 0*10000 + 6*100 + 0 = 600
-    600
+    ffi_guard(0, || {
+        // 0.6.0 → 0*10000 + 6*100 + 0 = 600
+        600
+    })
 }
 
 // ============================================================================
@@ -930,5 +1066,155 @@ mod tests {
             as_sync_node_free(ptr::null_mut());
             as_sync_event_free(ptr::null_mut());
         }
+    }
+}
+
+// ============================================================================
+// Panic isolation (see `guard`)
+// ============================================================================
+
+/// Message of the most recent panic caught at the FFI boundary on this thread
+/// (NUL-terminated, owned by the callee — release with
+/// `as_sync_free_error_string`), or null if none.
+#[no_mangle]
+pub extern "C" fn as_sync_last_error() -> *mut std::os::raw::c_char {
+    match guard::take_last_error() {
+        Some(msg) => {
+            std::ffi::CString::new(msg).map_or(ptr::null_mut(), std::ffi::CString::into_raw)
+        }
+        None => ptr::null_mut(),
+    }
+}
+
+/// Clear the most recent FFI error message.
+#[no_mangle]
+pub extern "C" fn as_sync_clear_last_error() {
+    guard::clear_last_error();
+}
+
+/// Release a string returned by `as_sync_last_error`.
+///
+/// # Safety
+/// `s` must be null or a pointer returned by `as_sync_last_error` (freed once).
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_free_error_string(s: *mut std::os::raw::c_char) {
+    if !s.is_null() {
+        drop(std::ffi::CString::from_raw(s));
+    }
+}
+
+/// Panic isolation for the C ABI.
+///
+/// A panic that reaches an `extern "C"` boundary aborts the whole process
+/// (Rust 1.81+), taking the host (Unity, Unreal, a Python interpreter) down
+/// with it. Every exported function therefore runs its body through
+/// [`guard::ffi_guard`]: a panic is caught inside the function, its message is
+/// stored in a thread-local slot the host reads with `as_sync_last_error`, and
+/// the function returns the caller's sentinel (null handle, 0, -1, NaN, ()).
+/// Requires the crate to be built with `panic = "unwind"` (the default);
+/// `panic = "abort"` makes `catch_unwind` a no-op.
+mod guard {
+    use std::cell::RefCell;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    thread_local! {
+        static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    /// Record an error message for `as_sync_last_error`.
+    pub fn set_last_error(msg: impl Into<String>) {
+        LAST_ERROR.with(|slot| *slot.borrow_mut() = Some(msg.into()));
+    }
+
+    /// Take the most recent error message (leaves the slot empty).
+    pub fn take_last_error() -> Option<String> {
+        LAST_ERROR.with(|slot| slot.borrow_mut().take())
+    }
+
+    /// Clear the most recent error message.
+    pub fn clear_last_error() {
+        LAST_ERROR.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    /// Run `body`, converting a panic into `default` plus a recorded message.
+    ///
+    /// The closure is treated as unwind-safe: every FFI body only touches its
+    /// arguments and heap handles owned by the caller, so no partially-updated
+    /// shared state is observable afterwards.
+    #[inline]
+    pub fn ffi_guard<T>(default: T, body: impl FnOnce() -> T) -> T {
+        match catch_unwind(AssertUnwindSafe(body)) {
+            Ok(v) => v,
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "panic with non-string payload".to_string());
+                set_last_error(format!("as_sync FFI panic: {msg}"));
+                default
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn panic_becomes_default_and_message() {
+            clear_last_error();
+            let v = ffi_guard(-1i32, || -> i32 { panic!("boom {}", 42) });
+            assert_eq!(v, -1);
+            let msg = take_last_error().expect("message recorded");
+            assert!(msg.contains("boom 42"), "{msg}");
+            assert!(take_last_error().is_none(), "take clears the slot");
+        }
+
+        #[test]
+        fn success_leaves_slot_untouched() {
+            clear_last_error();
+            assert_eq!(ffi_guard(0, || 5), 5);
+            assert!(take_last_error().is_none());
+        }
+    }
+}
+
+use guard::ffi_guard;
+
+#[cfg(test)]
+mod guard_ffi_tests {
+    use super::*;
+
+    /// panic が sentinel + `as_sync_last_error` の message に変換され、host が
+    /// 文字列を取得 / 解放できること (extern "C" 3 本の end-to-end)
+    #[test]
+    fn last_error_roundtrip_through_c_abi() {
+        as_sync_clear_last_error();
+        assert!(as_sync_last_error().is_null(), "初期状態は null");
+        let v = ffi_guard(-1i32, || -> i32 { panic!("ffi test panic") });
+        assert_eq!(v, -1);
+        let s = as_sync_last_error();
+        assert!(!s.is_null());
+        let msg = unsafe { std::ffi::CStr::from_ptr(s) }
+            .to_string_lossy()
+            .into_owned();
+        assert!(msg.contains("ffi test panic"), "{msg}");
+        unsafe { as_sync_free_error_string(s) };
+        assert!(as_sync_last_error().is_null(), "take で slot は空になる");
+    }
+
+    /// 無効 handle は panic せず sentinel を返す (guard 導入で挙動が変わらないこと)
+    #[test]
+    fn null_handles_return_sentinels() {
+        unsafe {
+            assert_eq!(as_sync_world_frame(ptr::null()), 0);
+            assert_eq!(as_sync_world_apply_event(ptr::null_mut(), ptr::null()), -1);
+            assert_eq!(as_sync_event_stream_is_empty(ptr::null()), 1);
+        }
+        assert!(
+            as_sync_last_error().is_null(),
+            "sentinel 経路は error を記録しない"
+        );
     }
 }
