@@ -47,6 +47,12 @@ jobs:
       - name: Check (all features、bridge 含む)
         run: cargo check --lib --all-features
 
+      # 解析解 oracle (tests/analytic_oracle.rs): async (RFC 6298 / 断片化 / CRDT) と
+      # physics (i16 Q8.8 ↔ Fix128 契約) の feature-gated test を必ず走らせる
+      # (CLAUDE.md § 解析解突合テスト規律 (5)、strict-eval 16)
+      - name: Test — analytic oracles (async + physics bridge)
+        run: cargo test --test analytic_oracle --features "async,physics"
+
       - name: Doc tests
         run: cargo test --features std --doc
 

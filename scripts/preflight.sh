@@ -74,6 +74,9 @@ fi
 step "ci.yml / test: Test (default = std)"
 ( export CARGO_TERM_COLOR="always"; cargo test --features std )
 
+step "ci.yml / test: Test — analytic oracles (async + physics bridge)"
+( export CARGO_TERM_COLOR="always"; cargo test --test analytic_oracle --features "async,physics" )
+
 step "ci.yml / test: Doc tests"
 ( export CARGO_TERM_COLOR="always"; cargo test --features std --doc )
 

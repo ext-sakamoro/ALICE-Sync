@@ -73,16 +73,33 @@ impl Fixed {
         self.0 as f32 * Self::RCP_SCALE
     }
 
+    /// From the network format: i16 **Q8.8** (`InputFrame::movement` /
+    /// `EventKind::Motion` deltas), `256 ↦ 1.0`, resolution 1/256.
+    ///
+    /// History (2026-09-17, oracle `tests/analytic_oracle.rs`): this shifted by
+    /// 6 (i16 read as Q6.10, `256 ↦ 0.25`) while the `InputFrame` doc, the
+    /// physics bridge doc and `physics_bridge` (which read the i16 as a whole
+    /// integer, `256 ↦ 256.0`) each assumed a different scale — three laws for
+    /// one wire field.  Q8.8 is the documented one and now the only one.
     #[inline(always)]
     #[must_use]
     pub const fn from_i16(n: i16) -> Self {
-        Self((n as i32) << 6)
+        Self((n as i32) << 8)
     }
 
+    /// To the network format (i16 Q8.8), truncating the low 8 fractional bits
+    /// and saturating outside `[-128, 128)`.
     #[inline(always)]
     #[must_use]
     pub const fn to_i16(self) -> i16 {
-        (self.0 >> 6) as i16
+        let q = self.0 >> 8;
+        if q > i16::MAX as i32 {
+            i16::MAX
+        } else if q < i16::MIN as i32 {
+            i16::MIN
+        } else {
+            q as i16
+        }
     }
 
     #[inline(always)]
@@ -266,11 +283,12 @@ impl Vec3Simd {
     #[inline(always)]
     #[must_use]
     pub const fn from_i16_array(arr: [i16; 3]) -> Self {
+        // same Q8.8 law as `Fixed::from_i16`
         Self {
             data: i32x4::new([
-                (arr[0] as i32) << 6,
-                (arr[1] as i32) << 6,
-                (arr[2] as i32) << 6,
+                Fixed::from_i16(arr[0]).0,
+                Fixed::from_i16(arr[1]).0,
+                Fixed::from_i16(arr[2]).0,
                 0,
             ]),
         }
@@ -565,10 +583,10 @@ mod tests {
         let arr: [i16; 3] = [3, -5, 7];
         let simd = Vec3Simd::from_i16_array(arr);
         let v = simd.to_vec3();
-        // from_i16 shifts left by 6
-        assert_eq!(v.x.0, 3 << 6);
-        assert_eq!(v.y.0, -5_i32 << 6);
-        assert_eq!(v.z.0, 7 << 6);
+        // from_i16 is Q8.8: shifts left by 8 (was 6 until 2026-09-17)
+        assert_eq!(v.x.0, 3 << 8);
+        assert_eq!(v.y.0, -5_i32 << 8);
+        assert_eq!(v.z.0, 7 << 8);
     }
 
     // --- batch_add_vec3 ---

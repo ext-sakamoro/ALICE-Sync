@@ -52,22 +52,47 @@ use alice_physics::{
 ///
 /// The conversion is: `i16 → i64 → Fix128::from_int()` which places the
 /// i16 value in the integer part of the fixed-point number.
+/// i16 Q8.8 (the `InputFrame` wire format) → `Fix128`, exact: n / 256.
+///
+/// History (2026-09-17, oracle `tests/analytic_oracle.rs`): the bridge read
+/// the i16 as a whole integer (`from_int`, 256 ↦ 256.0) while `Fixed::from_i16`
+/// read it as Q6.10 and the docs said Q8.8 — the same input meant three
+/// different displacements depending on the code path.
+#[inline]
+#[must_use]
+fn q8_to_fix(n: i16) -> alice_physics::Fix128 {
+    alice_physics::Fix128::from_int(n as i64).shr_bits(8)
+}
+
+#[inline]
+#[must_use]
+fn q8_to_vec3fix(v: [i16; 3]) -> Vec3Fix {
+    Vec3Fix::new(q8_to_fix(v[0]), q8_to_fix(v[1]), q8_to_fix(v[2]))
+}
+
+/// `Fix128` → i16 Q8.8: ⌊v · 256⌋, saturating at the i16 range.
+#[inline]
+#[must_use]
+fn fix_to_q8(v: alice_physics::Fix128) -> i16 {
+    // v = hi + lo / 2⁶⁴  ⇒  ⌊v · 256⌋ = hi · 256 + ⌊lo / 2⁵⁶⌋ (exact in i128)
+    let q = (v.hi as i128) * 256 + (v.lo >> 56) as i128;
+    q.clamp(i16::MIN as i128, i16::MAX as i128) as i16
+}
+
+#[inline]
+#[must_use]
+fn vec3fix_to_q8(v: Vec3Fix) -> [i16; 3] {
+    [fix_to_q8(v.x), fix_to_q8(v.y), fix_to_q8(v.z)]
+}
+
 #[inline]
 #[must_use]
 pub fn sync_input_to_physics(input: &InputFrame) -> FrameInput {
     FrameInput {
         player_id: input.player_id,
-        movement: Vec3Fix::from_int(
-            input.movement[0] as i64,
-            input.movement[1] as i64,
-            input.movement[2] as i64,
-        ),
+        movement: q8_to_vec3fix(input.movement),
         actions: input.actions,
-        aim_direction: Vec3Fix::from_int(
-            input.aim[0] as i64,
-            input.aim[1] as i64,
-            input.aim[2] as i64,
-        ),
+        aim_direction: q8_to_vec3fix(input.aim),
     }
 }
 
@@ -81,17 +106,9 @@ pub fn physics_input_to_sync(input: &FrameInput, frame: u64) -> InputFrame {
     InputFrame {
         frame,
         player_id: input.player_id,
-        movement: [
-            input.movement.x.hi as i16,
-            input.movement.y.hi as i16,
-            input.movement.z.hi as i16,
-        ],
+        movement: vec3fix_to_q8(input.movement),
         actions: input.actions,
-        aim: [
-            input.aim_direction.x.hi as i16,
-            input.aim_direction.y.hi as i16,
-            input.aim_direction.z.hi as i16,
-        ],
+        aim: vec3fix_to_q8(input.aim_direction),
     }
 }
 
@@ -336,11 +353,12 @@ mod tests {
 
         let physics = sync_input_to_physics(&sync_input);
         assert_eq!(physics.player_id, 1);
-        assert_eq!(physics.movement.x.hi, 100);
-        assert_eq!(physics.movement.y.hi, -50);
-        assert_eq!(physics.movement.z.hi, 200);
+        // Q8.8 (2026-09-17): the i16 is 1/256 units, not whole units
+        assert_eq!(physics.movement.x.to_f64(), 100.0 / 256.0);
+        assert_eq!(physics.movement.y.to_f64(), -50.0 / 256.0);
+        assert_eq!(physics.movement.z.to_f64(), 200.0 / 256.0);
         assert_eq!(physics.actions, 0x05);
-        assert_eq!(physics.aim_direction.y.hi, 1000);
+        assert_eq!(physics.aim_direction.y.to_f64(), 1000.0 / 256.0);
 
         // Roundtrip
         let back = physics_input_to_sync(&physics, 42);
@@ -428,8 +446,8 @@ mod tests {
 
         let physics = sync_inputs_to_physics(&inputs);
         assert_eq!(physics.len(), 2);
-        assert_eq!(physics[0].movement.x.hi, 10);
-        assert_eq!(physics[1].movement.z.hi, -10);
+        assert_eq!(physics[0].movement.x.to_f64(), 10.0 / 256.0);
+        assert_eq!(physics[1].movement.z.to_f64(), -10.0 / 256.0);
     }
 
     #[test]
@@ -439,10 +457,10 @@ mod tests {
             .with_aim(-100, -200, -300);
 
         let physics = sync_input_to_physics(&input);
-        assert_eq!(physics.movement.x.hi, -32768);
-        assert_eq!(physics.movement.y.hi, 32767);
-        assert_eq!(physics.movement.z.hi, -1);
-        assert_eq!(physics.aim_direction.x.hi, -100);
+        assert_eq!(physics.movement.x.to_f64(), -32768.0 / 256.0);
+        assert_eq!(physics.movement.y.to_f64(), 32767.0 / 256.0);
+        assert_eq!(physics.movement.z.to_f64(), -1.0 / 256.0);
+        assert_eq!(physics.aim_direction.x.to_f64(), -100.0 / 256.0);
 
         let back = physics_input_to_sync(&physics, 1);
         assert_eq!(back.movement, [-32768, 32767, -1]);
