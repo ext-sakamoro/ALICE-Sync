@@ -1078,18 +1078,18 @@ mod tests {
 /// `as_sync_free_error_string`), or null if none.
 #[no_mangle]
 pub extern "C" fn as_sync_last_error() -> *mut std::os::raw::c_char {
-    match guard::take_last_error() {
+    ffi_guard(ptr::null_mut(), || match guard::take_last_error() {
         Some(msg) => {
             std::ffi::CString::new(msg).map_or(ptr::null_mut(), std::ffi::CString::into_raw)
         }
         None => ptr::null_mut(),
-    }
+    })
 }
 
 /// Clear the most recent FFI error message.
 #[no_mangle]
 pub extern "C" fn as_sync_clear_last_error() {
-    guard::clear_last_error();
+    ffi_guard((), guard::clear_last_error);
 }
 
 /// Release a string returned by `as_sync_last_error`.
@@ -1098,9 +1098,11 @@ pub extern "C" fn as_sync_clear_last_error() {
 /// `s` must be null or a pointer returned by `as_sync_last_error` (freed once).
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_free_error_string(s: *mut std::os::raw::c_char) {
-    if !s.is_null() {
-        drop(std::ffi::CString::from_raw(s));
-    }
+    ffi_guard((), || {
+        if !s.is_null() {
+            drop(std::ffi::CString::from_raw(s));
+        }
+    });
 }
 
 /// Panic isolation for the C ABI.
