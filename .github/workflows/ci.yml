@@ -1,93 +1,113 @@
 name: CI
 
+# canonical CI template: [[reference_alice_ci_canonical_template]] (ALICE-SDF base)
+# 2026-09-17 ALICE-Sync 用: fmt / clippy -D / test (default + 全 native feature) /
+# analytic oracle (feature-gated 3 種を必ず走らせる、strict-eval 16) / msrv 実 compile /
+# doc -D warnings / feature-powerset / actionlint
+# `python` (pyo3 extension-module) は build 環境依存のため対象外
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: short
+  # python を除く全 native feature (security-audit.yml と同じ定義)
+  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build (no default features)
-        run: cargo build --lib --no-default-features
-
-      - name: Test (default = std)
-        run: cargo test --features std
-
-      - name: Build (async)
-        run: cargo build --lib --features "async"
-
-      - name: Build (simd)
-        run: cargo build --lib --features "simd"
-
-      - name: Build (cloud)
-        run: cargo build --lib --features "cloud"
-
-      # bridge 6 feature (physics / telemetry / cache / auth / codec / analytics) は
-      # 2026-09-17 まで manifest-only stub (version 0.1.0 固定) で一度も compile されず、
-      # stub の version が ^1 / ^0.5 を満たさなくなった 09-14 から CI red だった
-      # sibling は全て crates.io 公開済なので version 依存にし、公開版 API で check する
-      - name: Check (all features、bridge 含む)
-        run: cargo check --lib --all-features
-
-      # 解析解 oracle (tests/analytic_oracle.rs): async (RFC 6298 / 断片化 / CRDT) と
-      # physics (i16 Q8.8 ↔ Fix128 契約) の feature-gated test を必ず走らせる
-      # (CLAUDE.md § 解析解突合テスト規律 (5)、strict-eval 16)
-      - name: Test — analytic oracles (async + physics bridge)
-        run: cargo test --test analytic_oracle --features "async,physics"
-
-      - name: Doc tests
-        run: cargo test --features std --doc
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Clippy (core features)
-        run: cargo clippy --features std -- -W clippy::all
-
-      - name: Clippy (cloud)
-        run: cargo clippy --features cloud -- -W clippy::all
-
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - run: cargo fmt --all -- --check
 
-      - name: Check formatting
-        run: cargo fmt -- --check
+  clippy:
+    name: Clippy (-D warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (default)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (all native features)
+        run: cargo clippy --all-targets --features "$NATIVE_FEATURES" -- -D warnings
+      - name: Clippy (no default features)
+        run: cargo clippy --lib --no-default-features -- -D warnings
+
+  test:
+    name: Test — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (no default features)
+        run: cargo build --lib --no-default-features
+      - name: Test (default = std)
+        run: cargo test
+      - name: Test (all native features)
+        run: cargo test --features "$NATIVE_FEATURES"
+      # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
+      # を必ず走らせる (CLAUDE.md § 解析解突合テスト規律 (5)、strict-eval 16)
+      - name: Analytic oracle (async + physics + codec)
+        run: cargo test --test analytic_oracle --features "async,physics,codec"
+      - name: Doc tests
+        run: cargo test --doc --features "$NATIVE_FEATURES"
+
+  msrv:
+    name: MSRV (rust-version = 1.88 実 compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # 宣言値と同じ toolchain: Cargo.toml の rust-version を bump したら同 commit で @<version> も更新
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - name: Check (default + all native features)
+        run: |
+          cargo check --lib
+          cargo check --lib --features "$NATIVE_FEATURES"
+
+  doc:
+    name: Doc (RUSTDOCFLAGS=-Dwarnings)
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --features "$NATIVE_FEATURES"
+
+  feature-powerset:
+    name: Feature powerset (cargo-hack, depth 2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-hack
+      - name: Check every feature pair (python 除外)
+        run: cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps
 
   actionlint:
     name: actionlint (workflow YAML 検証)

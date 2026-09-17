@@ -1,0 +1,221 @@
+name: Security & Hygiene
+
+# canonical CI template: [[reference_alice_ci_canonical_template]]
+# ALICE-SDF v1.7.7 (commit 52d26f9) を ALICE-Codec 経由で ALICE-Sync 用に調整
+#
+# 目的:
+# - RustSec advisory (CVE) の週次検知
+# - dep license 逸脱 (AGPL 自己許可) の block
+# - 未使用依存の炙り出し (bloat 予防)
+# - 仮実装 (panic!(STUB) / dbg!) の CI gate (todo!/unimplemented! は informational)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'deny.toml'
+      - '.github/workflows/security-audit.yml'
+      - '.github/actions/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'deny.toml'
+      - '.github/workflows/security-audit.yml'
+      - '.github/actions/**'
+  schedule:
+    # 毎週月曜 09:00 UTC = 18:00 JST
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # python (pyo3 extension-module) を除く全 native feature
+  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"
+  CARGO_NET_RETRY: "5"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  audit:
+    name: cargo audit (RustSec CVE scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # advisory-db は audit 実行時に自動取得 yanked crate は deny
+      # RUSTSEC-2024-0436 (paste unmaintained、pyo3-macros transitive)
+      # RUSTSEC-2026-0176 / 0177 (pyo3 経由の既知 advisory) は個別 ignore
+      # RUSTSEC-2026-0204 (crossbeam-epoch unmaintained) も念のため ignore
+      # RUSTSEC-2026-0235 (rkyv 0.7 Rc/Arc archive validation OOB): alice-db 経由、
+      # archived 型に Rc/Arc 無し = 非該当 (deny.toml と同じ根拠、2026-09-16 に stub 撤去で
+      # 実依存木が見えるようになった) rkyv 0.8 移行 (on-disk format 変更) は ALICE-DB 側
+      - name: Run cargo audit
+        run: |
+          cargo audit --deny yanked \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2025-0020 \
+            --ignore RUSTSEC-2026-0176 \
+            --ignore RUSTSEC-2026-0177 \
+            --ignore RUSTSEC-2026-0204 \
+            --ignore RUSTSEC-2026-0235
+
+  deny:
+    name: cargo-deny (license + advisories + bans + sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # EmbarkStudios/cargo-deny-action@v2 は Docker container 内で稼働し、
+      # /github/workspace のみ mount するため sibling path dep が見えず fail する
+      # 直接 install で回避 (canonical [[reference_alice_ci_canonical_template]] 罠 #1)
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: Run cargo deny check all
+        run: cargo deny --features "$NATIVE_FEATURES" check all
+
+  unused-deps:
+    name: cargo-machete (unused dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      # false-positive は Cargo.toml の [package.metadata.cargo-machete] ignored で除外
+      - uses: bnjbvr/cargo-machete@main
+
+  stub-guard:
+    name: Stub / mock / dbg guard (grep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # canonical CI template 罠 #9-c (2026-09-03 refine):
+      # CLAUDE.md 仮実装 rule では todo!() / unimplemented!() は legitimate な
+      # fail-fast idiom として endorse されている → block しない、warn only
+      # → block 対象は panic!(STUB) (explicit STUB marker) と dbg!() のみ
+      # → comment 行 (^\s*//) は除外して source code のみ検知
+      - name: Block panic!(STUB) in src/**
+        run: |
+          set -eo pipefail
+          hits=$(grep -rnE 'panic!\([^)]*STUB' \
+            src/ --include="*.rs" \
+            --exclude-dir=bin \
+            | grep -v ':[[:space:]]*//' \
+            | grep -vE ':[[:space:]]*/\*' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "❌ Explicit STUB panic detected in src/ (production path):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "✓ No panic!(STUB) in src/"
+
+      - name: Detect todo! / unimplemented! (informational, not blocking)
+        run: |
+          set -eo pipefail
+          hits=$(grep -rnE 'todo!\(|unimplemented!\(' \
+            src/ --include="*.rs" \
+            --exclude-dir=bin \
+            | grep -v ':[[:space:]]*//' \
+            | grep -vE ':[[:space:]]*/\*' \
+            || true)
+          if [ -n "$hits" ]; then
+            count=$(echo "$hits" | wc -l | tr -d ' ')
+            echo "::warning::${count} todo!()/unimplemented!() marker(s) in src/ (informational, CLAUDE.md legitimate fail-fast idiom):"
+            echo "$hits" | head -20
+          else
+            echo "✓ No todo!/unimplemented! markers in src/"
+          fi
+
+      - name: Detect dbg!() residual in src/**
+        run: |
+          set -eo pipefail
+          hits=$(grep -rn 'dbg!(' src/ --include="*.rs" || true)
+          if [ -n "$hits" ]; then
+            echo "❌ dbg!() macro left in src/:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "✓ No dbg!() in src/"
+
+      - name: Detect TODO / FIXME / XXX / HACK (informational)
+        run: |
+          set -eo pipefail
+          hits=$(grep -rnE 'TODO|FIXME|XXX|HACK' src/ --include="*.rs" || true)
+          if [ -n "$hits" ]; then
+            echo "::warning::TODO/FIXME/XXX/HACK found in src/ (informational, not blocking):"
+            echo "$hits" | head -50
+          else
+            echo "✓ No TODO/FIXME/XXX/HACK in src/"
+          fi
+
+  coverage:
+    name: Coverage (cargo-llvm-cov、informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run coverage
+        run: |
+          cargo llvm-cov --lib --summary-only 2>&1 | tee coverage-summary.txt
+
+      - name: Upload coverage summary as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-summary
+          path: coverage-summary.txt
+          retention-days: 30
+
+  semver-checks:
+    name: cargo-semver-checks (API compat、informational)
+    runs-on: ubuntu-latest
+    # alice-sync は crates.io 公開済 (0.6.0〜) なので baseline は最新 published version
+    # (informational: 0.x の minor bump では break を許容、報告のみ)
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # baseline-rev 比較のため full history 必要
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # version 明示 pin: `@latest` は rustc MSRV を追いかける (0.50.0 = 1.93+) ので、
+      # rust-toolchain.toml の pin が遅れると赤になる (2026-09-14 事案) toolchain と
+      # 一緒に月次で bump する
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks@0.50.0
+
+      # baseline = crates.io の最新 published version (informational)
+      - name: Run cargo semver-checks
+        run: |
+          cargo semver-checks check-release \
+            --package alice-sync \
+            --default-features \
+            || true

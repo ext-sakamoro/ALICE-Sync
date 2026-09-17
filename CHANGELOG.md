@@ -4,7 +4,15 @@ All notable changes to ALICE-Sync will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-17
+
+### Fixed
+- `codec_bridge`: `decompress_event_batch` が量子化 step を 1 に固定していたため step > 1 の batch が step 分の 1 に縮んで復号されていた → step を header (4 B、histogram の前) に載せて復号側で使う (header 1028 → 1032 B、0.6.0 の `data` とは非互換) / `to_symbols` の `|q| > 127` error を捨てて symbol が silent wrap していた → step を `⌈max|c| / 127⌉` まで広げる (8-bit 全域 data で ≤ 4)、`Result` は `expect` で fail fast
+- `codec_bridge` fuzz 初回 (2 件): 破損 header の step (u32 最大) で alice-codec `dequantize` が乗算 overflow → 復号側 step を `MAX_STEP = 2¹⁶` に clamp / header 内 length と `original_len` の不一致で 4 GiB 割当 → 不一致は復号せず返す
+- `alice-codec` 要求を 0.1.3 に (rANS の偏った histogram round-trip / 量子化 symbol wrap の修正版)、`codec` feature の oracle の `#[ignore]` を解除
+
 ### Added
+- CI を canonical 構成に (ALICE-SDF 同等): `ci.yml` = fmt / clippy `-D warnings` 3 variant / test 3 OS (default + 全 native feature) / analytic oracle (async + physics + codec) / msrv `rust-version = 1.88` 実 compile / doc `-D warnings` / feature-powerset (cargo-hack depth 2、python 除外)、`security-audit.yml` (audit / deny / unused-deps / stub-guard / coverage / semver-checks)、`fuzz.yml` + `fuzz/` 3 target (packet decode + 再組立 / codec_bridge / CRDT merge の可換・冪等)、`deny.toml` (AGPL bridge 例外) `ci-unified.yml` (workflow_dispatch 専用、stub 生成) は削除、未使用の `crossbeam-channel` dep を撤去 (cargo-machete)、`bytes` 1.12.1 (RUSTSEC-2026-0007)
 - `tests/analytic_oracle.rs` — 閉形式 oracle 8 本 + ignore 1 (CLAUDE.md § 解析解突合テスト規律、2026-09-17): Q16.16 の dyadic 有理数 exact / 飽和 / i16 Q8.8 往復、SIMD add・sub が scalar と bit 一致 + batch、RFC 6298 の SRTT / RTTVAR / RTO を整数演算で逐語再現 + 定常 / clamp、header 往復 + 断片数 ⌈len/(MTU−4)⌉ + 逆順再組立、sequence / 重複、CRDT 代数 (可換 / 冪等 / LWW)、FNV-1a test vector + 最初の divergence frame、`physics` feature: i16 ↔ Fix128 の Q8.8 契約 (両方向・飽和) `codec` feature の oracle は alice-codec 0.1.3 publish 待ちで `#[ignore]` CI に async + physics の oracle step
 - **i16 wire field (`InputFrame::movement` / `aim`、`EventKind::Motion` delta) の scale が 3 経路で食い違っていた** (oracle 先行 red): doc は Q8.8、`Fixed::from_i16` は `<< 6` (Q6.10、256 ↦ 0.25)、`physics_bridge` は整数 (`from_int`、256 ↦ 256.0) — 同じ入力が経路毎に 1024 倍違う変位になっていた → Q8.8 (256 ↦ 1.0) を唯一の法則に: `Fixed::from_i16` = `<< 8` / `to_i16` = `>> 8` + 飽和、`Vec3Simd::from_i16_array` は `Fixed::from_i16` 経由、`physics_bridge` は `Fix128::from_int(n).shr_bits(8)` と `⌊v·256⌋` 飽和 既存 unit test の `<< 6` / `.hi == n` pin を法則値に更新
 

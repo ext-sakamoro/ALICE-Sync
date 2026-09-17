@@ -15,6 +15,12 @@ use alice_codec::quant::{build_histogram, from_symbols, to_symbols, Quantizer};
 use alice_codec::rans::{FrequencyTable, RansDecoder, RansEncoder};
 use alice_codec::Wavelet1D;
 
+/// Header: original length (4 B) + quantiser step (4 B) + 256 × u32 histogram.
+const HEADER_LEN: usize = 8 + 256 * 4;
+/// Largest quantiser step accepted on decode (encoder-side bound is ≈ 4 for
+/// 8-bit input; 2¹⁶ leaves 127 × step far inside i32).
+const MAX_STEP: u32 = 1 << 16;
+
 /// Compressed event batch.
 #[derive(Debug, Clone)]
 pub struct CompressedEventBatch {
@@ -50,14 +56,24 @@ pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> Compresse
     let wavelet = Wavelet1D::cdf53();
     wavelet.forward(&mut signal);
 
-    // Quantize
-    let quantizer = Quantizer::new(quantizer_step.max(1));
+    // Quantize.  Symbols are i8, so the step is widened to keep every
+    // |q| ≤ 127 (CDF 5/3 coefficients of 8-bit data reach ≈ 1.5 × 255, so a
+    // requested step of 1 is not always representable).  Until 2026-09-17 the
+    // `to_symbols` error was discarded and the symbols wrapped silently.
+    let max_coeff = signal.iter().map(|c| c.unsigned_abs()).max().unwrap_or(0);
+    let step = quantizer_step
+        .max(1)
+        .max(max_coeff.div_ceil(127) as i32)
+        .min(MAX_STEP as i32);
+    let quantizer = Quantizer::new(step);
     let mut quantized = vec![0i32; padded_len];
-    let _ = quantizer.quantize_buffer(&signal, &mut quantized);
+    quantizer
+        .quantize_buffer(&signal, &mut quantized)
+        .expect("quantized buffer has the signal length");
 
     // To symbols + rANS
     let mut symbols = vec![0u8; padded_len];
-    let _ = to_symbols(&quantized, &mut symbols);
+    to_symbols(&quantized, &mut symbols).expect("|q| ≤ 127 by construction of the step");
 
     let histogram = build_histogram(&symbols);
     let table = FrequencyTable::from_histogram(&histogram);
@@ -65,9 +81,10 @@ pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> Compresse
     encoder.encode_symbols(&symbols, &table);
     let mut encoded = encoder.finish();
 
-    // Header: orig_signal_len (4B) + histogram (256*4B) + rANS data
-    let mut output = Vec::with_capacity(1028 + encoded.len());
+    // Header: orig_signal_len (4B) + quantiser step (4B) + histogram (256*4B) + rANS data
+    let mut output = Vec::with_capacity(HEADER_LEN + encoded.len());
     output.extend_from_slice(&(orig_signal_len as u32).to_le_bytes());
+    output.extend_from_slice(&(step as u32).to_le_bytes());
     for &count in &histogram {
         output.extend_from_slice(&count.to_le_bytes());
     }
@@ -82,18 +99,28 @@ pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> Compresse
 /// Decompress an event batch back to serialized bytes.
 #[must_use]
 pub fn decompress_event_batch(compressed: &CompressedEventBatch) -> Vec<u8> {
-    if compressed.data.len() < 1028 || compressed.original_len < 4 {
+    if compressed.data.len() < HEADER_LEN || compressed.original_len < 4 {
         return compressed.data.clone();
     }
 
-    // Parse header
+    // Parse header.  The length inside the header must agree with the
+    // caller-supplied `original_len`; a corrupt header could otherwise ask for
+    // a 4 GiB decode buffer (fuzz finding, 2026-09-17).
     let orig_signal_len =
         u32::from_le_bytes(compressed.data[0..4].try_into().unwrap_or([0; 4])) as usize;
+    if orig_signal_len != compressed.original_len {
+        return compressed.data.clone();
+    }
+    // The encoder never emits a step above ⌈max|c| / 127⌉ ≤ MAX_STEP for
+    // 8-bit input; a larger value is a corrupt header and is clamped so that
+    // `dequantize` (|q| ≤ 127 × step) cannot overflow (fuzz finding, 2026-09-17).
+    let step = u32::from_le_bytes(compressed.data[4..8].try_into().unwrap_or([0; 4]))
+        .clamp(1, MAX_STEP) as i32;
     let padded_len = orig_signal_len.next_power_of_two();
 
     let mut histogram = [0u32; 256];
     for (i, h) in histogram.iter_mut().enumerate() {
-        let offset = 4 + i * 4;
+        let offset = 8 + i * 4;
         *h = u32::from_le_bytes(
             compressed.data[offset..offset + 4]
                 .try_into()
@@ -101,7 +128,7 @@ pub fn decompress_event_batch(compressed: &CompressedEventBatch) -> Vec<u8> {
         );
     }
 
-    let rans_data = &compressed.data[1028..];
+    let rans_data = &compressed.data[HEADER_LEN..];
 
     // Decode rANS
     let table = FrequencyTable::from_histogram(&histogram);
@@ -110,12 +137,16 @@ pub fn decompress_event_batch(compressed: &CompressedEventBatch) -> Vec<u8> {
 
     // Symbols → quantized
     let mut quantized = vec![0i32; padded_len];
-    let _ = from_symbols(&symbols, &mut quantized);
+    from_symbols(&symbols, &mut quantized).expect("decoded symbol count is padded_len");
 
-    // Dequantize
-    let quantizer = Quantizer::new(1); // step=1 for lossless-ish
+    // Dequantize with the step the encoder used.  Until 2026-09-17 this was
+    // hard-coded to 1, so any step > 1 decoded to values divided by the step
+    // (oracle `tests/analytic_oracle.rs`).
+    let quantizer = Quantizer::new(step);
     let mut signal = vec![0i32; padded_len];
-    let _ = quantizer.dequantize_buffer(&quantized, &mut signal);
+    quantizer
+        .dequantize_buffer(&quantized, &mut signal)
+        .expect("signal buffer has the quantized length");
 
     // Inverse wavelet
     let wavelet = Wavelet1D::cdf53();
@@ -143,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_compress_decompress_roundtrip() {
-        // Use 4096+ bytes so wavelet + rANS compression overcomes the 1028-byte header
+        // Use 4096+ bytes so wavelet + rANS compression overcomes the 1032-byte header
         let data: Vec<u8> = (0..4096).map(|i| (i % 64) as u8).collect();
         let compressed = compress_event_batch(&data, 1);
         assert!(

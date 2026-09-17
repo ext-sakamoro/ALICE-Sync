@@ -21,69 +21,159 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; 
 has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
-#   - ci-unified.yml:clippy:Create dependency stubs (sibling path deps) (no cargo / grep)
-#   - ci-unified.yml:test:Create dependency stubs (sibling path deps) (no cargo / grep)
-#   - ci-unified.yml:doctest:Create dependency stubs (sibling path deps) (no cargo / grep)
-#   - ci-unified.yml:build:Create dependency stubs (sibling path deps) (no cargo / grep)
+#   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
+#   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
+#   - security-audit.yml:coverage (job is continue-on-error: informational in CI)
+#   - security-audit.yml:semver-checks (job is continue-on-error: informational in CI)
+#   - fuzz.yml:fuzz:Install cargo-fuzz (needs network / runner-only)
+#   - fuzz.yml:fuzz:Build fuzz target (needs network / runner-only)
+#   - fuzz.yml:fuzz:Set fuzz duration (no cargo / grep)
+#   - fuzz.yml:fuzz:Run fuzz target (time-boxed) (continue-on-error)
+#   - fuzz.yml:fuzz:Report crash (informational) (no cargo / grep)
 
 need actionlint "brew install actionlint"
+need cargo-audit "cargo install cargo-audit --locked"
+need cargo-deny "cargo install cargo-deny --locked"
+need cargo-hack "cargo install cargo-hack --locked"
+need cargo-machete "cargo install cargo-machete --locked"
+has_toolchain 1.88 || { echo "missing toolchain 1.88 (rustup toolchain install 1.88)" >&2; exit 1; }
+
+step "ci.yml / fmt: run"
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo fmt --all -- --check )
+
+step "ci.yml / clippy: Clippy (default)"
+relint
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo clippy --all-targets -- -D warnings )
+
+step "ci.yml / clippy: Clippy (all native features)"
+relint
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo clippy --all-targets --features "$NATIVE_FEATURES" -- -D warnings )
+
+step "ci.yml / clippy: Clippy (no default features)"
+relint
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo clippy --lib --no-default-features -- -D warnings )
 
 step "ci.yml / test: Build (no default features)"
-( export CARGO_TERM_COLOR="always"; cargo build --lib --no-default-features )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo build --lib --no-default-features )
 
-step "ci.yml / test: Build (async)"
-( export CARGO_TERM_COLOR="always"; cargo build --lib --features "async" )
+step "ci.yml / msrv: Check (default + all native features)"
+(
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"
+  cargo +1.88 check --lib
+  cargo +1.88 check --lib --features "$NATIVE_FEATURES"
+)
 
-step "ci.yml / test: Build (simd)"
-( export CARGO_TERM_COLOR="always"; cargo build --lib --features "simd" )
+step "ci.yml / doc: run"
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --features "$NATIVE_FEATURES" )
 
-step "ci.yml / test: Build (cloud)"
-( export CARGO_TERM_COLOR="always"; cargo build --lib --features "cloud" )
-
-step "ci.yml / test: Check (all features、bridge 含む)"
-( export CARGO_TERM_COLOR="always"; cargo check --lib --all-features )
-
-step "ci.yml / clippy: Clippy (core features)"
-relint
-( export CARGO_TERM_COLOR="always"; cargo clippy --features std -- -W clippy::all )
-
-step "ci.yml / clippy: Clippy (cloud)"
-relint
-( export CARGO_TERM_COLOR="always"; cargo clippy --features cloud -- -W clippy::all )
-
-step "ci.yml / fmt: Check formatting"
-( export CARGO_TERM_COLOR="always"; cargo fmt -- --check )
+step "ci.yml / feature-powerset: Check every feature pair (python 除外)"
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps )
 
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
 
-step "ci-unified.yml / fmt: run"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short"; cargo fmt --all -- --check )
+step "security-audit.yml / deny: Run cargo deny check all"
+( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --features "$NATIVE_FEATURES" check all )
 
-step "ci-unified.yml / clippy: run"
-relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short"; cargo clippy --workspace --all-targets --all-features -- -D warnings )
+step "security-audit.yml / unused-deps: cargo machete"
+cargo machete
 
-step "ci-unified.yml / build: run"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short"; cargo build --workspace --all-features --release )
+step "security-audit.yml / stub-guard: Block panic!(STUB) in src/**"
+(
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  set -eo pipefail
+  hits=$(grep -rnE 'panic!\([^)]*STUB' \
+    src/ --include="*.rs" \
+    --exclude-dir=bin \
+    | grep -v ':[[:space:]]*//' \
+    | grep -vE ':[[:space:]]*/\*' \
+    || true)
+  if [ -n "$hits" ]; then
+    echo "❌ Explicit STUB panic detected in src/ (production path):"
+    echo "$hits"
+    exit 1
+  fi
+  echo "✓ No panic!(STUB) in src/"
+)
+
+step "security-audit.yml / stub-guard: Detect todo! / unimplemented! (informational, not blocking)"
+(
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  set -eo pipefail
+  hits=$(grep -rnE 'todo!\(|unimplemented!\(' \
+    src/ --include="*.rs" \
+    --exclude-dir=bin \
+    | grep -v ':[[:space:]]*//' \
+    | grep -vE ':[[:space:]]*/\*' \
+    || true)
+  if [ -n "$hits" ]; then
+    count=$(echo "$hits" | wc -l | tr -d ' ')
+    echo "::warning::${count} todo!()/unimplemented!() marker(s) in src/ (informational, CLAUDE.md legitimate fail-fast idiom):"
+    echo "$hits" | head -20
+  else
+    echo "✓ No todo!/unimplemented! markers in src/"
+  fi
+)
+
+step "security-audit.yml / stub-guard: Detect dbg!() residual in src/**"
+(
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  set -eo pipefail
+  hits=$(grep -rn 'dbg!(' src/ --include="*.rs" || true)
+  if [ -n "$hits" ]; then
+    echo "❌ dbg!() macro left in src/:"
+    echo "$hits"
+    exit 1
+  fi
+  echo "✓ No dbg!() in src/"
+)
+
+step "security-audit.yml / stub-guard: Detect TODO / FIXME / XXX / HACK (informational)"
+(
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  set -eo pipefail
+  hits=$(grep -rnE 'TODO|FIXME|XXX|HACK' src/ --include="*.rs" || true)
+  if [ -n "$hits" ]; then
+    echo "::warning::TODO/FIXME/XXX/HACK found in src/ (informational, not blocking):"
+    echo "$hits" | head -50
+  else
+    echo "✓ No TODO/FIXME/XXX/HACK in src/"
+  fi
+)
+
+step "fuzz.yml / build every fuzz target (nightly; the replay needs the runner)"
+if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
+  (cd fuzz && cargo +nightly fuzz build)
+else
+  echo "skip: nightly / cargo-fuzz not installed" >&2
+fi
 
 if [[ $quick -eq 1 ]]; then
   echo; echo "preflight --quick OK (test / bench suites skipped)"; exit 0
 fi
 
 step "ci.yml / test: Test (default = std)"
-( export CARGO_TERM_COLOR="always"; cargo test --features std )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test )
 
-step "ci.yml / test: Test — analytic oracles (async + physics bridge)"
-( export CARGO_TERM_COLOR="always"; cargo test --test analytic_oracle --features "async,physics" )
+step "ci.yml / test: Test (all native features)"
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test --features "$NATIVE_FEATURES" )
+
+step "ci.yml / test: Analytic oracle (async + physics + codec)"
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test --test analytic_oracle --features "async,physics,codec" )
 
 step "ci.yml / test: Doc tests"
-( export CARGO_TERM_COLOR="always"; cargo test --features std --doc )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test --doc --features "$NATIVE_FEATURES" )
 
-step "ci-unified.yml / test: run"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short"; cargo nextest run --workspace --all-features )
-
-step "ci-unified.yml / doctest: run"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short"; cargo test --doc --workspace --all-features )
+step "security-audit.yml / audit: Run cargo audit"
+(
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  cargo audit --deny yanked \
+    --ignore RUSTSEC-2024-0436 \
+    --ignore RUSTSEC-2025-0020 \
+    --ignore RUSTSEC-2026-0176 \
+    --ignore RUSTSEC-2026-0177 \
+    --ignore RUSTSEC-2026-0204 \
+    --ignore RUSTSEC-2026-0235
+)
 
 echo; echo "preflight OK"

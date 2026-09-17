@@ -352,7 +352,6 @@ fn fnv1a_matches_the_reference_vectors_and_divergence_is_the_first_differing_fra
 
 #[cfg(feature = "codec")]
 #[test]
-#[ignore = "alice-codec 0.1.2 (crates.io) の rANS が偏った histogram で round-trip 不能 + 量子化 symbol の u8 wrap (ALICE-Codec `4aa4dba` で修正済、未 publish) — 0.1.3 publish + dep bump 後に ignore を外す (Backlog ALICE-Sync codec_bridge 行、実測 MAE 24.6)"]
 fn event_batch_compression_is_lossless_at_step_one_and_bounded_otherwise() {
     use alice_sync::codec_bridge::{compress_event_batch, decompress_event_batch};
     // 0..63 sawtooth, the case recorded in the Backlog (MAE 24.6 before)
@@ -378,6 +377,18 @@ fn event_batch_compression_is_lossless_at_step_one_and_bounded_otherwise() {
         .max()
         .unwrap();
     assert!(max <= 8, "step 4: max error {max} > 2·step");
+    // full-range bytes: CDF 5/3 coefficients reach ≈ 1.5 × 255 > 127, so the
+    // encoder must widen the step to ⌈max|c| / 127⌉ (≤ 4) instead of wrapping
+    // the i8 symbols; error stays ≤ 2 × that step
+    let full: Vec<u8> = (0..4096u32).map(|i| (i * 37 % 256) as u8).collect();
+    let back = decompress_event_batch(&compress_event_batch(&full, 1));
+    let max = full
+        .iter()
+        .zip(&back)
+        .map(|(a, b)| (*a as i32 - *b as i32).abs())
+        .max()
+        .unwrap();
+    assert!(max <= 8, "full-range step 1: max error {max}");
 }
 
 // ───────────────────────── physics bridge (feature `physics`) ─────────────
