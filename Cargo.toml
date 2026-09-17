@@ -19,12 +19,14 @@ rustc-hash = "2.1"
 wide = "0.7"
 pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 numpy = { version = "0.28", optional = true }
-alice-physics = { path = "../ALICE-Physics", version = "1", optional = true }
-alice-db = { path = "../ALICE-DB", version = "0.2.0-beta.1", optional = true }
-alice-cache = { path = "../ALICE-Cache", version = "0.2", optional = true }
-alice-auth = { path = "../ALICE-Auth", version = "0.5", optional = true, default-features = false, features = ["std"] }
-alice-codec = { path = "../ALICE-Codec", version = "0.1", optional = true, default-features = false, features = ["std"] }
-alice-analytics = { path = "../ALICE-Analytics", version = "0.1", optional = true, default-features = false, features = ["std"] }
+# bridge 系 sibling は全て crates.io 公開済なので version 依存 (2026-09-17、罠 #42:
+# CI の manifest-only stub は version 0.1.0 固定で ^1 / ^0.5 等を満たせず 09-14 から red)
+alice-physics = { version = "1.4", optional = true }
+alice-db = { version = "0.2.0-beta.2", optional = true }
+alice-cache = { version = "0.2", optional = true }
+alice-auth = { version = "0.5", optional = true, default-features = false, features = ["std"] }
+alice-codec = { version = "0.1", optional = true, default-features = false, features = ["std"] }
+alice-analytics = { version = "0.1", optional = true, default-features = false, features = ["std"] }
 mdns-sd = { version = "0.11", optional = true }
 
 [dev-dependencies]

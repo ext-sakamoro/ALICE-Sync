@@ -153,10 +153,44 @@ mod tests {
             data.len(),
         );
 
-        // Wavelet + quantize is lossy; verify length and that values stay in byte range
+        // Wavelet + quantize is lossy: here only the shape (length) is checked,
+        // the error bound is `roundtrip_error_is_bounded` (currently ignored, see there)
         let recovered = decompress_event_batch(&compressed);
         assert_eq!(recovered.len(), data.len());
-        assert!(recovered.iter().all(|&b| b <= 255));
+    }
+
+    /// Mean absolute error of the round trip over a 0..63 sawtooth
+    fn roundtrip_mae(data: &[u8]) -> (f64, u8) {
+        let compressed = compress_event_batch(data, 1);
+        let recovered = decompress_event_batch(&compressed);
+        assert_eq!(recovered.len(), data.len());
+        let mae = recovered
+            .iter()
+            .zip(data)
+            .map(|(&r, &d)| f64::from(r.abs_diff(d)))
+            .sum::<f64>()
+            / data.len() as f64;
+        let max = recovered
+            .iter()
+            .zip(data)
+            .map(|(&r, &d)| r.abs_diff(d))
+            .max()
+            .unwrap_or(0);
+        (mae, max)
+    }
+
+    /// Error-bound oracle: a lossy codec is only useful if the reconstruction is
+    /// closer to the input than a constant would be For a 0..63 sawtooth the
+    /// constant predictor (mean 31.5) has MAE 16, so a usable bridge must be well
+    /// below that 2026-09-17 measurement: MAE 24.6, max 101 — the bridge currently
+    /// destroys the signal (alice-codec is an image / video wavelet codec applied to
+    /// a byte stream with level 1), tracked in the ALICE-Sync backlog
+    #[test]
+    #[ignore = "alice-codec bridge の量子化誤差が MAE 24.6 / max 101 (0..63 鋸波、2026-09-17 実測): 定数予測 (MAE 16) より悪い、修正まで red"]
+    fn roundtrip_error_is_bounded() {
+        let data: Vec<u8> = (0..4096).map(|i| (i % 64) as u8).collect();
+        let (mae, max) = roundtrip_mae(&data);
+        assert!(mae <= 4.0, "MAE {mae} > 4 (max error {max})");
     }
 
     #[test]

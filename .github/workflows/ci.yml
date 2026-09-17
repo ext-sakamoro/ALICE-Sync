@@ -25,36 +25,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Bridge features (physics, telemetry, cache, auth, codec, analytics)
-      # depend on sibling ALICE crates via path deps. Create minimal stubs
-      # so Cargo can resolve the workspace, but we only build/test core features.
-      - name: Create dependency stubs
-        shell: bash
-        run: |
-          for crate_info in \
-            "ALICE-Physics:alice-physics" \
-            "ALICE-DB:alice-db" \
-            "ALICE-Cache:alice-cache" \
-            "ALICE-Auth:alice-auth" \
-            "ALICE-Codec:alice-codec" \
-            "ALICE-Analytics:alice-analytics"; do
-            dir=$(echo "$crate_info" | cut -d: -f1)
-            pkg=$(echo "$crate_info" | cut -d: -f2)
-            mkdir -p "../$dir/src"
-            cat > "../$dir/Cargo.toml" << TOML
-          [package]
-          name = "$pkg"
-          version = "0.1.0"
-          edition = "2021"
-          [features]
-          default = []
-          std = []
-          [lib]
-          path = "src/lib.rs"
-          TOML
-            echo "" > "../$dir/src/lib.rs"
-          done
-
       - name: Build (no default features)
         run: cargo build --lib --no-default-features
 
@@ -69,6 +39,13 @@ jobs:
 
       - name: Build (cloud)
         run: cargo build --lib --features "cloud"
+
+      # bridge 6 feature (physics / telemetry / cache / auth / codec / analytics) は
+      # 2026-09-17 まで manifest-only stub (version 0.1.0 固定) で一度も compile されず、
+      # stub の version が ^1 / ^0.5 を満たさなくなった 09-14 から CI red だった
+      # sibling は全て crates.io 公開済なので version 依存にし、公開版 API で check する
+      - name: Check (all features、bridge 含む)
+        run: cargo check --lib --all-features
 
       - name: Doc tests
         run: cargo test --features std --doc
@@ -85,32 +62,6 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Create dependency stubs
-        run: |
-          for crate_info in \
-            "ALICE-Physics:alice-physics" \
-            "ALICE-DB:alice-db" \
-            "ALICE-Cache:alice-cache" \
-            "ALICE-Auth:alice-auth" \
-            "ALICE-Codec:alice-codec" \
-            "ALICE-Analytics:alice-analytics"; do
-            dir=$(echo "$crate_info" | cut -d: -f1)
-            pkg=$(echo "$crate_info" | cut -d: -f2)
-            mkdir -p "../$dir/src"
-            cat > "../$dir/Cargo.toml" << TOML
-          [package]
-          name = "$pkg"
-          version = "0.1.0"
-          edition = "2021"
-          [features]
-          default = []
-          std = []
-          [lib]
-          path = "src/lib.rs"
-          TOML
-            echo "" > "../$dir/src/lib.rs"
-          done
 
       - name: Clippy (core features)
         run: cargo clippy --features std -- -W clippy::all

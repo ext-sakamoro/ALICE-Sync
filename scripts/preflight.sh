@@ -21,8 +21,6 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing tool: $1 ($2)" >&2; 
 has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
-#   - ci.yml:test:Create dependency stubs (no cargo / grep)
-#   - ci.yml:clippy:Create dependency stubs (no cargo / grep)
 #   - ci-unified.yml:clippy:Create dependency stubs (sibling path deps) (no cargo / grep)
 #   - ci-unified.yml:test:Create dependency stubs (sibling path deps) (no cargo / grep)
 #   - ci-unified.yml:doctest:Create dependency stubs (sibling path deps) (no cargo / grep)
@@ -41,6 +39,9 @@ step "ci.yml / test: Build (simd)"
 
 step "ci.yml / test: Build (cloud)"
 ( export CARGO_TERM_COLOR="always"; cargo build --lib --features "cloud" )
+
+step "ci.yml / test: Check (all features、bridge 含む)"
+( export CARGO_TERM_COLOR="always"; cargo check --lib --all-features )
 
 step "ci.yml / clippy: Clippy (core features)"
 relint

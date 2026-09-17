@@ -4,7 +4,7 @@
 //! mismatches, rollback frequency) into ALICE-Analytics sketches for
 //! monitoring and anomaly detection.
 
-use alice_analytics::prelude::*;
+use alice_analytics::sketch::{CountMinSketch1024x5, DDSketch256, HyperLogLog12};
 
 /// Sync telemetry collector backed by ALICE-Analytics sketches.
 pub struct SyncTelemetry {
