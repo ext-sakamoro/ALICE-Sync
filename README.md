@@ -12,6 +12,7 @@ ALICE-Sync is a high-performance P2P state synchronization engine. Instead of se
 
 - **Minimal Bandwidth**: Send 18-byte events instead of megabytes of world data
 - **Bit-Exact Determinism**: Fixed-point arithmetic ensures identical results across all platforms
+  <!-- claim-test: test_fixed_determinism -->
 - **O(1) Sync Verification**: Instant hash comparison even with 10,000+ entities
 - **Zero Allocation**: Copy-based entities with arena storage
 - **Self-Contained P2P**: UDP/TCP transport, mDNS discovery, topic pub/sub, CRDTs — no external infrastructure needed
@@ -368,7 +369,9 @@ pub fn apply_motion(&mut self, entity_id: u32, delta: [i16; 3]) {
 ### Fixed-Point Determinism
 
 ```rust
-// No floating-point = no platform-dependent rounding
+// Fixed-point sync state: the simulated world never touches a float, so there is
+// no platform-dependent rounding (telemetry / analytics / cloud bridges report
+// with f32, the world hash never sees one) <!-- claim-test: test_fixed_determinism -->
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Fixed(pub i32);  // Q16.16 format
 
