@@ -5,7 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- bridge 系 sibling 6 crate (`alice-physics` 1.4 / `alice-db` 0.2.0-beta.2 / `alice-cache` 0.2 / `alice-auth` 0.5 / `alice-codec` 0.1 / `alice-analytics` 0.1) の依存を path から crates.io version に変更、CI の manifest-only stub (version 0.1.0 固定で `^1` / `^0.5` を満たせず 2026-09-14 から red) を撤去し `cargo check --lib --all-features` を追加 (bridge feature が公開版 API で compile することを CI が初めて確認)
+- bridge 系 sibling 6 crate (`alice-physics` 1.4 / `alice-db` 0.2.0-beta.2 / `alice-cache` 0.2 / `alice-auth` 0.5.1 (0.5.0 は release build 不能) / `alice-codec` 0.1 / `alice-analytics` 0.1) の依存を path から crates.io version に変更、CI の manifest-only stub (version 0.1.0 固定で `^1` / `^0.5` を満たせず 2026-09-14 から red) を撤去し `cargo check --lib --all-features` を追加 (bridge feature が公開版 API で compile することを CI が初めて確認)
 
 ### Fixed
 - `analytics_bridge`: `alice_analytics::prelude` は存在しない module だった (bridge 追加以来 stub で一度も compile されていなかった) → `alice_analytics::sketch::{CountMinSketch1024x5, DDSketch256, HyperLogLog12}`
