@@ -344,6 +344,28 @@ mod tests {
     use super::*;
     use alice_physics::{Fix128, RigidBody};
 
+    /// `FrameInput` が non_exhaustive になった時に struct literal から
+    /// `new` + `with_*` へ書き換えたので、4 field すべてが書き換え前の
+    /// literal と同じ値であることを固定する
+    /// (`with_*` を 1 つ落とすと `new` の初期値が silent に残るため)
+    #[test]
+    fn sync_input_to_physics_fills_the_same_four_fields_as_the_pre_rewrite_literal() {
+        let sync_input = InputFrame::new(7, 3)
+            .with_movement(256, -128, 1)
+            .with_actions(0x0B)
+            .with_aim(-512, 256, 64);
+
+        let physics = sync_input_to_physics(&sync_input);
+        assert_eq!(physics.player_id, sync_input.player_id);
+        assert_eq!(physics.actions, sync_input.actions);
+        assert_eq!(physics.movement, q8_to_vec3fix(sync_input.movement));
+        assert_eq!(physics.aim_direction, q8_to_vec3fix(sync_input.aim));
+        // `new` の初期値 (Vec3Fix::ZERO / 0) が残っていないこと
+        assert_ne!(physics.movement, Vec3Fix::ZERO);
+        assert_ne!(physics.aim_direction, Vec3Fix::ZERO);
+        assert_ne!(physics.actions, 0);
+    }
+
     #[test]
     fn test_sync_input_to_physics_roundtrip() {
         let sync_input = InputFrame::new(42, 1)
