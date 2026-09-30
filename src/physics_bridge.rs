@@ -88,12 +88,12 @@ fn vec3fix_to_q8(v: Vec3Fix) -> [i16; 3] {
 #[inline]
 #[must_use]
 pub fn sync_input_to_physics(input: &InputFrame) -> FrameInput {
-    FrameInput {
-        player_id: input.player_id,
-        movement: q8_to_vec3fix(input.movement),
-        actions: input.actions,
-        aim_direction: q8_to_vec3fix(input.aim),
-    }
+    // `FrameInput` は non_exhaustive なので struct literal は使えない
+    // `new` + `with_*` は元の literal と同じ 4 field を同じ値で埋める
+    FrameInput::new(input.player_id)
+        .with_movement(q8_to_vec3fix(input.movement))
+        .with_actions(input.actions)
+        .with_aim(q8_to_vec3fix(input.aim))
 }
 
 /// Convert a Physics [`FrameInput`] to a Sync [`InputFrame`].
@@ -377,10 +377,11 @@ mod tests {
 
     #[test]
     fn test_physics_rollback_session_advance() {
-        let netcode_config = NetcodeConfig {
-            player_count: 2,
-            ..Default::default()
-        };
+        // `NetcodeConfig` は non_exhaustive なので struct literal も
+        // `..Default::default()` も使えない 元の literal が明示していた
+        // `player_count: 2` は default と同値なので、値を assert で固定する
+        let netcode_config = NetcodeConfig::default();
+        assert_eq!(netcode_config.player_count, 2);
         let mut session = PhysicsRollbackSession::new(2, 0, 8, netcode_config);
 
         // Add player bodies
@@ -406,11 +407,13 @@ mod tests {
 
     #[test]
     fn test_physics_rollback_session_rollback() {
-        let netcode_config = NetcodeConfig {
-            player_count: 2,
-            max_snapshots: 10,
-            ..Default::default()
-        };
+        // `NetcodeConfig` は non_exhaustive なので struct literal も
+        // `..Default::default()` も使えない 元の literal が明示していた
+        // `player_count: 2` / `max_snapshots: 10` は default と同値なので、
+        // 値を assert で固定する
+        let netcode_config = NetcodeConfig::default();
+        assert_eq!(netcode_config.player_count, 2);
+        assert_eq!(netcode_config.max_snapshots, 10);
         let mut session = PhysicsRollbackSession::new(2, 0, 8, netcode_config);
 
         // Add player bodies
