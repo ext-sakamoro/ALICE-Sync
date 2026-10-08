@@ -21,7 +21,7 @@ pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 numpy = { version = "0.28", optional = true }
 # bridge 系 sibling は全て crates.io 公開済なので version 依存 (2026-09-17、罠 #42:
 # CI の manifest-only stub は version 0.1.0 固定で ^1 / ^0.5 等を満たせず 09-14 から red)
-alice-physics = { version = "1.4", optional = true }
+alice-physics = { version = "2.0", optional = true }
 alice-db = { version = "0.2.0-beta.2", optional = true }
 alice-cache = { version = "0.2", optional = true }
 alice-auth = { version = "0.5.1", optional = true, default-features = false, features = ["std"] }

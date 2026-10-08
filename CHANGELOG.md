@@ -5,6 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **`alice-physics` の要求を `1.4` から `2.0` に上げた (2026-10-09)** 2.0.0 は `#[non_exhaustive]` の一括付与と enum の variant 追加を含む major bump で、caret は major を跨がないため `^1.4` のままでは公開済の 2.0.0 に永久に到達しない `physics_bridge` は 2026-09-30 に `FrameInput` / `NetcodeConfig` の struct literal を `new` + `with_*` / `Default` へ変えてあるので、呼び出し側の変更は無し 実測: `cargo check --features physics --all-targets` が 0 error (lock の解決は 2.0.0)、`scripts/preflight.sh` (full) が exit 0 `alice-physics` は `alice-det-math` を `^0.3` で引くので、この crate の det-math 世代は 0.2 から 0.3 に動く (0.4 に揃うには alice-physics の 0.4 版の publish が必要)
 - **`physics_bridge` の `FrameInput` / `NetcodeConfig` 構築を struct literal から `new` + `with_*` / `Default` に変更 (2026-09-30)** alice-physics 側でこの 2 型に `#[non_exhaustive]` が付いても壊れない形にしておく 挙動は変更なし (`sync_input_to_physics` は同じ 4 field を同じ値で埋める、test 側の `player_count: 2` / `max_snapshots: 10` は既定値と同値なので `assert_eq!` で固定)
 - **License: `AGPL-3.0-or-later` → `AGPL-3.0-or-later OR LicenseRef-Commercial` (dual-licensed、2026-09-27)** AGPL 側の条件は変更なし (既存 AGPL 利用者への影響ゼロ)、商用という選択肢が追加されただけ SPDX が AGPL 単独だと cargo-deny / FOSSA / SBOM に「商用オプションなし」と見えるため宣言を dual に 変更点: SPDX / `LICENSE` → `LICENSE-AGPL` rename / `LICENSE-COMMERCIAL.md` (商用トリガー 6 条件 = クローズド製品・商用 SaaS・エッジ・ファームウェア配布・plugin 再配布・プラットフォーム NDA・保証、社内利用は AGPL 側で無償と明記) / README の選択肢表 商用窓口は法人 `contact@extoria.co.jp`
 
