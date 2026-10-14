@@ -1,5 +1,7 @@
 # ALICE-Sync
 
+[日本語](README_JP.md)
+
 **General-Purpose P2P Synchronization Infrastructure**
 
 > "Don't send data. Send the delta."
