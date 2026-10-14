@@ -272,7 +272,7 @@ impl ReliableEndpoint {
 
         self.sent_packets.push_back(SentPacket {
             seq,
-            send_time: Instant::now(),
+            send_time: crate::clock::now(),
             payload: payload.to_vec(),
             acked: false,
             retransmit_count: 0,
@@ -322,7 +322,7 @@ impl ReliableEndpoint {
 
     /// Process ACK information from a received packet header
     fn process_acks(&mut self, ack: u16, ack_bits: u32) {
-        let now = Instant::now();
+        let now = crate::clock::now();
 
         for sent in &mut self.sent_packets {
             if sent.acked {
@@ -357,7 +357,7 @@ impl ReliableEndpoint {
 
     /// Collect packets that need retransmission (timed out, not yet acked).
     pub fn collect_retransmits(&mut self) -> Vec<Vec<u8>> {
-        let now = Instant::now();
+        let now = crate::clock::now();
         let rto = self.rtt.rto();
         let mut retransmits = Vec::new();
 
@@ -534,7 +534,7 @@ impl ReassemblyBuffer {
 
         self.timestamps
             .entry(header.message_id)
-            .or_insert_with(Instant::now);
+            .or_insert_with(crate::clock::now);
 
         let idx = header.fragment_index as usize;
         if idx < entry.1.len() {
@@ -558,7 +558,7 @@ impl ReassemblyBuffer {
 
     /// Remove timed-out incomplete messages
     pub fn gc(&mut self) {
-        let now = Instant::now();
+        let now = crate::clock::now();
         let timeout = self.timeout;
         let expired: Vec<u16> = self
             .timestamps

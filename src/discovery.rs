@@ -91,7 +91,7 @@ impl Discovery {
     /// `name` is the human-readable instance name.
     #[must_use]
     pub fn new(local_addr: SocketAddr, name: &str) -> Self {
-        let now = Instant::now();
+        let now = crate::clock::now();
         Self {
             peers: RwLock::new(HashMap::new()),
             local_info: RwLock::new(PeerInfo {
@@ -130,7 +130,7 @@ impl Discovery {
         name: &str,
         metadata: HashMap<String, String>,
     ) -> bool {
-        let now = Instant::now();
+        let now = crate::clock::now();
         let mut peers = self.peers.write().await;
 
         let is_new = !peers.contains_key(&addr);
@@ -165,7 +165,7 @@ impl Discovery {
     pub async fn peer_seen(&self, addr: &SocketAddr) {
         let mut peers = self.peers.write().await;
         if let Some(info) = peers.get_mut(addr) {
-            info.last_seen = Instant::now();
+            info.last_seen = crate::clock::now();
         }
     }
 
@@ -189,7 +189,7 @@ impl Discovery {
 
     /// Get all known live peers.
     pub async fn live_peers(&self) -> Vec<PeerInfo> {
-        let now = Instant::now();
+        let now = crate::clock::now();
         self.peers
             .read()
             .await
@@ -201,7 +201,7 @@ impl Discovery {
 
     /// Get all known peer addresses (for transport broadcast).
     pub async fn peer_addrs(&self) -> Vec<SocketAddr> {
-        let now = Instant::now();
+        let now = crate::clock::now();
         self.peers
             .read()
             .await
@@ -213,7 +213,7 @@ impl Discovery {
 
     /// Number of known live peers.
     pub async fn peer_count(&self) -> usize {
-        let now = Instant::now();
+        let now = crate::clock::now();
         self.peers
             .read()
             .await
@@ -226,7 +226,7 @@ impl Discovery {
     ///
     /// Returns the list of removed peers.
     pub async fn gc(&self) -> Vec<PeerInfo> {
-        let now = Instant::now();
+        let now = crate::clock::now();
         let mut peers = self.peers.write().await;
         let mut removed = Vec::new();
 
@@ -523,8 +523,8 @@ mod tests {
                 addr: addr(5000),
                 name: "node-a".to_string(),
                 metadata: HashMap::new(),
-                discovered_at: Instant::now(),
-                last_seen: Instant::now(),
+                discovered_at: crate::clock::now(),
+                last_seen: crate::clock::now(),
                 source: DiscoverySource::Manual,
             }),
             callbacks: RwLock::new(Vec::new()),

@@ -151,6 +151,8 @@ mod python;
 #[cfg(feature = "async")]
 pub mod channel;
 #[cfg(feature = "async")]
+mod clock;
+#[cfg(feature = "async")]
 pub mod crdt;
 #[cfg(feature = "async")]
 pub mod discovery;
