@@ -250,7 +250,7 @@ world.apply_motions_sorted(motions);  // 2-5x faster than naive apply
 
 ## ベンチマーク結果
 
-すべて Apple M1 で `cargo bench --release` により測定した
+すべて arm64 で `cargo bench --release` により測定した
 
 ```
 World Hash (10000 entities):
