@@ -63,6 +63,8 @@ disallowed-methods = [
     { path = "f64::hypot", reason = "platform libm is not cross-platform bit-exact; use alice_det_math" },
     { path = "f64::powi", reason = "lowers to a multiplication tree of unspecified association order; write the multiplications out" },
     { path = "std::time::Instant::now", reason = "the wall clock makes results depend on timing; read it through crate::clock::now" },
+    { path = "std::time::Instant::elapsed", reason = "reads the wall clock the same as Instant::now; duration_since on an already-held value is fine, this reads the clock again" },
+    { path = "std::time::SystemTime::elapsed", reason = "reads the wall clock the same as SystemTime::now; duration_since on an already-held value is fine, this reads the clock again" },
     { path = "std::time::SystemTime::now", reason = "the wall clock makes results depend on timing; pass time in" },
     { path = "std::collections::hash_map::RandomState::new", reason = "seeds from OS randomness and makes HashMap iteration order differ between runs" },
 ]

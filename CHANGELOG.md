@@ -5,6 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- CI (`clippy.toml`、G10): `std::time::Instant::elapsed` / `std::time::SystemTime::elapsed` を disallowed-methods に追加 どちらも `::now()` と同じく wall clock を読むが、どちらの層も検査していなかった (`.elapsed(` の字面検査は `elapsed` という名の値全般を拾い過ぎるため、型解決する clippy 側だけに持たせた) `duration_since` はすでに保持した値どうしの引き算で clock を読まないため対象外 非 test code の `.elapsed()` 呼び出しは 0 件で、挙動の変更なし canary: clippy.toml にこの 2 entry があることを確認する test
 - `tests/float_edge_golden.rs` と release profile の CI (`release-profile.yml`、ubuntu / macOS) を追加 float の境界 (`Fixed::from_f32` / `to_f32` / `Vec3Fixed`、`BandwidthStats` と `loss_rate` の比、`average_rtt`、`SpatialRegion`) の符号付きゼロ・1 step の前後・大きな逆符号値の打ち消し・0 除算の既定値を `to_bits` / raw 値で固定し、`scripts/run_tests.sh` (ALICE-DB と byte 一致、指定した test file が 1 本も走らなければ失敗) 経由で `analytic_oracle` と合わせて `cargo test --release` で走らせる preflight の full にも同じ step を追加 挙動の変更なし
 - `README_JP.md` を追加 (README.md と同じ節構成の日本語版、コード例は英語版と同一) README.md の冒頭に日本語版への link を追加
 - README の benchmark 節の測定環境の表記を機種名から `arm64` に変更 (数値は変更なし)
