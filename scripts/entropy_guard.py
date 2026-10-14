@@ -63,37 +63,67 @@ ALLOWED: dict[tuple[str, str], tuple[int, str]] = {
            "fragment expiry, peer liveness); no event, world hash or wire byte is computed from it",
     ),
 }
-STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
-# a char literal ('{', '\\n', '\\u{1F600}') but not a lifetime ('a, 'static)
+# a char literal ('{', '\\n', '\\u{1F600}', also after a `b` prefix) but not a lifetime ('a, 'static)
 CHAR_RE = re.compile(r"'(?:\\u\{[0-9a-fA-F_]+\}|\\x[0-9a-fA-F]{2}|\\.|[^'\\\n])'")
+RAW_RE = re.compile(r'b?r(#*)"')
 
 
-def strip_block_comments(text: str) -> str:
-    """`/* .. */` (nested, over several lines) removed, newlines kept so line numbers stay"""
-    out, depth, i = [], 0, 0
-    while i < len(text):
+def sanitize(text: str) -> str:
+    """One pass over the source, in order: string (escapes), raw string (`r#".."#`, `br".."`), char
+    literal, `//` comment, `/* */` comment (nested). A string becomes `""`, a char `''`, a comment
+    nothing; newlines are kept so line numbers stay. Because every construct is read where it
+    starts, a `/*` inside a string or a line comment, or a quote inside a comment, opens nothing."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
         two = text[i:i + 2]
-        if two == "/*":
-            depth += 1
-            i += 2
-        elif two == "*/" and depth:
-            depth -= 1
-            i += 2
+        if two == "//":
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif two == "/*":
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if text[i:i + 2] == "/*":
+                    depth, i = depth + 1, i + 2
+                elif text[i:i + 2] == "*/":
+                    depth, i = depth - 1, i + 2
+                else:
+                    if text[i] == "\n":
+                        out.append("\n")
+                    i += 1
+        elif c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "\\" and i + 1 < n:
+                    out.append("\n" if text[i + 1] == "\n" else "")
+                    i += 1
+                elif text[i] == "\n":
+                    out.append("\n")
+                i += 1
+            i += 1
+            out.append('""')
+        elif (c in "rb") and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")) and (m := RAW_RE.match(text, i)):
+            end = text.find('"' + m.group(1), m.end())
+            end = n if end < 0 else end + 1 + len(m.group(1))
+            out.append("\n" * text.count("\n", i, end) + '""')
+            i = end
+        elif c == "'" and (m := CHAR_RE.match(text, i)):
+            out.append("''")
+            i = m.end()
         else:
-            if depth == 0 or text[i] == "\n":
-                out.append(text[i])
+            out.append(c)
             i += 1
     return "".join(out)
 
 
 def production_lines(text: str) -> list[tuple[int, str]]:
-    """(line number, code) outside `#[cfg(test)]` modules, strings and `//` comments removed."""
+    """(line number, code) outside `#[cfg(test)]` modules, strings, chars and comments removed."""
     out = []
     skip_depth = None  # brace depth at which the test module started
     pending_test = False
     depth = 0
-    for n, raw in enumerate(strip_block_comments(text).splitlines(), 1):
-        code = CHAR_RE.sub("''", STRING_RE.sub('""', raw)).split("//")[0]
+    for n, code in enumerate(sanitize(text).splitlines(), 1):
         stripped = code.strip()
         if skip_depth is None and (stripped == "#[cfg(test)]" or re.match(r"#\[cfg\(all\(test\s*,", stripped)):
             pending_test = True

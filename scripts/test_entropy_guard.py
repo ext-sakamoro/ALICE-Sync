@@ -88,6 +88,35 @@ class EntropyGuard(unittest.TestCase):
         src = "pub fn f() { /* x */ let _ = std::time::Instant::now(); }\n"
         self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
 
+    def test_a_block_comment_opener_inside_a_string_opens_nothing(self):
+        src = 'pub fn f() { let _ = "logs/*.txt"; let _ = std::time::Instant::now(); }\n'
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_a_block_comment_opener_inside_a_line_comment_opens_nothing(self):
+        src = "// glob a/*b\npub fn f() { let _ = std::time::Instant::now(); }\n"
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_a_quote_inside_a_comment_opens_no_string(self):
+        src = ('/* an unmatched " quote */\n// and one more "\n'
+               "pub fn f() { let _ = std::time::Instant::now(); }\n")
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_raw_strings_and_byte_literals_hide_braces_and_calls(self):
+        src = ('#[cfg(test)]\nmod tests {\n    fn t() {\n        let _ = r#"{ "quoted" Instant::now()"#;\n'
+               "        let _ = (b'}', br\"{\", b'{');\n    }\n}\n\n"
+               "pub fn f() { let _ = std::time::Instant::now(); }\n")
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_a_raw_string_with_hashes_ends_only_at_its_own_closer(self):
+        src = 'pub fn f() { let _ = r##"a "# b Instant::now() "##; }\n'
+        self.assertEqual(self.problems({"src/a.rs": src}), [])
+
+    def test_line_numbers_survive_multiline_strings_and_comments(self):
+        src = 'const A: &str = "a\nb";\n/* c\nd */\npub fn f() { let _ = std::time::Instant::now(); }\n'
+        p = self.problems({"src/a.rs": src})
+        self.assertEqual(len(p), 1)
+        self.assertIn("src/a.rs:5", p[0])
+
     def test_a_cfg_all_test_module_is_exempt(self):
         # a crate may gate one test module behind `#[cfg(all(test, feature = "fs"))]`,
         # not the plain `#[cfg(test)]` the upstream script only recognised.
