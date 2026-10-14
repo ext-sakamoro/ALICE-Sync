@@ -73,7 +73,7 @@ jobs:
       - name: Test (all native features)
         run: cargo test --features "$NATIVE_FEATURES"
       # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
-      # を必ず走らせる (CLAUDE.md § 解析解突合テスト規律 (5)、strict-eval 16)
+      # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)
         run: cargo test --test analytic_oracle --features "async,physics,codec"
       - name: Doc tests

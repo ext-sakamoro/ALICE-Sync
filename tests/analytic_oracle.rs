@@ -1,5 +1,5 @@
 //! Analytic oracles — closed-form checks for the numeric laws in ALICE-Sync
-//! (CLAUDE.md § 解析解突合テスト規律, 2026-09-17).
+//! (2026-09-17).
 //!
 //! Expected values come from closed forms, published test vectors or integer
 //! references written in this file, never from the crate function under
@@ -354,7 +354,7 @@ fn fnv1a_matches_the_reference_vectors_and_divergence_is_the_first_differing_fra
 #[test]
 fn event_batch_compression_is_lossless_at_step_one_and_bounded_otherwise() {
     use alice_sync::codec_bridge::{compress_event_batch, decompress_event_batch};
-    // 0..63 sawtooth, the case recorded in the Backlog (MAE 24.6 before)
+    // 0..63 sawtooth, the case found earlier (MAE 24.6 before)
     let data: Vec<u8> = (0..4096u32).map(|i| (i % 64) as u8).collect();
     let back = decompress_event_batch(&compress_event_batch(&data, 1));
     assert_eq!(back.len(), data.len());
