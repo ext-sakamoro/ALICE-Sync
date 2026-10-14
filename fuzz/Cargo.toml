@@ -16,7 +16,7 @@ path = ".."
 default-features = false
 features = ["std", "async", "codec"]
 
-# cargo-machete false-positive 予防 (canonical [[reference_alice_ci_canonical_template]] 罠 #3)
+# cargo-machete false-positive 予防
 [package.metadata.cargo-machete]
 ignored = ["libfuzzer-sys"]
 

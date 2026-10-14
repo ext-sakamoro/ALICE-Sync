@@ -1,12 +1,11 @@
 # cargo-deny 設定 (v0.14+ schema)
 # https://embarkstudios.github.io/cargo-deny/
 #
-# canonical CI template: [[reference_alice_ci_canonical_template]]
 # ALICE-SDF v1.7.7 (commit 52d26f9) の deny.toml を ALICE-Codec 経由で ALICE-Sync 用に調整
 #
-# ALICE-Sync 自体は AGPL-3.0-or-later (target-side self exception 必須、canonical 罠 #7 target 版)
+# ALICE-Sync 自体は AGPL-3.0-or-later (target-side self exception 必須)
 # sibling stubs (alice-ml/alice-db/alice-crypto/alice-cache) は alice-stubs action で
-# "MIT OR Apache-2.0" で生成される (canonical 罠 #2 予防)
+# "MIT OR Apache-2.0" で生成される
 
 [graph]
 all-features = false
@@ -25,9 +24,8 @@ version = 2
 yanked = "deny"
 ignore = [
     # paste 1.0.15 unmaintained (pyo3-macros transitive、python feature 有効時のみ)
-    # canonical 罠 #15
     "RUSTSEC-2024-0436",
-    # crossbeam-epoch unmaintained (transitive、canonical 罠 #15 参照)
+    # crossbeam-epoch unmaintained (transitive)
     "RUSTSEC-2026-0204",
     # rkyv 0.7 Rc/Arc archive validation OOB: alice-db (db feature、local path dep) の archived 型に
     # Rc/Arc 無し = 非該当 (CI では alice-db は stub のため出現しない、local --all-features 用)
@@ -61,10 +59,10 @@ allow = [
     "BSL-1.0",
     "MPL-2.0",   # weak copyleft OK
     "OpenSSL",
-    # Font-related licenses (font pipeline は現状無いが将来的な transitive 予防、canonical 罠 #14)
+    # Font-related licenses (font pipeline は現状無いが将来的な transitive 予防)
     "OFL-1.1",
     "Ubuntu-font-1.0",
-    # LLVM ecosystem (libfuzzer-sys 経由、canonical 罠 #14)
+    # LLVM ecosystem (libfuzzer-sys 経由)
     "NCSA",
 ]
 
@@ -82,7 +80,6 @@ license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
 
 # ALICE-Sync 自身 (target crate) が AGPL-3.0-or-later だが cargo-deny は target も
 # license check 対象にするため exception で自己許可
-# (canonical [[reference_alice_ci_canonical_template]] 罠 #7 の target-side 版)
 [[licenses.exceptions]]
 name = "alice-sync"
 allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
@@ -112,19 +109,19 @@ allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 name = "alice-analytics"
 allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 
-# AGPL sibling path dep (canonical [[reference_alice_ci_canonical_template]] AGPL sibling exception)
+# AGPL sibling path dep
 # CI では MIT stub、local では実 crate (AGPL-3.0-or-later) が解決されるため両方許可
 [[licenses.exceptions]]
 name = "alice-crypto"
 allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 
-# AGPL sibling path dep (canonical [[reference_alice_ci_canonical_template]] AGPL sibling exception)
+# AGPL sibling path dep
 # CI では MIT stub、local では実 crate (AGPL-3.0-or-later) が解決されるため両方許可
 [[licenses.exceptions]]
 name = "alice-db"
 allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 
-# AGPL sibling path dep (canonical [[reference_alice_ci_canonical_template]] AGPL sibling exception)
+# AGPL sibling path dep
 # CI では MIT stub、local では実 crate (AGPL-3.0-or-later) が解決されるため両方許可
 [[licenses.exceptions]]
 name = "alice-ml"

@@ -1,6 +1,5 @@
 name: CI
 
-# canonical CI template: [[reference_alice_ci_canonical_template]] (ALICE-SDF base)
 # 2026-09-17 ALICE-Sync 用: fmt / clippy -D / test (default + 全 native feature) /
 # analytic oracle (feature-gated 3 種を必ず走らせる、strict-eval 16) / msrv 実 compile /
 # doc -D warnings / feature-powerset / actionlint
@@ -68,7 +67,7 @@ jobs:
       - name: Test (all native features)
         run: cargo test --features "$NATIVE_FEATURES"
       # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
-      # を必ず走らせる (CLAUDE.md § 解析解突合テスト規律 (5)、strict-eval 16)
+      # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)
         run: cargo test --test analytic_oracle --features "async,physics,codec"
       - name: Doc tests

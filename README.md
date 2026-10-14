@@ -105,7 +105,7 @@ async fn main() {
         .build(transport);
 
     // Add peers manually or let mDNS discover them
-    session.add_peer("192.168.1.100:9000".parse().unwrap()).await;
+    session.add_peer("203.0.113.10:9000".parse().unwrap()).await;
 
     // Subscribe to session events
     let mut events = session.subscribe_events();
