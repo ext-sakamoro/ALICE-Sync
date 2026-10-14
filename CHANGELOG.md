@@ -7,6 +7,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ### Added
 - `README_JP.md` を追加 (README.md と同じ節構成の日本語版、コード例は英語版と同一) README.md の冒頭に日本語版への link を追加
 - README の benchmark 節の測定環境の表記を機種名から `arm64` に変更 (数値は変更なし)
+- `clippy.toml` に ALICE-Law の G1 の禁止一覧 (f32 / f64 の超越関数 24 個と `sin_cos`、`powi`) と G10 の `Instant::now` / `SystemTime::now` / `RandomState::new` を `disallowed-methods` として追加 transport 層の単調時計の読み取りは `src/clock.rs` の 1 箇所に集め、その 1 箇所だけに理由つきの許可を置く `scripts/entropy_guard.py` (CI の `entropy-guard` job) が src/ の乱数・時計の使用を読み、`clock.rs` の 1 件以外を拒否する 挙動の変更なし
 
 ### Changed
 - CI: 上限の無かった 15 job に `timeout-minutes` を付けた (止まった step は共有 runner を GitHub の上限の 6 時間まで占有しうる) 値は直近の成功した run 10 本の所要時間の最大の 2 倍・中央値の 4 倍の大きい方を 5 分単位に切り上げ、cargo を使う job は最低 15 分 (cache が外れた build のため)、他は最低 10 分 fuzz は 30 分で、`workflow_dispatch` の `duration_seconds` は 1 から 1200 の整数 (先頭の 0 は不可、0 は libFuzzer で無制限になる) でなければ理由を出して止める (それより長い run は build と合わせて上限を超え途中で切れる) 入力は script に埋め込まず `env` で渡す `scripts/workflow_timeouts.py` (試験 `scripts/test_workflow_timeouts.py`、ALICE-LOL と byte 一致) が全 job の上限を検査し、job を 1 つも読めなければ失敗する CI (actionlint job) と preflight で走る

@@ -67,6 +67,10 @@ step "ci.yml / doc: run"
 step "ci.yml / feature-powerset: Check every feature pair (python 除外)"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps )
 
+step "ci.yml / entropy-guard: Entropy guard (tests, then src/)"
+python3 scripts/test_entropy_guard.py
+python3 scripts/entropy_guard.py
+
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
 
