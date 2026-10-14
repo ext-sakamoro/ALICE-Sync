@@ -64,6 +64,26 @@ ALLOWED: dict[tuple[str, str], tuple[int, str]] = {
     ),
 }
 STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+# a char literal ('{', '\\n', '\\u{1F600}') but not a lifetime ('a, 'static)
+CHAR_RE = re.compile(r"'(?:\\u\{[0-9a-fA-F_]+\}|\\x[0-9a-fA-F]{2}|\\.|[^'\\\n])'")
+
+
+def strip_block_comments(text: str) -> str:
+    """`/* .. */` (nested, over several lines) removed, newlines kept so line numbers stay"""
+    out, depth, i = [], 0, 0
+    while i < len(text):
+        two = text[i:i + 2]
+        if two == "/*":
+            depth += 1
+            i += 2
+        elif two == "*/" and depth:
+            depth -= 1
+            i += 2
+        else:
+            if depth == 0 or text[i] == "\n":
+                out.append(text[i])
+            i += 1
+    return "".join(out)
 
 
 def production_lines(text: str) -> list[tuple[int, str]]:
@@ -72,8 +92,8 @@ def production_lines(text: str) -> list[tuple[int, str]]:
     skip_depth = None  # brace depth at which the test module started
     pending_test = False
     depth = 0
-    for n, raw in enumerate(text.splitlines(), 1):
-        code = STRING_RE.sub('""', raw).split("//")[0]
+    for n, raw in enumerate(strip_block_comments(text).splitlines(), 1):
+        code = CHAR_RE.sub("''", STRING_RE.sub('""', raw)).split("//")[0]
         stripped = code.strip()
         if skip_depth is None and (stripped == "#[cfg(test)]" or re.match(r"#\[cfg\(all\(test\s*,", stripped)):
             pending_test = True
