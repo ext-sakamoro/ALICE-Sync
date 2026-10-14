@@ -4,6 +4,9 @@ All notable changes to ALICE-Sync will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `clippy.toml` に ALICE-Law の G1 の禁止一覧 (f32 / f64 の超越関数 24 個と `sin_cos`、`powi`) と G10 の `Instant::now` / `SystemTime::now` / `RandomState::new` を `disallowed-methods` として追加 transport 層の単調時計の読み取りは `src/clock.rs` の 1 箇所に集め、その 1 箇所だけに理由つきの許可を置く `scripts/entropy_guard.py` (CI の `entropy-guard` job) が src/ の乱数・時計の使用を読み、`clock.rs` の 1 件以外を拒否する 挙動の変更なし
+
 ### Changed
 - **`alice-physics` の要求を `1.4` から `2.0` に上げた (2026-10-09)** 2.0.0 は `#[non_exhaustive]` の一括付与と enum の variant 追加を含む major bump で、caret は major を跨がないため `^1.4` のままでは公開済の 2.0.0 に永久に到達しない `physics_bridge` は 2026-09-30 に `FrameInput` / `NetcodeConfig` の struct literal を `new` + `with_*` / `Default` へ変えてあるので、呼び出し側の変更は無し 実測: `cargo check --features physics --all-targets` が 0 error (lock の解決は 2.0.0)、`scripts/preflight.sh` (full) が exit 0 `alice-physics` は `alice-det-math` を `^0.3` で引くので、この crate の det-math 世代は 0.2 から 0.3 に動く (0.4 に揃うには alice-physics の 0.4 版の publish が必要)
 - **`physics_bridge` の `FrameInput` / `NetcodeConfig` 構築を struct literal から `new` + `with_*` / `Default` に変更 (2026-09-30)** alice-physics 側でこの 2 型に `#[non_exhaustive]` が付いても壊れない形にしておく 挙動は変更なし (`sync_input_to_physics` は同じ 4 field を同じ値で埋める、test 側の `player_count: 2` / `max_snapshots: 10` は既定値と同値なので `assert_eq!` で固定)
