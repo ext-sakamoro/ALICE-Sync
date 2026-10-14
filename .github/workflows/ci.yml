@@ -120,6 +120,7 @@ jobs:
   entropy-guard:
     name: Entropy guard (no OS entropy / wall clock in src/)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Entropy guard (tests)

@@ -56,6 +56,38 @@ class EntropyGuard(unittest.TestCase):
         src = "pub fn f() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() {\n        let _ = std::time::Instant::now();\n    }\n}\n"
         self.assertEqual(self.problems({"src/a.rs": src}), [])
 
+    def test_a_brace_char_literal_does_not_end_the_test_module(self):
+        # `'}'` inside the module must not close it early: the clock read after it is still test code
+        src = ("pub fn f() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() {\n        let c = '}';\n"
+               "        let _ = (c, std::time::Instant::now());\n    }\n}\n")
+        self.assertEqual(self.problems({"src/a.rs": src}), [])
+
+    def test_an_open_brace_char_literal_does_not_extend_the_test_module(self):
+        # `'{'` must not keep the module open past its end: the production call after it is reported
+        src = ("#[cfg(test)]\nmod tests {\n    fn t() { let _ = '{'; }\n}\n\n"
+               "pub fn f() { let _ = std::time::Instant::now(); }\n")
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_escaped_and_unicode_char_literals_and_lifetimes(self):
+        src = ("#[cfg(test)]\nmod tests {\n    fn t<'a>(s: &'a str) { let _ = ('\\'', '\\u{7d}', '\\x7b', s); }\n}\n\n"
+               "pub fn f() { let _ = std::time::SystemTime::now(); }\n")
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_a_block_comment_is_not_code(self):
+        src = ("/* a clock read in a comment: Instant::now() and a brace { */\n"
+               "/* nested /* Instant::now() */ still a comment\n   Instant::now() */\n"
+               "pub fn f() {}\n")
+        self.assertEqual(self.problems({"src/a.rs": src}), [])
+
+    def test_a_block_comment_brace_does_not_unbalance_the_test_module(self):
+        src = ("#[cfg(test)]\nmod tests {\n    /* } closes nothing */\n    fn t() {}\n}\n\n"
+               "pub fn f() { let _ = std::time::Instant::now(); }\n")
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
+    def test_a_call_after_a_block_comment_on_the_same_line_is_reported(self):
+        src = "pub fn f() { /* x */ let _ = std::time::Instant::now(); }\n"
+        self.assertEqual(len(self.problems({"src/a.rs": src})), 1)
+
     def test_a_cfg_all_test_module_is_exempt(self):
         # a crate may gate one test module behind `#[cfg(all(test, feature = "fs"))]`,
         # not the plain `#[cfg(test)]` the upstream script only recognised.
