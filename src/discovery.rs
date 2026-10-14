@@ -11,7 +11,7 @@
 //! | Manual | Cloud relay, WAN peers | Instant |
 //! | Static | Config-file bootstrap | Instant |
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,7 +35,7 @@ pub struct PeerInfo {
     /// Human-readable name (mDNS instance name or manual label)
     pub name: String,
     /// Application-defined metadata (e.g. room ID, capabilities, version)
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
     /// When this peer was first discovered
     pub discovered_at: Instant,
     /// When this peer was last seen (announcement or heartbeat)
@@ -75,7 +75,7 @@ pub enum PeerEvent {
 /// Thread-safe for concurrent access from transport and application layers.
 pub struct Discovery {
     /// Known peers indexed by address
-    peers: RwLock<HashMap<SocketAddr, PeerInfo>>,
+    peers: RwLock<BTreeMap<SocketAddr, PeerInfo>>,
     /// Local peer info for announcements
     local_info: RwLock<PeerInfo>,
     /// Event callbacks
@@ -93,11 +93,11 @@ impl Discovery {
     pub fn new(local_addr: SocketAddr, name: &str) -> Self {
         let now = crate::clock::now();
         Self {
-            peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(BTreeMap::new()),
             local_info: RwLock::new(PeerInfo {
                 addr: local_addr,
                 name: name.to_string(),
-                metadata: HashMap::new(),
+                metadata: BTreeMap::new(),
                 discovered_at: now,
                 last_seen: now,
                 source: DiscoverySource::Manual,
@@ -138,7 +138,7 @@ impl Discovery {
         let info = PeerInfo {
             addr,
             name: name.to_string(),
-            metadata,
+            metadata: metadata.into_iter().collect(),
             discovered_at: if is_new {
                 now
             } else {
@@ -518,11 +518,11 @@ mod tests {
     async fn test_gc_removes_timed_out() {
         // Use a very short timeout for testing
         let disc = Discovery {
-            peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(BTreeMap::new()),
             local_info: RwLock::new(PeerInfo {
                 addr: addr(5000),
                 name: "node-a".to_string(),
-                metadata: HashMap::new(),
+                metadata: BTreeMap::new(),
                 discovered_at: crate::clock::now(),
                 last_seen: crate::clock::now(),
                 source: DiscoverySource::Manual,

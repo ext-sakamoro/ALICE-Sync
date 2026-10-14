@@ -15,7 +15,7 @@
 //! | Messaging | `chat/{channel}/messages` | Group chat delivery |
 //! | DB Replication | `db/{table}/mutations` | Change-data-capture |
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -50,7 +50,7 @@ struct TopicState {
     /// Broadcast sender for this topic
     tx: broadcast::Sender<TopicMessage>,
     /// Set of subscribed peer addresses (for routing)
-    subscribers: HashSet<SocketAddr>,
+    subscribers: BTreeSet<SocketAddr>,
     /// Next sequence number
     next_seq: u64,
     /// Optional filter applied before dispatch
@@ -100,7 +100,7 @@ impl PubSub {
             let (tx, _) = broadcast::channel(self.capacity);
             TopicState {
                 tx,
-                subscribers: HashSet::new(),
+                subscribers: BTreeSet::new(),
                 next_seq: 0,
                 filter: None,
             }

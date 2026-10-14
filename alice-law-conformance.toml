@@ -85,12 +85,11 @@ note = "there is no persisted-meaning identifier (G8 fail-known) and no identifi
 reference_repo = ""
 
 [G10]
-status = "pass"
-evidence = ["clippy.toml", "scripts/entropy_guard.py", "scripts/test_entropy_guard.py", "src/clock.rs:18", ".github/workflows/ci.yml entropy-guard job", ".github/workflows/ci.yml clippy job"]
-mutant = "add an unscoped std::time::Instant::now() or SystemTime::now() (or a RandomState::new) to a src file outside src/clock.rs -> scripts/entropy_guard.py reports it and exits non-zero (the entropy-guard job fails), and cargo clippy -D warnings fails on the disallowed-methods ban"
+status = "unverified"
+evidence = []
 since = ""
-note = "two layers keep OS entropy and the wall clock out of Law-bearing src. clippy.toml bans std::time::Instant::now, std::time::SystemTime::now and std::collections::hash_map::RandomState::new (type-resolved, CI runs cargo clippy --all-targets -D warnings); scripts/entropy_guard.py is the readable second layer over src/ and pins the count, with scripts/test_entropy_guard.py as its canary, both run in the entropy-guard CI job. The one permitted clock read is the transport monotonic clock behind crate::clock::now (src/clock.rs:18), a single scoped #[allow] the guard records; nothing in the Law-bearing fixed-point / hashing paths reads time or draws randomness."
-reference_repo = "ALICE-DB"
+note = "the clock / RNG forms the gate must see ARE covered -- clippy.toml bans std::time::Instant::now, std::time::SystemTime::now and std::collections::hash_map::RandomState::new (CI runs cargo clippy --all-targets -D warnings), and scripts/entropy_guard.py is a lexical second layer over src with scripts/test_entropy_guard.py as its canary (the one permitted read is the transport monotonic clock behind crate::clock::now at src/clock.rs:18, a scoped allow the guard records) -- BUT one form is a checker hole that neither layer reads: Instant::elapsed / SystemTime::elapsed (an elapsed() call reads the wall clock yet is not in clippy's disallowed-methods list nor in the guard's patterns; reproduced across crates). Per ALICE-Law's state definition a checker hole is unverified, not pass: the gate does not see .elapsed(). This flips back to pass when 89's elapsed port (the clippy entry plus its canary) lands in this repo -- Sync is 2nd in that order (DB then Sync). It is not fail-known because there is no located offending .elapsed() call in this crate's non-test code; it is the ban that is absent, not a violation present."
+reference_repo = ""
 
 [G11]
 status = "fail-known"
@@ -108,10 +107,11 @@ note = "the public-text.yml job runs scripts/public_text.sh, which fetches ALICE
 reference_repo = "ALICE-Law"
 
 [G13]
-status = "fail-known"
-evidence = ["src/node.rs:66", "src/node.rs:207", "src/cloud_bridge.rs:75", "src/cloud_bridge.rs:195", "src/channel.rs:230"]
+status = "pass"
+evidence = ["src/node.rs", "src/cloud_bridge.rs", "src/channel.rs", "src/discovery.rs", "tests/g13_order_determinism.rs"]
+mutant = "revert any converted collection to a std HashMap / HashSet (e.g. node peers back to HashMap<NodeId, Peer>) -> the matching case in tests/g13_order_determinism.rs fails, because a std HashMap / HashSet does not iterate in key order (and with the default hasher the order varies between runs)"
 since = ""
-note = "three public accessors expose HashMap / HashSet iteration order to the caller, so an output built from them can depend on an order the standard library does not specify. src/node.rs:207 peers(&self) returns self.peers.values() where peers is a HashMap<NodeId, Peer> (src/node.rs:66); src/cloud_bridge.rs:195 connected_devices(&self) collects self.devices.values() (a HashMap<u64, DeviceInfo>, src/cloud_bridge.rs:75) into a Vec; src/channel.rs:230 collects a topic's subscribers (a HashSet) into a Vec. None sorts before returning. The gate's mechanism -- an order-independence test, or a lint banning HashMap/HashSet iteration in the Law paths with a reasoned allowlist -- does not exist, so nothing ratchets these (C6). Whether each feeds a Law-bearing output (message delivery order, state merge order) is the remaining audit, but the order-dependent iteration is present and located."
+note = "every public accessor whose iteration can reach Law-bearing output now backs onto an ordered collection, so its order is a deterministic function of the keys, independent of insertion order and OS hash seeding. Converted (per 6e's Law-reachability ruling): node peers to BTreeMap<NodeId, Peer> (NodeId derives Ord), cloud_bridge devices to BTreeMap<u64, DeviceInfo>, channel subscribers to BTreeSet<SocketAddr>, discovery peers to BTreeMap<SocketAddr, PeerInfo> (returned in order by live_peers / peer_addrs, rule c) and discovery metadata to BTreeMap<String, String> (iterated into the mDNS TXT record, rule a; register_peer keeps its HashMap parameter and collects into the ordered field on store, so callers and the mdns path are unchanged). tests/g13_order_determinism.rs is the oracle per site: four cases insert in a scrambled order and assert the sorted key order. Left as-is because no iteration reaches output (grep: no iter / values / keys / drain on the map that feeds output): channel topics (HashMap<Topic, _>, keyed subscribe / publish only), and the reliability pending / timestamps and transport self.peers rustc_hash::FxHashMap (fixed seed, keyed get / insert / remove, no iteration). crdt already uses BTreeMap / BTreeSet and world is Vec-indexed. A static lint banning std HashMap / HashSet in the Law modules would be an additional ratchet (C6); the oracles are the per-site order-independence tests the gate names."
 reference_repo = ""
 
 [G14]

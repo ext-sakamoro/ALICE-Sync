@@ -7,7 +7,7 @@
 //! Author: Moroya Sakamoto
 
 use crate::{Node, NodeId, SyncError, WorldHash};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Device registration for cloud-side tracking
 #[derive(Debug, Clone)]
@@ -72,7 +72,7 @@ impl SpatialRegion {
 /// into a unified world state.
 pub struct CloudSyncHub {
     /// Registered devices
-    devices: HashMap<u64, DeviceInfo>,
+    devices: BTreeMap<u64, DeviceInfo>,
     /// Cloud-side merged world state
     cloud_node: Node,
     /// Global scene version (monotonically increasing across all devices)
@@ -92,7 +92,7 @@ impl CloudSyncHub {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            devices: HashMap::new(),
+            devices: BTreeMap::new(),
             cloud_node: Node::new(NodeId(0)), // Cloud is node 0
             global_scene_version: 0,
             world_hash: WorldHash::zero(),

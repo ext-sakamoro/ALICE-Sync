@@ -22,7 +22,7 @@
 
 use crate::{Event, EventStream, Result, SyncError, World, WorldHash};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Unique node identifier
 #[derive(
@@ -31,6 +31,8 @@ use std::collections::HashMap;
     Copy,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Hash,
     Serialize,
     Deserialize,
@@ -63,7 +65,7 @@ pub struct Node {
     pub id: NodeId,
     world: World,
     events: EventStream,
-    peers: HashMap<NodeId, Peer>,
+    peers: BTreeMap<NodeId, Peer>,
     state: NodeState,
 }
 
@@ -75,7 +77,7 @@ impl Node {
             id,
             world: World::new(0),
             events: EventStream::new(),
-            peers: HashMap::new(),
+            peers: BTreeMap::new(),
             state: NodeState::Disconnected,
         }
     }
@@ -87,7 +89,7 @@ impl Node {
             id,
             world: World::new(seed),
             events: EventStream::new(),
-            peers: HashMap::new(),
+            peers: BTreeMap::new(),
             state: NodeState::Disconnected,
         }
     }
