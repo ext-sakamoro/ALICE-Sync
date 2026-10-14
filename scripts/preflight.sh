@@ -174,6 +174,9 @@ step "ci.yml / test: Analytic oracle (async + physics + codec)"
 step "ci.yml / test: Doc tests"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test --doc --features "$NATIVE_FEATURES" )
 
+step "release-profile.yml / release-tests: Release-profile golden and oracle tests"
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" RELEASE_TEST_FEATURES="async,physics,codec,cloud,telemetry"; scripts/run_tests.sh float_edge_golden,analytic_oracle -- cargo test --release --features "$RELEASE_TEST_FEATURES" --test float_edge_golden --test analytic_oracle )
+
 step "security-audit.yml / audit: Run cargo audit"
 (
   export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"

@@ -5,6 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `tests/float_edge_golden.rs` と release profile の CI (`release-profile.yml`、ubuntu / macOS) を追加 float の境界 (`Fixed::from_f32` / `to_f32` / `Vec3Fixed`、`BandwidthStats` と `loss_rate` の比、`average_rtt`、`SpatialRegion`) の符号付きゼロ・1 step の前後・大きな逆符号値の打ち消し・0 除算の既定値を `to_bits` / raw 値で固定し、`scripts/run_tests.sh` (ALICE-DB と byte 一致、指定した test file が 1 本も走らなければ失敗) 経由で `analytic_oracle` と合わせて `cargo test --release` で走らせる preflight の full にも同じ step を追加 挙動の変更なし
 - `README_JP.md` を追加 (README.md と同じ節構成の日本語版、コード例は英語版と同一) README.md の冒頭に日本語版への link を追加
 - README の benchmark 節の測定環境の表記を機種名から `arm64` に変更 (数値は変更なし)
 - `clippy.toml` に ALICE-Law の G1 の禁止一覧 (f32 / f64 の超越関数 24 個と `sin_cos`、`powi`) と G10 の `Instant::now` / `SystemTime::now` / `RandomState::new` を `disallowed-methods` として追加 transport 層の単調時計の読み取りは `src/clock.rs` の 1 箇所に集め、その 1 箇所だけに理由つきの許可を置く `scripts/entropy_guard.py` (CI の `entropy-guard` job) が src/ の乱数・時計の使用を読み、`clock.rs` の 1 件以外を拒否する 挙動の変更なし

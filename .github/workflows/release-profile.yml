@@ -1,0 +1,49 @@
+name: Release profile
+
+# The bit-exact golden cases and the analytic oracles run again under the release
+# profile (opt-level 3, fat LTO, codegen-units 1): an optimisation that changes a
+# float result at a conversion boundary shows up here and not in the debug test job.
+# scripts/run_tests.sh fails when a named test file ran no test, so a feature or
+# target mismatch cannot pass as an empty run. Mirrored in scripts/preflight.sh.
+
+on:
+  push:
+    branches: [main, 'ci/**']
+  pull_request:
+    branches: [main]
+
+# on main each commit has a group of its own and a run there is never
+# cancelled; a newer run on the same branch cancels an older one only off main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: short
+  # the feature-gated cases of both files: async / physics / codec (analytic_oracle),
+  # async / cloud / telemetry (float_edge_golden)
+  RELEASE_TEST_FEATURES: "async,physics,codec,cloud,telemetry"
+
+jobs:
+  release-tests:
+    name: Release-profile tests — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Release-profile golden and oracle tests
+        run: >-
+          scripts/run_tests.sh float_edge_golden,analytic_oracle --
+          cargo test --release --features "$RELEASE_TEST_FEATURES"
+          --test float_edge_golden --test analytic_oracle
