@@ -70,6 +70,10 @@ step "ci.yml / feature-powerset: Check every feature pair (python 除外)"
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
 
+step "ci.yml / actionlint: workflow-timeouts (every job has timeout-minutes)"
+python3 scripts/test_workflow_timeouts.py
+python3 scripts/workflow_timeouts.py
+
 step "security-audit.yml / deny: Run cargo deny check all"
 ( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --features "$NATIVE_FEATURES" check all )
 

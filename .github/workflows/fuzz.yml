@@ -49,6 +49,7 @@ jobs:
   fuzz:
     name: Fuzz — ${{ matrix.target }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -80,10 +81,26 @@ jobs:
 
       - name: Set fuzz duration
         id: dur
+        # the input reaches the shell through env, not spliced into the script
+        env:
+          DURATION_INPUT: ${{ github.event.inputs.duration_seconds }}
         run: |
-          DURATION="${{ github.event.inputs.duration_seconds }}"
+          DURATION="$DURATION_INPUT"
           if [ -z "$DURATION" ]; then
             DURATION=60
+          fi
+          # the job's timeout-minutes (30) also covers the build; a longer manual run
+          # would be cut off mid-run, so refuse it here with a message instead
+          # 1 to 4 digits without a leading zero, so the numeric test below cannot
+          # error out (an overlong number makes `[ -gt ]` fail inside `if`, which
+          # set -e ignores) and 0 (libFuzzer's "no limit") is refused
+          case "$DURATION" in
+            [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]) ;;
+            *) echo "::error::duration_seconds must be a whole number of seconds from 1 to 1200, got '$DURATION'"; exit 1 ;;
+          esac
+          if [ "$DURATION" -gt 1200 ]; then
+            echo "::error::duration_seconds must be at most 1200 (the job's timeout-minutes is 30), got $DURATION"
+            exit 1
           fi
           echo "seconds=$DURATION" >> "$GITHUB_OUTPUT"
 

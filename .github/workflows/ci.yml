@@ -27,6 +27,7 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -37,6 +38,7 @@ jobs:
   clippy:
     name: Clippy (-D warnings)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -53,6 +55,7 @@ jobs:
   test:
     name: Test — ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +80,7 @@ jobs:
   msrv:
     name: MSRV (rust-version = 1.88 実 compile)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       # 宣言値と同じ toolchain: Cargo.toml の rust-version を bump したら同 commit で @<version> も更新
@@ -90,6 +94,7 @@ jobs:
   doc:
     name: Doc (RUSTDOCFLAGS=-Dwarnings)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
@@ -101,6 +106,7 @@ jobs:
   feature-powerset:
     name: Feature powerset (cargo-hack, depth 2)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -112,6 +118,7 @@ jobs:
   actionlint:
     name: actionlint (workflow YAML 検証)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Run actionlint
@@ -119,3 +126,9 @@ jobs:
         with:
           fail_level: error
           reporter: github-check
+      # every job has a job-level timeout-minutes (a hung step otherwise holds a shared
+      # runner for GitHub's 6-hour limit); the checker's own tests run first
+      - name: workflow-timeouts
+        run: |
+          python3 scripts/test_workflow_timeouts.py
+          python3 scripts/workflow_timeouts.py
