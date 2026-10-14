@@ -1,0 +1,122 @@
+# ALICE-Law conformance manifest for this crate (alice-sync). One entry per
+# gate defined in ALICE-Law's conformance/gates.toml. Schema (status /
+# evidence / since / note / reference_repo) is docs/CONFORMANCE.md's
+# "Manifest" section in that repository; a `pass` or `n/a` entry also names
+# the red mutant that turns the evidence red.
+#
+# Entries here are written from what this repository's own commits, CI
+# workflows and test suites actually show at origin/main, checked directly
+# rather than assumed: a gate without concrete evidence is `unverified`, not
+# guessed `pass`. alice-sync is a deterministic P2P synchronization crate; its
+# Law-bearing state is fixed-point (crate::fixed_point, Q16.16 Fixed /
+# Vec3Fixed) and integer hashing (FNV-1a, crate::determinism), and it consumes
+# arithmetic from alice-physics / alice-det-math through optional bridge
+# features rather than computing transcendentals itself. This is an initial
+# manifest: the three machine-gated cells that hold today are recorded as
+# pass, the located gaps as fail-known, and the cells whose audit (whether any
+# float path is Law-bearing, the release/golden legs) is not yet done as
+# unverified. The README Law-integration block is a separate follow-up, after
+# the release-train roster entry lands.
+
+[G1]
+status = "pass"
+evidence = ["clippy.toml", ".github/workflows/ci.yml clippy job", "scripts/preflight.sh"]
+mutant = "add a banned call (f32::sin or f64::powf on a float, or powi) to any src file -> cargo clippy --all-targets -D warnings fails on the clippy job"
+since = ""
+note = "clippy.toml lists every f32/f64 method the G1 methods list marks banned -- all 25 banned names (the combined sin_cos is one of them) for both widths -- and also bans powi (the pending-default-banned entry) with the reason that it lowers to a multiplication tree of unspecified association order. A scan of every src file finds zero calls to any of them. CI runs cargo clippy --all-targets -D warnings on the default features, the native feature set and no-default-features (ci.yml clippy job), mirrored in scripts/preflight.sh, so a disallowed-methods hit is a red gate. Note on the self-test: there is no standing compile-fail canary that proves the lint fires (that is the G11 triad gap, which also covers G1); the type-resolved ban is complete and CI-gated, and the mutant above turns it red."
+reference_repo = ""
+
+[G2]
+status = "unverified"
+evidence = []
+since = ""
+note = "not yet audited whether any f32/f64 max/min in this crate is a Law-bearing value needing an IEEE maximumNumber/minimumNumber helper. The max/min/clamp calls found in src are on integer widths and out of G2 scope (cloud_bridge.rs:151 global_scene_version.max on a version counter; codec_bridge.rs:63-208 on i32/u8 coefficients; crdt.rs:150/322 on CRDT counts). The float sites that exist (cloud_bridge.rs AABB [f32;3] bounds, analytics_bridge.rs f64 telemetry stats) use comparisons and rates, not max/min, but whether any is Law-bearing output is the open audit. No IEEE max/min Law helper, raw_* manifest or clippy max/min ban exists."
+reference_repo = ""
+
+[G3]
+status = "unverified"
+evidence = []
+since = ""
+note = "no src file calls mul_add or fma (the G1 scan returned zero), so there is no outer-negation-of-fma today, but there is no syntax-tree checker ratcheting the absence and no determination yet of whether a Law-bearing float path exists that the gate would apply to. Left unverified pending that audit (C5 adds the checker chain-wide)."
+reference_repo = ""
+
+[G4]
+status = "pass"
+evidence = ["tests/float_edge_golden.rs", ".github/workflows/ci.yml test job", ".github/workflows/release-profile.yml", "scripts/run_tests.sh"]
+mutant = "flip one pinned bit in tests/float_edge_golden.rs (e.g. the to_bits expectation in signed_zero_both_map_to_raw_zero_and_return_as_positive_zero) -> it fails on every leg, in the debug test matrix and in the release-profile legs"
+since = ""
+note = "the float-boundary cases are pinned against fixed bit patterns and run under both profiles and both arches. tests/float_edge_golden.rs pins the exact output bits (to_bits) or the exact Q16.16 raw value for every place a float enters or leaves the fixed-point core -- Fixed::from_f32 / to_f32, Vec3Fixed, the stats ratios (BandwidthStats, ReliableEndpoint::loss_rate), telemetry averages, the cloud AABB -- including the signed-zero cases (signed_zero_both_map_to_raw_zero_and_return_as_positive_zero), with expected values derived by hand from the conversion law, not from the function under test. DEBUG: the ci.yml test matrix runs cargo test on ubuntu-latest (x86_64), macos-latest (aarch64) and windows-latest (x86_64), which runs float_edge_golden. RELEASE: .github/workflows/release-profile.yml runs scripts/run_tests.sh float_edge_golden,analytic_oracle -- then cargo test --release on ubuntu-latest (x86_64) and macos-latest (aarch64). So the {debug, release} x {x86_64, aarch64} matrix is covered, and run_tests.sh fails when a named test file ran 0 tests."
+reference_repo = ""
+
+[G5]
+status = "pass"
+evidence = [".github/workflows/release-profile.yml", "scripts/run_tests.sh", "tests/float_edge_golden.rs"]
+mutant = "make a float-boundary computation diverge only under optimisation (or rename a release test file so it runs 0 tests) -> the release-profile macos-latest (aarch64) leg reddens, or scripts/run_tests.sh fails on the 0-test guard"
+since = ""
+note = "the Law-bearing float-boundary suite runs under the release profile in CI, and the aarch64 release leg is present: .github/workflows/release-profile.yml ('Release-profile tests') runs scripts/run_tests.sh float_edge_golden,analytic_oracle -- followed by cargo test --release on ubuntu-latest (x86_64) and macos-latest (aarch64); macos-latest is the aarch64 release leg whose default codegen uses a hardware fma. scripts/run_tests.sh is the 0-test guard: it fails when a named test file ran no test (a feature or filter that silently matched nothing is red). The simulation core is integer Q16.16, so the floats this leg exercises are the enter/leave conversions and the stats / telemetry / AABB ratios float_edge_golden pins."
+reference_repo = ""
+
+[G6]
+status = "fail-known"
+evidence = ["src/lib.rs", "src/physics_bridge.rs"]
+since = ""
+note = "the crate defines no SEMANTICS_ID of its own and folds no upstream identifier: a scan of src finds no SEMANTICS_ID constant and no re-export of one, even though it bridges alice-physics (which carries alice-det-math's arithmetic identifier). Whether alice-sync's deterministic state needs its own meaning identifier folding the pins it depends on (and the bridged producers' ids), or whether its fixed-point determinism is identified some other way, is the design question C4 opens for this crate; located at the absence of any identifier in src/lib.rs and the un-checked bridge boundary in src/physics_bridge.rs."
+reference_repo = ""
+
+[G7]
+status = "fail-known"
+evidence = ["src/physics_bridge.rs:93", "src/physics_bridge.rs:130", "bindings/ue5/AliceSync.h", "bindings/unity/AliceSync.cs"]
+since = ""
+note = "Law-bearing values cross the crate boundary with no producer-identifier handshake. src/physics_bridge.rs converts InputFrame <-> FrameInput (the i16 -> Fix128 input conversion, around line 93) and SimulationChecksum -> WorldHash (around line 130) between alice-sync and alice-physics with no check of a G6 identifier and no distinctly-typed mismatch error; the C-ABI bindings (bindings/ue5/AliceSync.h, bindings/unity/AliceSync.cs) are a second type-erasing boundary. The gate's mechanism -- a handshake error type and a mismatch test -- does not exist here, and depends on G6 (there is no identifier to carry yet)."
+reference_repo = ""
+
+[G8]
+status = "fail-known"
+evidence = ["src/fixed_point.rs:33", "src/fixed_point.rs:158", "src/world.rs:132", "src/crdt.rs:51"]
+since = ""
+note = "Law-bearing fixed-point values are written to a durable form with no persisted-meaning identifier. Fixed (src/fixed_point.rs:33) and Vec3Fixed (src/fixed_point.rs:158) derive Serialize / Deserialize, and Entity (src/world.rs:132) derives Serialize with position: Vec3Fixed, so world state persists fixed-point values directly; LwwRegister<V> (src/crdt.rs:51) serializes a generic register documented for entity position (the counters at crdt.rs:104/165 hold integer counts in a BTreeMap, not fixed-point). None stamps an identifier into the bytes describing the meaning of the stored fixed-point values. src/event.rs is not the durable fixed-point site: its serialized EventKind carries i16 deltas, and delta_to_fixed / fixed_to_delta (event.rs:78-92) convert to and from Vec3Fixed only at the boundary. The gate's mechanism -- a persisted-id format distinct from an in-process one, with a roundtrip test -- does not exist, and depends on G6 (no identifier defined yet)."
+reference_repo = ""
+
+[G9]
+status = "unverified"
+evidence = []
+since = ""
+note = "there is no persisted-meaning identifier (G8 fail-known) and no identifier history to track, so there is nothing yet for this gate to govern; left unverified until G6/G8 define an identifier whose meaning changes would be recorded as semver-major."
+reference_repo = ""
+
+[G10]
+status = "pass"
+evidence = ["clippy.toml", "scripts/entropy_guard.py", "scripts/test_entropy_guard.py", "src/clock.rs:18", ".github/workflows/ci.yml entropy-guard job", ".github/workflows/ci.yml clippy job"]
+mutant = "add an unscoped std::time::Instant::now() or SystemTime::now() (or a RandomState::new) to a src file outside src/clock.rs -> scripts/entropy_guard.py reports it and exits non-zero (the entropy-guard job fails), and cargo clippy -D warnings fails on the disallowed-methods ban"
+since = ""
+note = "two layers keep OS entropy and the wall clock out of Law-bearing src. clippy.toml bans std::time::Instant::now, std::time::SystemTime::now and std::collections::hash_map::RandomState::new (type-resolved, CI runs cargo clippy --all-targets -D warnings); scripts/entropy_guard.py is the readable second layer over src/ and pins the count, with scripts/test_entropy_guard.py as its canary, both run in the entropy-guard CI job. The one permitted clock read is the transport monotonic clock behind crate::clock::now (src/clock.rs:18), a single scoped #[allow] the guard records; nothing in the Law-bearing fixed-point / hashing paths reads time or draws randomness."
+reference_repo = "ALICE-DB"
+
+[G11]
+status = "fail-known"
+evidence = ["scripts/test_entropy_guard.py", "scripts/test_public_text.py", ".github/workflows/ci.yml entropy-guard job", ".github/workflows/public-text.yml"]
+since = ""
+note = "canaries and compared-nothing guards exist for two gate checkers -- scripts/test_entropy_guard.py is the G10 scanner's canary and scripts/test_public_text.py is the G12 checker's -- but there is no per-gate triad for the Law gates: most gates (G1-G9, G13, G14) have no dedicated checker here to carry (a) a canary, (b) a zero-compared-fails check and (c) a cross-repo byte-identity check. The one externally shared checker (ALICE-Law's public_text_check.py) has its cross-repo byte-identity via .github/public-text-pin. The uniform structure the gate asks for cannot be complete while those gates lack their own checkers."
+reference_repo = ""
+
+[G12]
+status = "pass"
+evidence = [".github/workflows/public-text.yml", "scripts/public_text.sh", ".github/public-text-pin", "scripts/test_public_text.py"]
+mutant = "add one of the refused internal words to a tracked document -> the public-text step fails"
+since = ""
+note = "the public-text.yml job runs scripts/public_text.sh, which fetches ALICE-Law's own scripts/public_text_check.py at the revision .github/public-text-pin names (rev e92ae4cda2660f1bdb7809ea003607323754fa2d) and refuses it unless its SHA-256 matches the pin (c9f0aa80e89a2c6bebda861f2a905c87d36b5509b798f28d4506f6f9c11ff28c) -- so a crate's own checker does not count, it is ALICE-Law's byte-identical file. It checks the tree at HEAD and the pushed commit range and fails when it compared nothing; scripts/test_public_text.py runs first as the checker's own test."
+reference_repo = "ALICE-Law"
+
+[G13]
+status = "fail-known"
+evidence = ["src/node.rs:66", "src/node.rs:207", "src/cloud_bridge.rs:75", "src/cloud_bridge.rs:195", "src/channel.rs:230"]
+since = ""
+note = "three public accessors expose HashMap / HashSet iteration order to the caller, so an output built from them can depend on an order the standard library does not specify. src/node.rs:207 peers(&self) returns self.peers.values() where peers is a HashMap<NodeId, Peer> (src/node.rs:66); src/cloud_bridge.rs:195 connected_devices(&self) collects self.devices.values() (a HashMap<u64, DeviceInfo>, src/cloud_bridge.rs:75) into a Vec; src/channel.rs:230 collects a topic's subscribers (a HashSet) into a Vec. None sorts before returning. The gate's mechanism -- an order-independence test, or a lint banning HashMap/HashSet iteration in the Law paths with a reasoned allowlist -- does not exist, so nothing ratchets these (C6). Whether each feeds a Law-bearing output (message delivery order, state merge order) is the remaining audit, but the order-dependent iteration is present and located."
+reference_repo = ""
+
+[G14]
+status = "unverified"
+evidence = []
+since = ""
+note = "no .cargo/config* and no build.rs in the tree, and no fast-math / target-cpu=native flag found in Cargo.toml or the workflows, so no shipped build is known to change the float environment; but there is no CI scan step over the build-configuration files and no round-to-nearest-even / no-flush-to-zero assertion test, and the Law-output audit (fixed-point vs float) that would say what such tests should cover is not done. Left unverified pending that work (C5)."
+reference_repo = ""
