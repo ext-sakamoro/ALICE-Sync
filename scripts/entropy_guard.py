@@ -9,10 +9,13 @@ read in one place (src/clock.rs) and never enters those values.
 
 Checked in every src/**/*.rs file, outside `#[cfg(test)]` / `#[cfg(all(test,
 ...))]` modules, with the code of a file joined (a call split over lines still
-matches) and `use .. as` aliases of `Instant` / `SystemTime` resolved:
+matches), `use .. as` aliases of `Instant` / `SystemTime` resolved, and a
+qualified-self call (`<std::time::Instant>::now()`) matched the same as the
+plain form:
 
     getrandom  OsRng  thread_rng  rand::random  from_entropy(  try_from_entropy(
-    SystemTime::now  Instant::now  UNIX_EPOCH  RandomState::new  Uuid::new_v4
+    SystemTime::now  Instant::now  UNIX_EPOCH  RandomState (any use, not only
+    ::new)  Uuid::new_v4
 
 clippy's `disallowed-methods` in clippy.toml is the first layer (compiled,
 `cargo clippy --all-targets -D warnings`); this script is the second, readable
@@ -38,17 +41,29 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# A qualified-self call wraps the type in `<...>` and may add `as Trait` before
+# the closing `>` (`<std::time::Instant>::now()`, `<std::time::Instant as
+# SomeTrait>::now()`): the type name's own `\b` boundary does not care about the
+# angle brackets, so only the `::method` suffix needs to tolerate them.
+_QUALIFIED_SELF = r"(?:\s+as\s+\w+)?\s*>?\s*"
 PATTERNS = {
     "getrandom": r"\bgetrandom\b",
     "OsRng": r"\bOsRng\b",
     "thread_rng": r"\bthread_rng\b",
     "rand::random": r"\brand\s*::\s*random\b",
     "from_entropy(": r"(?<!fn )\b(?:try_)?from_entropy\s*\(",
-    "SystemTime::now": r"\bSystemTime\s*::\s*now\b",
-    "Instant::now": r"\bInstant\s*::\s*now\b",
+    "SystemTime::now": r"\bSystemTime\b" + _QUALIFIED_SELF + r"::\s*now\b",
+    "Instant::now": r"\bInstant\b" + _QUALIFIED_SELF + r"::\s*now\b",
     "UNIX_EPOCH": r"\bUNIX_EPOCH\b",
-    "RandomState::new": r"\bRandomState\s*::\s*new\b",
-    "Uuid::new_v4": r"\bUuid\s*::\s*new_v4\b",
+    # Not `::new` only: `RandomState::default()` seeds the same OS-randomness
+    # hasher, and clippy's `disallowed-methods` cannot ban a trait method by the
+    # implementing type alone, so this lexical layer carries the `::default()`
+    # form (clippy.toml's `disallowed-types` is the compiled counterpart). The
+    # bare-word match also flags a `use ...RandomState as Rs;` line, which is
+    # how an aliased `Rs::default()` is caught; a `use` with no call is harmless
+    # but so rare that the simpler bare-word match is kept.
+    "RandomState": r"\bRandomState\b",
+    "Uuid::new_v4": r"\bUuid\b" + _QUALIFIED_SELF + r"::\s*new_v4\b",
 }
 # `use std::time::Instant as Clock;` makes `Clock::now()` the same call
 ALIASABLE = {

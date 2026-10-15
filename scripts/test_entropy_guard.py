@@ -188,7 +188,29 @@ class EntropyGuard(unittest.TestCase):
 
     def test_random_state_new_is_found(self):
         src = "pub fn f() { let _ = std::collections::hash_map::RandomState::new(); }\n"
-        self.assertTrue(any(x.startswith("RandomState::new") for x in self.problems({"src/a.rs": src})))
+        self.assertTrue(any(x.startswith("RandomState") for x in self.problems({"src/a.rs": src})))
+
+    def test_random_state_default_is_found(self):
+        # ::default() seeds the same OS-randomness hasher as ::new(); the old
+        # `RandomState::new`-only pattern missed it (the hole that kept G10 off)
+        src = "pub fn f() { let _ = std::collections::hash_map::RandomState::default(); }\n"
+        self.assertTrue(any(x.startswith("RandomState") for x in self.problems({"src/a.rs": src})))
+
+    def test_aliased_random_state_is_found(self):
+        # `use ...RandomState as Rs; Rs::default()` -- the bare-word match flags
+        # the `use` line that names the type, so the aliased call cannot slip by
+        src = "use std::collections::hash_map::RandomState as Rs;\npub fn f() { let _ = Rs::default(); }\n"
+        self.assertTrue(any(x.startswith("RandomState") for x in self.problems({"src/a.rs": src})))
+
+    def test_clippy_toml_bans_random_state_type(self):
+        # the compiled counterpart: disallowed-types catches ::default() and any
+        # explicit type naming that disallowed-methods (RandomState::new) cannot
+        clippy_toml = (ROOT / "clippy.toml").read_text(encoding="utf-8")
+        self.assertIn(
+            'path = "std::collections::hash_map::RandomState"',
+            clippy_toml,
+            "clippy.toml must ban the RandomState type (disallowed-types), not only RandomState::new",
+        )
 
     def test_uuid_new_v4_is_found(self):
         src = "pub fn f() { let _ = uuid::Uuid::new_v4(); }\n"
