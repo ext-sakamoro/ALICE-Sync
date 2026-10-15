@@ -22,7 +22,6 @@ has_toolchain() { rustup toolchain list | grep -q "^$1"; }
 #   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
 #   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
 #   - security-audit.yml:coverage (job is continue-on-error: informational in CI)
-#   - security-audit.yml:semver-checks (job is continue-on-error: informational in CI)
 #   - fuzz.yml:fuzz:Install cargo-fuzz (needs network / runner-only)
 #   - fuzz.yml:fuzz:Build fuzz target (needs network / runner-only)
 #   - fuzz.yml:fuzz:Set fuzz duration (no cargo / grep)
@@ -192,5 +191,12 @@ step "security-audit.yml / audit: Run cargo audit"
     --ignore RUSTSEC-2026-0204 \
     --ignore RUSTSEC-2026-0235
 )
+
+step "semver-checks.yml / semver-checks: semver gate (tests)"
+python3 scripts/test_semver_gate.py
+
+step "semver-checks.yml / semver-checks: semver gate (latest crates.io release, every consumer feature set)"
+need cargo-semver-checks "cargo install cargo-semver-checks --version 0.50.0 --locked"
+python3 scripts/semver_gate.py --config .github/semver-gate.toml --target-dir "${CARGO_TARGET_DIR:-target}/semver"
 
 echo; echo "preflight OK"
