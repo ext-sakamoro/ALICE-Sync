@@ -10,6 +10,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - `README_JP.md` を追加 (README.md と同じ節構成の日本語版、コード例は英語版と同一) README.md の冒頭に日本語版への link を追加
 - README の benchmark 節の測定環境の表記を機種名から `arm64` に変更 (数値は変更なし)
 - `clippy.toml` に ALICE-Law の G1 の禁止一覧 (f32 / f64 の超越関数 24 個と `sin_cos`、`powi`) と G10 の `Instant::now` / `SystemTime::now` / `RandomState::new` を `disallowed-methods` として追加 transport 層の単調時計の読み取りは `src/clock.rs` の 1 箇所に集め、その 1 箇所だけに理由つきの許可を置く `scripts/entropy_guard.py` (CI の `entropy-guard` job) が src/ の乱数・時計の使用を読み、`clock.rs` の 1 件以外を拒否する 挙動の変更なし
+- CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
 ### Changed
 - **`alice-physics` の要求を `2.0` から `3.0` に上げた (2026-10-15)** 公開済の 3.0.1 に追従するため caret は major を跨がず、`^2.0` のままでは 3.x に到達しない `physics_bridge` の変更は無し (`new` + `with_*` / `Default` 構築のため) 実測: `cargo test --features physics` が 161 + 4 + doc 2 pass (lock の解決は 3.0.1)、`cargo check --all-features --all-targets` が 0 error `alice-physics` 3.0.1 は `alice-det-math` を `0.5` で引くので、この crate の det-math 世代は 0.3 から 0.5 に動く

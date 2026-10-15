@@ -71,6 +71,10 @@ step "ci.yml / entropy-guard: Entropy guard (tests, then src/)"
 python3 scripts/test_entropy_guard.py
 python3 scripts/entropy_guard.py
 
+step "ci.yml / entropy-guard: libm dependency guard (test, then check)"
+python3 scripts/test_libm_dependency_guard.py
+python3 scripts/libm_dependency_guard.py
+
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
 
