@@ -89,6 +89,11 @@ jobs:
       # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)
         run: cargo test --test analytic_oracle --features "async,physics,codec"
+      # G14: round-to-nearest-even and no flush-to-zero, asserted at run time
+      # (scripts/run_tests.sh fails when the binary ran no test)
+      - name: Float environment (debug)
+        shell: bash
+        run: scripts/run_tests.sh float_environment -- cargo test --test float_environment
       - name: Doc tests
         run: cargo test --doc --features "$NATIVE_FEATURES"
 
@@ -149,6 +154,16 @@ jobs:
           python3 -c 'import sys, importlib.util as u; print(sys.version); sys.exit(0 if u.find_spec("tomllib") else 2)'
           python3 scripts/test_libm_dependency_guard.py
           python3 scripts/libm_dependency_guard.py
+      # G14, static half: no fast-math-style flag, target-cpu=native or flag value
+      # the guard cannot resolve in any file a flag can come from (deliberate
+      # occurrences in scripts/build_config_allowlist.toml); nothing read fails.
+      # The dynamic half's parser is tested here too (the check itself runs in
+      # release-profile.yml)
+      - name: Build configuration guard (test, then check)
+        run: |
+          python3 scripts/test_build_config_guard.py
+          python3 scripts/build_config_guard.py
+          python3 scripts/test_build_flags_check.py
 
   actionlint:
     name: actionlint (workflow YAML 検証)
