@@ -50,6 +50,18 @@ step "ci.yml / clippy: Clippy (no default features)"
 relint
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo clippy --lib --no-default-features -- -D warnings )
 
+step "ci.yml / clippy: Clippy canary data (generator tests)"
+python3 scripts/test_gen_clippy_canary_calls.py
+
+step "ci.yml / clippy: Clippy canary data (generated from clippy.toml, no drift)"
+python3 scripts/gen_clippy_canary_calls.py --check
+
+step "ci.yml / clippy: Clippy canary (tests)"
+python3 scripts/test_clippy_canary.py
+
+step "ci.yml / clippy: Clippy canary (every planted banned call is flagged)"
+python3 scripts/clippy_canary.py
+
 step "ci.yml / test: Build (no default features)"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo build --lib --no-default-features )
 

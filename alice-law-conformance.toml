@@ -20,10 +20,10 @@
 
 [G1]
 status = "pass"
-evidence = ["clippy.toml", ".github/workflows/ci.yml clippy job", "scripts/preflight.sh"]
+evidence = ["clippy.toml", ".github/workflows/ci.yml clippy job", "scripts/preflight.sh", "scripts/clippy_canary.py with scripts/clippy_canary_calls.tsv, which scripts/gen_clippy_canary_calls.py generates from clippy.toml with one row per disallowed-methods / disallowed-types entry (58 planted, 0 skipped; f64::sin and f64::sin_cos are lines 36 and 39): each call is planted in a throwaway crate that copies clippy.toml and must get exactly one disallowed diagnostic naming it, every clippy.toml entry must have exactly one row, 0 rows or 0 entries fail; scripts/test_clippy_canary.py and scripts/test_gen_clippy_canary_calls.py; run by .github/workflows/ci.yml lines 62 to 68 (the generator's --check before the canary) and scripts/preflight.sh lines 54, 57, 60 and 63"]
 mutant = "add a banned call (f32::sin or f64::powf on a float, or powi) to any src file -> cargo clippy --all-targets -D warnings fails on the clippy job"
 since = ""
-note = "clippy.toml lists every f32/f64 method the G1 methods list marks banned -- all 25 banned names (the combined sin_cos is one of them) for both widths -- and also bans powi (the pending-default-banned entry) with the reason that it lowers to a multiplication tree of unspecified association order. A scan of every src file finds zero calls to any of them. CI runs cargo clippy --all-targets -D warnings on the default features, the native feature set and no-default-features (ci.yml clippy job), mirrored in scripts/preflight.sh, so a disallowed-methods hit is a red gate. Note on the self-test: there is no standing compile-fail canary that proves the lint fires (that is the G11 triad gap, which also covers G1); the type-resolved ban is complete and CI-gated, and the mutant above turns it red."
+note = "clippy.toml lists every f32/f64 method the G1 methods list marks banned -- all 25 banned names (the combined sin_cos is one of them) for both widths -- and also bans powi (the pending-default-banned entry) with the reason that it lowers to a multiplication tree of unspecified association order. A scan of every src file finds zero calls to any of them. CI runs cargo clippy --all-targets -D warnings on the default features, the native feature set and no-default-features (ci.yml clippy job), mirrored in scripts/preflight.sh, so a disallowed-methods hit is a red gate. The self-test: scripts/clippy_canary.py plants every disallowed-methods / disallowed-types entry of clippy.toml (58 rows generated from it by scripts/gen_clippy_canary_calls.py, which CI regenerates and compares byte for byte) in a throwaway crate with the same clippy.toml and requires exactly one disallowed diagnostic naming each, so the lint is shown to fire for every entry; the type-resolved ban is complete and CI-gated, and the mutant above turns it red."
 reference_repo = ""
 
 [G2]
@@ -94,9 +94,17 @@ reference_repo = "ALICE-DB"
 
 [G11]
 status = "fail-known"
-evidence = ["scripts/test_entropy_guard.py", "scripts/test_public_text.py", ".github/workflows/ci.yml entropy-guard job", ".github/workflows/public-text.yml"]
+evidence = [
+    "scripts/test_entropy_guard.py",
+    "scripts/test_public_text.py",
+    ".github/workflows/ci.yml entropy-guard job",
+    ".github/workflows/public-text.yml",
+    "scripts/clippy_canary.py with scripts/clippy_canary_calls.tsv and scripts/test_clippy_canary.py (the clippy lists of G1 and G10: one planted banned call per row must get exactly one disallowed diagnostic naming it, a clean control none, every clippy.toml entry must have exactly one row, planted or skipped with a reason; 0 rows or 0 clippy.toml entries fail as compared nothing; .github/workflows/ci.yml lines 66 and 68, scripts/preflight.sh lines 60 and 63)",
+    "scripts/gen_clippy_canary_calls.py and scripts/test_gen_clippy_canary_calls.py (the data file is generated from clippy.toml and CI regenerates it and compares the bytes, so a row cannot be dropped or edited by hand; 0 plantable rows fail; .github/workflows/ci.yml lines 62 and 64, scripts/preflight.sh lines 54 and 57)",
+]
+mutant = "measured 2026-10-16, each reverted: deleting the f32::tan entry (line 15) from clippy.toml makes the generator's --check exit 1 ('clippy_canary_calls.tsv is out of date: 1 line(s) differ'); deleting the f64::exp2 row (line 51) from scripts/clippy_canary_calls.tsv makes --check exit 1 the same way"
 since = ""
-note = "canaries and compared-nothing guards exist for two gate checkers -- scripts/test_entropy_guard.py is the G10 scanner's canary and scripts/test_public_text.py is the G12 checker's -- but there is no per-gate triad for the Law gates: most gates (G1-G9, G13, G14) have no dedicated checker here to carry (a) a canary, (b) a zero-compared-fails check and (c) a cross-repo byte-identity check. The one externally shared checker (ALICE-Law's public_text_check.py) has its cross-repo byte-identity via .github/public-text-pin. The uniform structure the gate asks for cannot be complete while those gates lack their own checkers."
+note = "unmet: clause (c). scripts/clippy_canary.py, scripts/test_clippy_canary.py, scripts/gen_clippy_canary_calls.py and scripts/test_gen_clippy_canary_calls.py are meant to be byte-identical across the ALICE crates that carry them (scripts/clippy_canary_calls.tsv is generated per repository from its own clippy.toml), but nothing in this repository or its CI compares them with their source, so a drift would pass. Canaries and compared-nothing guards exist for three gate checkers -- scripts/clippy_canary.py for the clippy lists of G1 and G10, scripts/test_entropy_guard.py for the G10 scanner and scripts/test_public_text.py for the G12 checker -- but there is no per-gate triad for the Law gates: most gates (G2-G9, G13, G14) have no dedicated checker here to carry (a) a canary, (b) a zero-compared-fails check and (c) a cross-repo byte-identity check. The one externally shared checker (ALICE-Law's public_text_check.py) has its cross-repo byte-identity via .github/public-text-pin. The uniform structure the gate asks for cannot be complete while those gates lack their own checkers."
 reference_repo = ""
 
 [G12]
