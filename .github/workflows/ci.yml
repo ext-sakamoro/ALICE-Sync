@@ -93,7 +93,7 @@ jobs:
       # (scripts/run_tests.sh fails when the binary ran no test)
       - name: Float environment (debug)
         shell: bash
-        run: scripts/run_tests.sh float_environment -- cargo test --test float_environment
+        run: scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment
       - name: Doc tests
         run: cargo test --doc --features "$NATIVE_FEATURES"
 
@@ -164,6 +164,10 @@ jobs:
           python3 scripts/test_build_config_guard.py
           python3 scripts/build_config_guard.py
           python3 scripts/test_build_flags_check.py
+      # scripts/run_tests.sh is what fails a test step that ran fewer tests than it names
+      # (a binary that ran none, or fewer than its `=N` minimum); its own tests, run here
+      - name: run_tests.sh (tests)
+        run: python3 scripts/test_run_tests.py
 
   actionlint:
     name: actionlint (workflow YAML 検証)

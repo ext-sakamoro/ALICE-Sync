@@ -88,6 +88,7 @@ python3 scripts/libm_dependency_guard.py
 python3 scripts/test_build_config_guard.py
 python3 scripts/build_config_guard.py
 python3 scripts/test_build_flags_check.py
+python3 scripts/test_run_tests.py
 
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
@@ -190,13 +191,13 @@ step "ci.yml / test: Analytic oracle (async + physics + codec)"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test --test analytic_oracle --features "async,physics,codec" )
 
 step "ci.yml / test: Float environment (debug)"
-scripts/run_tests.sh float_environment -- cargo test --test float_environment
+scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment
 
 step "ci.yml / test: Doc tests"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi"; cargo test --doc --features "$NATIVE_FEATURES" )
 
 step "release-profile.yml / release-tests: Release-profile golden and oracle tests"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" RELEASE_TEST_FEATURES="async,physics,codec,cloud,telemetry"; scripts/run_tests.sh float_edge_golden,analytic_oracle,float_environment -- cargo test --release --features "$RELEASE_TEST_FEATURES" --test float_edge_golden --test analytic_oracle --test float_environment )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" RELEASE_TEST_FEATURES="async,physics,codec,cloud,telemetry"; scripts/run_tests.sh float_edge_golden,analytic_oracle,float_environment=2 -- cargo test --release --features "$RELEASE_TEST_FEATURES" --test float_edge_golden --test analytic_oracle --test float_environment )
 
 step "release-profile.yml / release-tests: Effective rustc flags (G14)"
 python3 scripts/build_flags_check.py -- cargo check --release --lib

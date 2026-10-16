@@ -132,7 +132,7 @@ evidence = [
     "scripts/test_build_config_guard.py and scripts/test_build_flags_check.py",
     ".github/workflows/ci.yml entropy-guard job (ubuntu): the static guard and both test files",
     ".github/workflows/release-profile.yml (ubuntu, macOS): tests/float_environment.rs in the release profile, and the dynamic check for the default, all-features and no-default feature sets",
-    "tests/float_environment.rs round_to_nearest_even and subnormals_are_not_flushed (byte-identical to ALICE-DB's; ci.yml test job on ubuntu, macOS and Windows through scripts/run_tests.sh)",
+    "tests/float_environment.rs round_to_nearest_even and subnormals_are_not_flushed (byte-identical to ALICE-DB's; ci.yml test job on ubuntu, macOS and Windows through scripts/run_tests.sh as `float_environment=2`, so the step fails unless both tests pass: an #[ignore], a #[cfg] that drops one, or a rename is red)",
 ]
 mutant = "measured 2026-10-16, each reverted: `RUSTFLAGS: \"-C target-cpu=native\"` added to release-profile.yml's env makes scripts/build_config_guard.py exit 1 with `.github/workflows/release-profile.yml:25: target-cpu-native: target-cpu=native`; RUSTFLAGS=$'-C target-cpu=nat\\x69ve' makes scripts/build_flags_check.py exit 1 with `alice_sync: target-cpu-native: target-cpu=native`; setting FPCR.RMode to round-toward-plus-infinity fails round_to_nearest_even and setting FPCR.FZ (flush-to-zero) fails subnormals_are_not_flushed (aarch64, macOS)"
 since = ""
