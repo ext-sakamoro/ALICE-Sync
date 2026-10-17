@@ -118,9 +118,12 @@ reference_repo = "ALICE-Physics"
 
 [G9]
 status = "unverified"
-evidence = []
+evidence = [
+    "scripts/id_move_check.py (shared with the other ALICE crates that carry an identifier; tests scripts/test_id_move_check.py; config scripts/id_move.toml): builds a probe against the published release of the newest release tag (alice-sync 0.6.1 today) and against the working tree, reads semantics::SYNC_SEMANTICS_ID (the identifier persist::encode_state stamps, G8) as a value and fails when it moved without a breaking version, without the released value in PREVIOUS_SYNC_SEMANTICS_IDS, or without CHANGELOG.md naming both; every const / static / associated const of type [u8; 32] and every public re-export of another crate's constant must be listed or exempt; .github/workflows/ci.yml clippy job and scripts/preflight.sh; today: SYNC_SEMANTICS_ID c844437e is new since 0.6.1",
+]
+mutant = "measured 2026-10-17, reverted: scripts/id_move.toml naming another path makes scripts/id_move_check.py exit 1 (`SYNC_SEMANTICS_ID (src/semantics.rs:100): a [u8; 32] item that is neither an [[id]] ...`)"
 since = ""
-note = "there is no persisted-meaning identifier (G8 fail-known) and no identifier history to track, so there is nothing yet for this gate to govern; left unverified until G6/G8 define an identifier whose meaning changes would be recorded as semver-major."
+note = "unverified: the persisted identifier is SYNC_SEMANTICS_ID, stamped by persist::encode_state since 0.7.0 (unreleased), so it has no published history yet; scripts/id_move_check.py checks every later move against the published release."
 reference_repo = ""
 
 [G10]
