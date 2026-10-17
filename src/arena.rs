@@ -79,6 +79,10 @@ impl<T> Default for Arena<T> {
     }
 }
 
+/// One slot as `(data, next_free, generation)`: `data` is `None` for a free
+/// slot, and `next_free` is `u32::MAX` for an occupied one.
+pub(crate) type SlotPart<T> = (Option<T>, u32, Generation);
+
 impl<T> Arena<T> {
     /// Create empty arena
     #[must_use]
@@ -230,6 +234,68 @@ impl<T> Arena<T> {
             Slot::Occupied { data, .. } => data,
             Slot::Free { .. } => std::hint::unreachable_unchecked(),
         }
+    }
+
+    /// The slots as [`SlotPart`]s (`next_free` is
+    /// `u32::MAX` for an occupied slot) and the free-list head, for
+    /// `persist`.
+    pub(crate) fn parts(&self) -> (Vec<SlotPart<&T>>, u32) {
+        let slots = self
+            .slots
+            .iter()
+            .map(|s| match s {
+                Slot::Occupied { data, generation } => (Some(data), u32::MAX, *generation),
+                Slot::Free {
+                    next_free,
+                    generation,
+                } => (None, *next_free, *generation),
+            })
+            .collect();
+        (slots, self.free_head)
+    }
+
+    /// Rebuilds an arena from [`Arena::parts`], checking that the free list
+    /// starting at `free_head` visits every free slot exactly once and only
+    /// free slots (the invariant `insert` relies on).
+    pub(crate) fn from_parts(
+        parts: Vec<SlotPart<T>>,
+        free_head: u32,
+    ) -> Result<Self, &'static str> {
+        let free_count = parts.iter().filter(|p| p.0.is_none()).count();
+        let mut visited = 0usize;
+        let mut at = free_head;
+        while at != u32::MAX {
+            match parts.get(at as usize) {
+                Some((None, next, _)) => {
+                    visited += 1;
+                    if visited > free_count {
+                        return Err("the free list has a cycle");
+                    }
+                    at = *next;
+                }
+                Some((Some(_), _, _)) => return Err("the free list reaches an occupied slot"),
+                None => return Err("the free list points past the last slot"),
+            }
+        }
+        if visited != free_count {
+            return Err("a free slot is not on the free list");
+        }
+        let len = parts.len() - free_count;
+        let slots = parts
+            .into_iter()
+            .map(|(data, next_free, generation)| match data {
+                Some(data) => Slot::Occupied { data, generation },
+                None => Slot::Free {
+                    next_free,
+                    generation,
+                },
+            })
+            .collect();
+        Ok(Self {
+            slots,
+            free_head,
+            len,
+        })
     }
 
     /// Iterate over all occupied slots

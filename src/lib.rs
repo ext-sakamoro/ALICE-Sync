@@ -142,6 +142,7 @@ pub mod ffi;
 pub mod fixed_point;
 pub mod input_sync;
 pub mod node;
+pub mod persist;
 #[cfg(feature = "physics")]
 pub mod physics_bridge;
 pub mod protocol;

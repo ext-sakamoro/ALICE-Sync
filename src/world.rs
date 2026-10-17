@@ -129,7 +129,8 @@ impl EntityProps {
 // ============================================================================
 
 /// Entity in the world (fixed-point, deterministic, Copy)
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct Entity {
     pub id: u32,
     pub kind: u16,
@@ -172,7 +173,8 @@ impl Entity {
 // ============================================================================
 
 /// World state container with O(1) entity lookup
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldState {
     /// All entities in arena (cache-friendly)
     pub entities: Arena<Entity>,

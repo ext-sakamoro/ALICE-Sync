@@ -27,6 +27,7 @@
 //! 4. Perfect alignment: Each array is naturally aligned for SIMD
 
 use crate::fixed_point::Fixed;
+#[cfg(feature = "serde-raw")]
 use serde::{Deserialize, Serialize};
 use wide::i32x8;
 
@@ -37,7 +38,8 @@ pub const MAX_ENTITIES: usize = 65536;
 pub const MAX_PROPS: usize = 16;
 
 /// `SoA` World Storage - Component arrays instead of Entity structs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldStorage {
     // Generation tracking (for handle validation)
     pub generations: Vec<u32>,

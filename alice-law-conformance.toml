@@ -90,11 +90,17 @@ note = "Law-bearing values cross the crate boundary with no producer-identifier 
 reference_repo = ""
 
 [G8]
-status = "fail-known"
-evidence = ["src/fixed_point.rs:33", "src/fixed_point.rs:158", "src/world.rs:132", "src/crdt.rs:51"]
+status = "pass"
+evidence = [
+    "writers of Law-bearing values: src/persist.rs encode_state (the only durable writer), for Fixed, Vec3Fixed, Entity, WorldState and (async) LwwRegister<V: Persist>; format version 1 = magic ASYN, u16 version, the writer's 32-byte SYNC_SEMANTICS_ID, a type tag, the body",
+    "reader: src/persist.rs decode_state compares the stored identifier through semantics::check_semantics (own identifier -> IdStatus::Current, one in PREVIOUS_SYNC_SEMANTICS_IDS -> IdStatus::VerifiedPrevious, any other -> PersistError::Semantics(SemanticsMismatch { stored, expected }) naming both); a decoded WorldState is checked for the free-list and id-map invariants the unchecked accessors rely on (PersistError::Malformed)",
+    "the unstamped forms are gated: Serialize / Deserialize on Fixed, Vec3Fixed, Entity, WorldState and WorldStorage exist only with the opt-in serde-raw feature (Cargo.toml, documented as not durable); scripts/serialize_guard.py (ci.yml entropy-guard job and preflight, tests scripts/test_serialize_guard.py) requires every serde type of src/ to be behind serde-raw (count-locked raw_only = 5) or listed in scripts/serialize_types.toml [non_durable] with a reason (26 types), and fails on 0 types found",
+    "tests/persist_roundtrip.rs: round trip and byte-identical re-encode for every type, another_identifier_is_refused_naming_both (each type, and the register), header_and_framing_errors, malformed_world_state_is_refused (each invariant check by its message); src/persist.rs unit test a_previous_identifier_is_accepted_as_verified_previous",
+]
+mutant = "measured 2026-10-17, each reverted: the writer stamping zeros instead of the identifier fails 6 of 7 persist_roundtrip tests; the reader skipping check_semantics fails another_identifier_is_refused_naming_both and register_of_a_position_round_trips; the free-list check that refuses an occupied slot made to break fails malformed_world_state_is_refused, as does dropping the unreached-free-slot check and the id-map check; removing the serde-raw gate from Fixed fails scripts/serialize_guard.py (unlisted type and raw_only count)"
 since = ""
-note = "Law-bearing fixed-point values are written to a durable form with no persisted-meaning identifier. Fixed (src/fixed_point.rs:33) and Vec3Fixed (src/fixed_point.rs:158) derive Serialize / Deserialize, and Entity (src/world.rs:132) derives Serialize with position: Vec3Fixed, so world state persists fixed-point values directly; LwwRegister<V> (src/crdt.rs:51) serializes a generic register documented for entity position (the counters at crdt.rs:104/165 hold integer counts in a BTreeMap, not fixed-point). None stamps an identifier into the bytes describing the meaning of the stored fixed-point values. src/event.rs is not the durable fixed-point site: its serialized EventKind carries i16 deltas, and delta_to_fixed / fixed_to_delta (event.rs:78-92) convert to and from Vec3Fixed only at the boundary. The gate's mechanism -- a persisted-id format distinct from an in-process one, with a roundtrip test -- does not exist, and depends on G6 (no identifier defined yet)."
-reference_repo = ""
+note = "breaking (0.7.0): the raw serde implementations of the fixed-point state moved behind serde-raw; a consumer that stored them with serde must enable serde-raw to read old bytes and should move to persist. The generic containers (Arena, LwwRegister, LwwMap) keep their serde derive, which applies only when the element type is serializable, so a container of Fixed / Vec3Fixed / Entity has none without serde-raw. WorldStorage (the SoA world) has no persist encoding yet: its only serde form is serde-raw. The network types (Message, Event, InputFrame) are listed non-durable and carry the identifier through the Hello handshake (G7)."
+reference_repo = "ALICE-Physics"
 
 [G9]
 status = "unverified"

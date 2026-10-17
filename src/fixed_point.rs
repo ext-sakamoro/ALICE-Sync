@@ -24,13 +24,15 @@
 //! across CPU architectures and compiler optimizations.
 //! Fixed-point ensures bit-exact results on all platforms.
 
+#[cfg(feature = "serde-raw")]
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Mul, Sub};
 use wide::i32x4;
 
 /// Q16.16 fixed-point number (32-bit, 16 fractional bits)
 /// Range: -32768.0 to 32767.99998 with precision of 0.0000153
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 #[repr(transparent)]
 pub struct Fixed(pub i32);
 
@@ -155,7 +157,8 @@ impl Mul for Fixed {
 }
 
 /// 3D vector with fixed-point components (scalar version)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct Vec3Fixed {
     pub x: Fixed,
     pub y: Fixed,

@@ -47,6 +47,10 @@ cache = ["alice-cache"]     # Entity state prefetching via Markov oracle
 auth = ["alice-auth"]       # P2P peer authentication with Ed25519 ZKP
 codec = ["dep:alice-codec", "std"]  # ALICE-Codec wavelet compression for event streams
 analytics = ["dep:alice-analytics", "std"]  # ALICE-Analytics sync telemetry
+# Serialize / Deserialize on the Law-bearing fixed-point types (Fixed, Vec3Fixed,
+# Entity, WorldState, WorldStorage) with no identifier in the bytes: not a durable
+# format. Durable state goes through alice_sync::persist, which stamps SYNC_SEMANTICS_ID
+serde-raw = []
 ffi = ["std"]     # C-ABI FFI for Unity/UE5
 cloud = ["std"]  # Cloud-side multi-device spatial synchronization
 mdns = ["dep:mdns-sd", "async"]  # mDNS LAN auto-discovery

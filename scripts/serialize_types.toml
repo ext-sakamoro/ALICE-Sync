@@ -1,0 +1,38 @@
+# scripts/serialize_guard.py (ALICE-Law G8): the serde types of src/.
+#
+# raw_only: how many types have their Serialize / Deserialize only behind the
+# opt-in `serde-raw` feature (the Law-bearing fixed-point state: Fixed,
+# Vec3Fixed, Entity, WorldState, WorldStorage). Their durable form is
+# alice_sync::persist, which stamps SYNC_SEMANTICS_ID.
+raw_only = 5
+
+# Every other serde type, with the reason its bytes need no identifier of their
+# own: no Law-bearing value in them, or a boundary that checks the identifier
+# elsewhere (G7).
+[non_durable]
+"src/arena.rs::Arena" = "generic slot container; Arena<Entity> is serializable only with serde-raw because Entity is"
+"src/arena.rs::Slot" = "private slot of Arena, serializable only when its element type is"
+"src/arena.rs::Handle" = "index and generation integers, no fixed-point value"
+"src/crdt.rs::LwwRegister" = "generic register, serializable only when its value is: a register of Vec3Fixed has no serde impl without serde-raw and persists through alice_sync::persist"
+"src/crdt.rs::LwwMap" = "generic map of registers, serializable only when its value type is (same rule as LwwRegister)"
+"src/crdt.rs::GCounter" = "per-replica integer counts, no fixed-point value"
+"src/crdt.rs::PnCounter" = "two per-replica integer counts, no fixed-point value"
+"src/crdt.rs::OrSet" = "set membership of caller values with integer tags, no fixed-point arithmetic"
+"src/event.rs::Event" = "network event: i16 deltas and integers as the caller supplied them, sent inside Message after the Hello handshake checks SYNC_SEMANTICS_ID (G7)"
+"src/event.rs::EventKind" = "variant of Event: integers as supplied, carried after the Hello handshake (G7)"
+"src/event.rs::EventId" = "integer event identifier"
+"src/event.rs::SeqNum" = "integer sequence number"
+"src/event.rs::EventType" = "integer event type tag"
+"src/event.rs::EventMeta" = "integer metadata of an event"
+"src/event.rs::SpawnData" = "spawn payload: i16 position and integers as supplied, carried after the Hello handshake (G7)"
+"src/event.rs::DespawnData" = "despawn payload: an integer entity id"
+"src/event.rs::MotionData" = "motion payload: i16 deltas as supplied, carried after the Hello handshake (G7)"
+"src/event.rs::PropertyData" = "property payload: integers as supplied"
+"src/event.rs::InputData" = "input payload: integers as supplied"
+"src/event.rs::TickData" = "tick payload: integer frame number"
+"src/event.rs::CustomData" = "opaque caller bytes, not interpreted by this crate"
+"src/input_sync.rs::InputFrame" = "player input: i16 axes and integer buttons as supplied; the lockstep / rollback sessions that receive it check SYNC_SEMANTICS_ID at the handshake (G7)"
+"src/protocol.rs::Message" = "network message; Hello carries SYNC_SEMANTICS_ID and a node refuses every other message before a matching Hello (G7)"
+"src/node.rs::NodeId" = "integer node identifier"
+"src/world.rs::WorldHash" = "rolling hash compared between peers after the Hello handshake (G7)"
+"src/world.rs::EntityProps" = "property integers set by events, not computed by this crate's arithmetic"
