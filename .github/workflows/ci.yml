@@ -66,6 +66,12 @@ jobs:
         run: python3 scripts/test_clippy_canary.py
       - name: Clippy canary (every planted banned call is flagged)
         run: python3 scripts/clippy_canary.py
+      # G7 / G8: the boundary of the public API, enumerated from rustdoc JSON
+      # (pinned toolchain, RUSTC_BOOTSTRAP=1), against scripts/api_boundary.toml
+      - name: API boundary (tests)
+        run: python3 scripts/test_api_boundary.py
+      - name: API boundary (rustdoc JSON, every item decided)
+        run: python3 scripts/api_boundary.py
 
   test:
     name: Test — ${{ matrix.os }}

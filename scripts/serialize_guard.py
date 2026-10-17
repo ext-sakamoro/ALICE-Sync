@@ -46,7 +46,9 @@ def strip_comments(text: str) -> str:
     """Comments removed and every multi-line attribute joined onto one line."""
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     text = "\n".join(line.split("//", 1)[0] for line in text.split("\n"))
-    return re.sub(r"#\[[^\]]*\]", lambda m: " ".join(m.group(0).split()), text, flags=re.S)
+    text = re.sub(r"#\[[^\]]*\]", lambda m: " ".join(m.group(0).split()), text, flags=re.S)
+    # an item on the same line as its attribute (`#[derive(Deserialize)] pub struct S;`)
+    return re.sub(r"(#\[[^\]\n]*\])[ \t]*(?=[^\s#])", "\\1\n", text)
 
 
 def scan(root: Path) -> tuple[dict[str, str], int]:

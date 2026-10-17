@@ -66,6 +66,13 @@ class SerializeGuardTest(unittest.TestCase):
         self.assertTrue(any("src/a.rs::Hash" in p for p in problems), problems)
         self.assertTrue(any("src/a.rs::Manual" in p for p in problems), problems)
 
+    def test_a_deserialize_only_derive_is_found_on_its_own_line_and_inline(self):
+        for text in ("#[derive(serde::Deserialize)]\npub struct Only { pub x: u32 }\n",
+                     "#[derive(serde::Deserialize)] pub struct Only;\n",
+                     "#[derive(Deserialize)]\n#[serde(transparent)]\npub struct Only(u32);\n"):
+            d = self.tree({"a.rs": text}, "raw_only = 0\n[non_durable]\n")
+            self.assertTrue(any("src/a.rs::Only" in p for p in serialize_guard.check(d)), text)
+
     def test_a_commented_derive_is_not_counted(self):
         text = "// #[derive(Serialize)]\npub struct Quiet;\n" + PLAIN
         d = self.tree({"a.rs": text}, f'raw_only = 0\n[non_durable]\n"src/a.rs::Count" = "{REASON}"\n')

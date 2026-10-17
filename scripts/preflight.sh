@@ -90,6 +90,10 @@ step "ci.yml / entropy-guard: Boundary guard (G7, tests, then src/)"
 python3 scripts/test_boundary_guard.py
 python3 scripts/boundary_guard.py
 
+step "ci.yml / clippy: API boundary (rustdoc JSON, G7 / G8)"
+python3 scripts/test_api_boundary.py
+python3 scripts/api_boundary.py
+
 step "ci.yml / entropy-guard: libm dependency guard (test, then check)"
 python3 scripts/test_libm_dependency_guard.py
 python3 scripts/libm_dependency_guard.py
