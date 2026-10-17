@@ -103,6 +103,48 @@ mod async_oracles {
         assert_eq!(compared, 20 * 16, "compared nothing");
     }
 
+    // RFC 6763 §6.4: TXT keys compare case-insensitively, and the mDNS TXT
+    // record built from the local metadata keeps only the first of two keys
+    // that differ by case; set_metadata refuses such a key instead of letting
+    // one of them disappear from the record (both orders), keeps the stored
+    // metadata unchanged, and still updates the value of the same exact key
+    #[tokio::test]
+    async fn local_metadata_refuses_a_key_that_differs_only_by_case() {
+        use alice_sync::discovery::{Discovery, MetadataError};
+        for (first, second) in [("A", "a"), ("a", "A")] {
+            let disc = Discovery::new(addr(1000), "self");
+            disc.set_metadata(first, "1").await.expect("first key");
+            let err = disc
+                .set_metadata(second, "2")
+                .await
+                .expect_err("a key that differs only by case must be refused");
+            assert_eq!(
+                err,
+                MetadataError::CaseOnlyDuplicate {
+                    existing: first.to_string(),
+                    new: second.to_string()
+                }
+            );
+            let keys: Vec<String> = disc.local_info().await.metadata.keys().cloned().collect();
+            assert_eq!(
+                keys,
+                vec![first.to_string()],
+                "the refused key is not stored"
+            );
+            disc.set_metadata(first, "3")
+                .await
+                .expect("the same key updates");
+            assert_eq!(
+                disc.local_info()
+                    .await
+                    .metadata
+                    .get(first)
+                    .map(String::as_str),
+                Some("3")
+            );
+        }
+    }
+
     #[tokio::test]
     async fn discovery_peer_addrs_and_metadata_iterate_in_order() {
         use alice_sync::discovery::Discovery;
