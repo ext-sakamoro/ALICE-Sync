@@ -27,11 +27,15 @@ note = "clippy.toml lists every f32/f64 method the G1 methods list marks banned 
 reference_repo = ""
 
 [G2]
-status = "unverified"
-evidence = []
+status = "pass"
+evidence = [
+    "clippy.toml disallowed-methods f32::max, f32::min, f64::max, f64::min (reason: the sign of an equal pair of zeros differs between targets; use alice_det_math::max / min / max64 / min64), applied to every target: .github/workflows/ci.yml clippy job, cargo clippy --all-targets (default and NATIVE_FEATURES) and cargo clippy --lib --no-default-features, all -D warnings",
+    "scripts/clippy_canary_calls.tsv (generated from clippy.toml by scripts/gen_clippy_canary_calls.py, ci.yml `--check` step) has one planted row per entry including the four max / min rows, and scripts/clippy_canary.py (ci.yml Clippy canary step) fails unless each planted call gets a disallowed_methods diagnostic: 62 planted, 0 skipped, measured 2026-10-17",
+]
+mutant = "measured 2026-10-17, reverted: a library function returning (a.max(0.5), f32::min(b, 2.0)) on f64 / f32 added to src/fixed_point.rs fails `cargo clippy --lib -- -D warnings` with `use of a disallowed method f64::max`; removing one max / min entry from clippy.toml fails the canary data `--check` step"
 since = ""
-note = "not yet audited whether any f32/f64 max/min in this crate is a Law-bearing value needing an IEEE maximumNumber/minimumNumber helper. The max/min/clamp calls found in src are on integer widths and out of G2 scope (cloud_bridge.rs:151 global_scene_version.max on a version counter; codec_bridge.rs:63-208 on i32/u8 coefficients; crdt.rs:150/322 on CRDT counts). The float sites that exist (cloud_bridge.rs AABB [f32;3] bounds, analytics_bridge.rs f64 telemetry stats) use comparisons and rates, not max/min, but whether any is Law-bearing output is the open audit. No IEEE max/min Law helper, raw_* manifest or clippy max/min ban exists."
-reference_repo = ""
+note = "the crate computes no f32 / f64 max or min today: every max / min / clamp call in src is on an integer or Duration width (cloud_bridge.rs:151, codec_bridge.rs:63-67/118/158/208, crdt.rs:150/322/426, determinism.rs:186/194, fixed_point.rs:121, input_sync.rs:168/210/480/618, physics_bridge.rs:79, reliability.rs:121/197-198), and the float values (DDSketch256 quantiles in analytics_bridge.rs, the AABB bounds of cloud_bridge.rs) use no max / min. The ban is on every target (tests, examples and benches call none either), so no raw_* site exists and no exception manifest is needed; a future site must call the alice_det_math helpers (maximumNumber / minimumNumber, with their own (+0, -0) tests in that crate), and adding the dependency is the change that brings the helper in. SIMD widths: the crate builds wide::i32x4 (src/fixed_point.rs Vec3Simd) and wide::i32x8 (src/world_soa.rs), integer lanes only, no float lane max / min, so the per-width (+0, -0) clause has no float width here; f32x3 in src/event.rs:41 is a comment."
+reference_repo = "ALICE-Physics"
 
 [G3]
 status = "unverified"
@@ -65,7 +69,7 @@ evidence = [
 ]
 mutant = "measured 2026-10-17, each reverted: a world pin with its last hex digit changed fails the_identifier_is_the_fold_of_its_pins and golden_pins_are_the_recorded_goldens; the analytics pin changed fails analytics_pin_is_the_resolved_analytics_identifier and the fold test; GOLDEN_FIXED changed fails golden_fixed and golden_pins_are_the_recorded_goldens; Fixed::saturating_mul fed rhs ^ 1 fails golden_fixed"
 since = ""
-note = "the identifier is a constant of this crate version: a dependency bump or a toolchain change that moved any pinned bits fails a golden (debug and release), and re-recording a golden or resolving another upstream identifier moves the identifier; earlier identifiers whose pinned bits are still reproduced go into PREVIOUS_SYNC_SEMANTICS_IDS (empty: this is the first). The crate has no arithmetic identifier of its own to re-export (its core is integer Q16.16, no alice-det-math dependency). Paths with no golden (cloud_bridge spatial ratios, telemetry averages, the float boundaries pinned instead by tests/float_edge_golden.rs case by case) are not pins, so a change there does not move the identifier."
+note = "the identifier is a constant of this crate version: a dependency bump or a toolchain change that moved any pinned bits fails a golden (debug and release), and re-recording a golden or resolving another upstream identifier moves the identifier; earlier identifiers whose pinned bits are still reproduced go into PREVIOUS_SYNC_SEMANTICS_IDS (empty: this is the first). The crate has no arithmetic identifier of its own to re-export (its core is integer Q16.16, no alice-det-math dependency). The crate tracks no Cargo.lock for consumers, so a new alice-physics 3.x or alice-analytics 0.3.x release with another identifier turns the physics / analytics pin tests red without a change here, which is the intended failure. Paths with no golden (cloud_bridge spatial ratios, telemetry averages, the float boundaries pinned instead by tests/float_edge_golden.rs case by case) are not pins, so a change there does not move the identifier."
 reference_repo = "ALICE-Physics"
 
 [G7]
