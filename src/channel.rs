@@ -15,7 +15,7 @@
 //! | Messaging | `chat/{channel}/messages` | Group chat delivery |
 //! | DB Replication | `db/{table}/mutations` | Change-data-capture |
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -62,7 +62,7 @@ struct TopicState {
 /// Thread-safe, lock-free reads for hot path (publish),
 /// write lock only for subscribe/unsubscribe.
 pub struct PubSub {
-    topics: RwLock<HashMap<Topic, TopicState>>,
+    topics: RwLock<BTreeMap<Topic, TopicState>>,
     capacity: usize,
 }
 
@@ -71,7 +71,7 @@ impl PubSub {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            topics: RwLock::new(HashMap::new()),
+            topics: RwLock::new(BTreeMap::new()),
             capacity: DEFAULT_CHANNEL_CAPACITY,
         }
     }
@@ -80,7 +80,7 @@ impl PubSub {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            topics: RwLock::new(HashMap::new()),
+            topics: RwLock::new(BTreeMap::new()),
             capacity,
         }
     }
@@ -209,7 +209,7 @@ impl PubSub {
         }
     }
 
-    /// List all active topics.
+    /// List all active topics, in topic name order.
     pub async fn topics(&self) -> Vec<Topic> {
         self.topics.read().await.keys().cloned().collect()
     }

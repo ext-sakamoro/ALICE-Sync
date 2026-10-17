@@ -11,7 +11,7 @@
 //! | Manual | Cloud relay, WAN peers | Instant |
 //! | Static | Config-file bootstrap | Instant |
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -128,7 +128,7 @@ impl Discovery {
         &self,
         addr: SocketAddr,
         name: &str,
-        metadata: HashMap<String, String>,
+        metadata: impl IntoIterator<Item = (String, String)>,
     ) -> bool {
         let now = crate::clock::now();
         let mut peers = self.peers.write().await;
@@ -317,10 +317,12 @@ impl Discovery {
             let ip_str = local.addr.ip().to_string();
             let port = local.addr.port();
 
-            let mut properties = std::collections::HashMap::new();
-            for (k, v) in &local.metadata {
-                properties.insert(k.clone(), v.clone());
-            }
+            // the TXT record in key order (local.metadata is a BTreeMap)
+            let properties: Vec<(String, String)> = local
+                .metadata
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
 
             let service_type = MDNS_SERVICE_TYPE.trim_end_matches('.');
             match ServiceInfo::new(
@@ -329,7 +331,7 @@ impl Discovery {
                 &host_name,
                 &*ip_str,
                 port,
-                Some(properties),
+                &properties[..],
             ) {
                 Ok(info) => {
                     if let Err(e) = mdns.register(info) {
@@ -370,7 +372,7 @@ impl Discovery {
                                     continue;
                                 }
                                 let name = info.get_fullname().to_string();
-                                let meta: HashMap<String, String> = info
+                                let meta: BTreeMap<String, String> = info
                                     .get_properties()
                                     .iter()
                                     .map(|p| (p.key().to_string(), p.val_str().to_string()))
@@ -419,7 +421,7 @@ mod tests {
         let disc = Discovery::new(addr(5000), "node-a");
 
         let is_new = disc
-            .register_peer(addr(5001), "node-b", HashMap::new())
+            .register_peer(addr(5001), "node-b", BTreeMap::new())
             .await;
         assert!(is_new);
 
@@ -432,10 +434,10 @@ mod tests {
     async fn test_register_existing_returns_false() {
         let disc = Discovery::new(addr(5000), "node-a");
 
-        disc.register_peer(addr(5001), "node-b", HashMap::new())
+        disc.register_peer(addr(5001), "node-b", BTreeMap::new())
             .await;
         let is_new = disc
-            .register_peer(addr(5001), "node-b-updated", HashMap::new())
+            .register_peer(addr(5001), "node-b-updated", BTreeMap::new())
             .await;
         assert!(!is_new);
 
@@ -446,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_peer() {
         let disc = Discovery::new(addr(5000), "node-a");
-        disc.register_peer(addr(5001), "node-b", HashMap::new())
+        disc.register_peer(addr(5001), "node-b", BTreeMap::new())
             .await;
 
         let removed = disc.remove_peer(&addr(5001)).await;
@@ -459,9 +461,9 @@ mod tests {
     #[tokio::test]
     async fn test_live_peers_and_count() {
         let disc = Discovery::new(addr(5000), "node-a");
-        disc.register_peer(addr(5001), "b", HashMap::new()).await;
-        disc.register_peer(addr(5002), "c", HashMap::new()).await;
-        disc.register_peer(addr(5003), "d", HashMap::new()).await;
+        disc.register_peer(addr(5001), "b", BTreeMap::new()).await;
+        disc.register_peer(addr(5002), "c", BTreeMap::new()).await;
+        disc.register_peer(addr(5003), "d", BTreeMap::new()).await;
 
         assert_eq!(disc.peer_count().await, 3);
 
@@ -472,7 +474,7 @@ mod tests {
     #[tokio::test]
     async fn test_peer_seen_updates_timestamp() {
         let disc = Discovery::new(addr(5000), "node-a");
-        disc.register_peer(addr(5001), "b", HashMap::new()).await;
+        disc.register_peer(addr(5001), "b", BTreeMap::new()).await;
 
         let before = disc.get_peer(&addr(5001)).await.unwrap().last_seen;
         // Small delay to ensure timestamp differs
@@ -507,7 +509,7 @@ mod tests {
         }))
         .await;
 
-        disc.register_peer(addr(5001), "b", HashMap::new()).await;
+        disc.register_peer(addr(5001), "b", BTreeMap::new()).await;
         disc.remove_peer(&addr(5001)).await;
 
         // 1 Discovered + 1 Lost
@@ -531,7 +533,7 @@ mod tests {
             timeout: Duration::from_millis(50),
         };
 
-        disc.register_peer(addr(5001), "b", HashMap::new()).await;
+        disc.register_peer(addr(5001), "b", BTreeMap::new()).await;
         assert_eq!(disc.peer_count().await, 1);
 
         // Wait for timeout
@@ -546,7 +548,7 @@ mod tests {
     async fn test_register_with_metadata() {
         let disc = Discovery::new(addr(5000), "node-a");
 
-        let mut meta = HashMap::new();
+        let mut meta = BTreeMap::new();
         meta.insert("role".to_string(), "relay".to_string());
         meta.insert("region".to_string(), "ap-northeast-1".to_string());
 

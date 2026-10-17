@@ -447,9 +447,8 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
 
     /// Add a manual peer.
     pub async fn add_peer(&self, addr: SocketAddr) {
-        use std::collections::HashMap;
         self.discovery
-            .register_peer(addr, &format!("peer-{addr}"), HashMap::new())
+            .register_peer(addr, &format!("peer-{addr}"), std::iter::empty())
             .await;
     }
 

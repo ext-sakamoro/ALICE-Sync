@@ -83,16 +83,39 @@ mod async_oracles {
         );
     }
 
+    // topics() returns the topic names of a pub/sub; 16 scrambled topics in 20
+    // fresh instances (each its own hash seed under a std HashMap) must all come
+    // back as the same, sorted list (compared: 20 instances x 16 topics)
+    #[tokio::test]
+    async fn channel_topics_come_back_in_one_sorted_order_across_instances() {
+        use alice_sync::PubSub;
+        let want: Vec<String> = (0..16).map(|k| format!("t{k:02}")).collect();
+        let mut compared = 0;
+        for _ in 0..20 {
+            let ps = PubSub::new();
+            for &k in &SCRAMBLE {
+                let _ = ps.subscribe(&format!("t{k:02}"), addr(9000)).await;
+            }
+            let got: Vec<String> = ps.topics().await.iter().map(|t| t.to_string()).collect();
+            assert_eq!(got, want, "topics() must list the topics in name order");
+            compared += got.len();
+        }
+        assert_eq!(compared, 20 * 16, "compared nothing");
+    }
+
     #[tokio::test]
     async fn discovery_peer_addrs_and_metadata_iterate_in_order() {
         use alice_sync::discovery::Discovery;
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
         let disc = Discovery::new(addr(1000), "self");
-        let mut md = HashMap::new();
+        // the pairs are given in the scrambled order
+        let md: Vec<(String, String)> = SCRAMBLE
+            .iter()
+            .map(|&k| (format!("k{k:02}"), k.to_string()))
+            .collect();
         for &k in &SCRAMBLE {
-            disc.register_peer(addr(9000 + k as u16), "p", HashMap::new())
+            disc.register_peer(addr(9000 + k as u16), "p", BTreeMap::new())
                 .await;
-            md.insert(format!("k{k:02}"), k.to_string());
         }
         let got = disc.peer_addrs().await;
         assert_eq!(
@@ -102,7 +125,7 @@ mod async_oracles {
         );
 
         // the metadata field is serialised into the mDNS record; its keys must
-        // iterate in a deterministic order (BTreeMap), not the HashMap arg order.
+        // iterate in key order (BTreeMap), not the order the pairs are given in.
         // Register one peer carrying all 16 scrambled metadata keys.
         disc.register_peer(addr(8000), "meta", md).await;
         let peers = disc.live_peers().await;

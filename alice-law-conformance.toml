@@ -158,12 +158,17 @@ note = "the public-text.yml job runs scripts/public_text.sh, which fetches ALICE
 reference_repo = "ALICE-Law"
 
 [G13]
-status = "fail-known"
-evidence = ["src/node.rs", "src/cloud_bridge.rs", "src/channel.rs", "src/discovery.rs", "tests/g13_order_determinism.rs"]
-mutant = "revert any converted collection to a std HashMap / HashSet (e.g. node peers back to HashMap<NodeId, Peer>) -> the matching case in tests/g13_order_determinism.rs fails, because a std HashMap / HashSet does not iterate in key order (and with the default hasher the order varies between runs)"
-since = ""
-note = "unmet (located 2026-10-18): src/channel.rs:213 PubSub::topics returns self.topics (HashMap<Topic, TopicState>, src/channel.rs:65) through keys(), so the list of topics comes back in hash order: 16 topics inserted into 20 fresh PubSub instances gave 20 different orders; the earlier claim that topics is only looked up by key was wrong. The gate has no static half: clippy.toml bans neither std::collections::HashMap / HashSet nor their iterators nor std::thread, and there is no order guard, so a new iteration of a hash container is not refused (src/reliability.rs:563 gc already iterates an rustc_hash::FxHashMap; src/transport.rs:210 and src/discovery.rs:131 / :320 hold hash maps). tests/g13_order_determinism.rs only covers the four collections converted earlier (node peers, cloud_bridge devices, channel subscribers, discovery peers)."
-reference_repo = ""
+status = "unverified"
+evidence = [
+    "no HashMap / HashSet in src/: node peers, cloud_bridge devices, channel subscribers and topics, discovery peers and metadata, the reliability fragment and timestamp tables and the transport peer table are BTreeMap / BTreeSet (rustc-hash is no longer a dependency); PubSub::topics (src/channel.rs) returns the topics in name order",
+    "clippy.toml: disallowed-types std::collections::HashMap / HashSet and their iterator types (hash_map::Iter / Keys / Values / IntoIter, hash_set::Iter / IntoIter) and std::thread::Builder / JoinHandle / ScopedJoinHandle; disallowed-methods std::thread::spawn / scope / Builder::spawn / Builder::spawn_scoped / available_parallelism (the same entries as ALICE-DB), each planted by scripts/clippy_canary.py (78 planted, 78 flagged)",
+    "scripts/order_guard.py (byte-identical to ALICE-Analytics / ALICE-Edge / ALICE-DB, tests scripts/test_order_guard.py; ci.yml entropy-guard job and preflight): src/ production code and the Cargo.toml normal dependencies; scripts/order_allowlist.toml allows no site; reading no file fails",
+    "tests/g13_order_determinism.rs: one case per collection, and channel_topics_come_back_in_one_sorted_order_across_instances (16 topics in 20 fresh PubSub instances, 320 names compared, all in name order)",
+]
+mutant = "measured 2026-10-18, each reverted: PubSub's topic table back to a std HashMap fails channel_topics_come_back_in_one_sorted_order_across_instances (the first instance already returns a hash order), clippy (disallowed type std::collections::HashMap) and order_guard (src/channel.rs::HashMap not in the allowlist); a new library function collecting the keys of a HashMap fails clippy and order_guard; a library function using std::thread::spawn fails clippy (disallowed method) and order_guard (src/channel.rs::threads)"
+since = "0.7.0"
+note = "unverified for one form the gate does not read: messages from several TCP peers reach the session through one channel fed by one read task per peer (src/transport.rs, the 6 tokio::spawn sites behind the async feature: src/discovery.rs GC and mDNS loops, src/session.rs receive and tick loops, src/transport.rs per-peer read), so their interleaving is set by the async scheduler, and whether every consumer orders them before a Law-bearing output is not checked here. Met and guarded (evidence and mutants above): every collection the crate iterates is ordered, so what it returns is a function of the keys only, independent of insertion order and of the hash seed, and clippy.toml with scripts/order_guard.py refuses a new hash container, thread or parallel dependency in library code. Discovery::register_peer takes any iterator of (String, String) and stores it in the ordered metadata map; the mDNS TXT record is built from that map in key order."
+reference_repo = "ALICE-DB"
 
 [G14]
 status = "pass"

@@ -207,7 +207,7 @@ pub struct TcpTransport {
     /// Incoming connection listener
     listener: TcpListener,
     /// Connected peers: addr → write half
-    peers: tokio::sync::Mutex<rustc_hash::FxHashMap<SocketAddr, TcpPeerWriter>>,
+    peers: tokio::sync::Mutex<std::collections::BTreeMap<SocketAddr, TcpPeerWriter>>,
     /// Received message channel
     rx: tokio::sync::Mutex<mpsc::Receiver<Envelope>>,
     /// Sender for spawned read tasks
@@ -226,7 +226,7 @@ impl TcpTransport {
 
         Ok(Self {
             listener,
-            peers: tokio::sync::Mutex::new(rustc_hash::FxHashMap::default()),
+            peers: tokio::sync::Mutex::new(std::collections::BTreeMap::new()),
             rx: tokio::sync::Mutex::new(rx),
             tx,
         })
