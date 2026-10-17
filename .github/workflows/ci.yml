@@ -177,6 +177,10 @@ jobs:
       # (a binary that ran none, or fewer than its `=N` minimum); its own tests, run here
       - name: run_tests.sh (tests)
         run: python3 scripts/test_run_tests.py
+      # scripts/changed_paths.py decides whether g3-ir.yml's heavy job runs (and its gate
+      # job is red when that job was skipped); its own tests, run here
+      - name: changed_paths.py (tests)
+        run: python3 scripts/test_changed_paths.py
 
   actionlint:
     name: actionlint (workflow YAML 検証)
