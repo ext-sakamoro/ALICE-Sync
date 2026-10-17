@@ -52,6 +52,12 @@ pub struct PeerInfo {
 /// from the advertised record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetadataError {
+    /// `key` is not a DNS-SD TXT key: empty, or a character outside printable
+    /// US-ASCII (0x20 to 0x7E), or `=` (RFC 6763 section 6.4)
+    InvalidKey {
+        /// The refused key
+        key: String,
+    },
     /// `new` differs from the stored key `existing` only by ASCII case
     CaseOnlyDuplicate {
         /// The key already in the local metadata
@@ -64,6 +70,10 @@ pub enum MetadataError {
 impl std::fmt::Display for MetadataError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidKey { key } => write!(
+                f,
+                "metadata key {key:?} is not a TXT key (one or more printable US-ASCII characters other than '=')"
+            ),
             Self::CaseOnlyDuplicate { existing, new } => write!(
                 f,
                 "metadata key {new:?} differs from the existing key {existing:?} only by case \
@@ -159,9 +169,16 @@ impl Discovery {
     ///
     /// # Errors
     ///
+    /// [`MetadataError::InvalidKey`] when `key` is empty or holds a character
+    /// outside printable US-ASCII or `=` (RFC 6763 section 6.4), and
     /// [`MetadataError::CaseOnlyDuplicate`] when `key` differs from a stored
     /// key only by ASCII case (TXT keys are case-insensitive); nothing is stored.
     pub async fn set_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
+        if key.is_empty() || !key.bytes().all(|b| (0x20..=0x7E).contains(&b) && b != b'=') {
+            return Err(MetadataError::InvalidKey {
+                key: key.to_string(),
+            });
+        }
         let mut info = self.local_info.write().await;
         if let Some(existing) = info
             .metadata
