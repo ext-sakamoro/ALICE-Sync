@@ -51,6 +51,7 @@ pub struct PeerInfo {
 /// that differs from a stored one only by case is refused rather than dropped
 /// from the advertised record.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MetadataError {
     /// `key` is not a DNS-SD TXT key: empty, or a character outside printable
     /// US-ASCII (0x20 to 0x7E), or `=` (RFC 6763 section 6.4)
