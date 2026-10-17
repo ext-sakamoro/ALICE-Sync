@@ -31,6 +31,8 @@ mdns-sd = { version = "0.11", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
+# tests/determinism_golden.rs: SHA-256 of the golden scenarios (the pins of SYNC_SEMANTICS_ID)
+sha2 = "0.10"
 tempfile = "3.10"
 
 [features]

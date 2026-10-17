@@ -57,11 +57,16 @@ note = "the Law-bearing float-boundary suite runs under the release profile in C
 reference_repo = ""
 
 [G6]
-status = "fail-known"
-evidence = ["src/lib.rs", "src/physics_bridge.rs"]
+status = "pass"
+evidence = [
+    "src/semantics.rs SYNC_SEMANTICS_ID (exported from the crate root with SYNC_SEMANTICS_PINS and PREVIOUS_SYNC_SEMANTICS_IDS): the fold (sorted by name, u32 big-endian name length, name, 32 digest bytes, SHA-256) of five pins: the goldens fixed / world / crdt of tests/determinism_golden.rs (Q16.16 arithmetic of Fixed and Vec3Fixed, world state and rolling hash after a fixed event sequence, CRDT merges) and the identifiers of the bridged Law-bearing crates, alice-physics PHYSICS_SEMANTICS_ID and alice-analytics SEMANTICS_ID, recorded as hex so the value does not depend on cargo features",
+    "tests/sync_semantics_id.rs: the_identifier_is_the_fold_of_its_pins (the constant, the module doc hex and the recomputed fold agree), golden_pins_are_the_recorded_goldens (the golden pins are read from tests/determinism_golden.rs, not copied), physics_pin_is_the_resolved_physics_identifier and analytics_pin_is_the_resolved_analytics_identifier (with the physics / analytics features, the recorded upstream hex equals the resolved crate's constant), every_pin_moves_the_identifier (each of the five pins flipped moves the fold)",
+    "tests/determinism_golden.rs golden_fixed / golden_world / golden_crdt (async), run by ci.yml in the default and native feature sets and by release-profile.yml in the release profile",
+]
+mutant = "measured 2026-10-17, each reverted: a world pin with its last hex digit changed fails the_identifier_is_the_fold_of_its_pins and golden_pins_are_the_recorded_goldens; the analytics pin changed fails analytics_pin_is_the_resolved_analytics_identifier and the fold test; GOLDEN_FIXED changed fails golden_fixed and golden_pins_are_the_recorded_goldens; Fixed::saturating_mul fed rhs ^ 1 fails golden_fixed"
 since = ""
-note = "the crate defines no SEMANTICS_ID of its own and folds no upstream identifier: a scan of src finds no SEMANTICS_ID constant and no re-export of one, even though it bridges alice-physics (which carries alice-det-math's arithmetic identifier). Whether alice-sync's deterministic state needs its own meaning identifier folding the pins it depends on (and the bridged producers' ids), or whether its fixed-point determinism is identified some other way, is the design question C4 opens for this crate; located at the absence of any identifier in src/lib.rs and the un-checked bridge boundary in src/physics_bridge.rs."
-reference_repo = ""
+note = "the identifier is a constant of this crate version: a dependency bump or a toolchain change that moved any pinned bits fails a golden (debug and release), and re-recording a golden or resolving another upstream identifier moves the identifier; earlier identifiers whose pinned bits are still reproduced go into PREVIOUS_SYNC_SEMANTICS_IDS (empty: this is the first). The crate has no arithmetic identifier of its own to re-export (its core is integer Q16.16, no alice-det-math dependency). Paths with no golden (cloud_bridge spatial ratios, telemetry averages, the float boundaries pinned instead by tests/float_edge_golden.rs case by case) are not pins, so a change there does not move the identifier."
+reference_repo = "ALICE-Physics"
 
 [G7]
 status = "fail-known"
