@@ -251,7 +251,8 @@ def rustdoc(root: Path, features: str) -> dict:
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=root,
                                      stdout=subprocess.PIPE, text=True, check=True).stdout)
     target_dir = Path(meta["target_directory"])
-    lib = next(t["name"] for p in meta["packages"] for t in p["targets"] if "lib" in t["kind"])
+    lib_kinds = {"lib", "rlib", "dylib", "cdylib", "staticlib"}
+    lib = next(t["name"] for p in meta["packages"] for t in p["targets"] if lib_kinds & set(t["kind"]))
     return json.loads((target_dir / "doc" / f"{lib.replace('-', '_')}.json").read_text(encoding="utf-8"))
 
 
