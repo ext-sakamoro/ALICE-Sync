@@ -197,7 +197,7 @@ pub use channel::{PubSub, TopicMessage};
 #[cfg(feature = "async")]
 pub use crdt::{CrdtMergeable, GCounter, LwwMap, LwwRegister, OrSet, PnCounter};
 #[cfg(feature = "async")]
-pub use discovery::{Discovery, DiscoverySource, PeerEvent, PeerInfo};
+pub use discovery::{Discovery, DiscoverySource, MetadataError, PeerEvent, PeerInfo};
 #[cfg(feature = "async")]
 pub use reliability::{ReassemblyBuffer, ReliableEndpoint};
 #[cfg(feature = "async")]

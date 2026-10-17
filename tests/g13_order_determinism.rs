@@ -143,6 +143,26 @@ mod async_oracles {
                 Some("3")
             );
         }
+        // RFC 6763 §6.4: a key is at least one printable US-ASCII character
+        // (0x20 to 0x7E) other than '='; anything else is refused, so the ASCII
+        // case rule above is complete (KELVIN SIGN U+212A lowercases to "k"
+        // under the Unicode rule the mDNS library dedups TXT keys with)
+        let disc = Discovery::new(addr(1000), "self");
+        disc.set_metadata("K", "1").await.expect("ASCII key");
+        for bad in ["\u{212A}", "k=v", "", "tab\tkey", "\u{7F}"] {
+            let err = disc
+                .set_metadata(bad, "2")
+                .await
+                .expect_err("a key outside printable US-ASCII without '=' must be refused");
+            assert_eq!(
+                err,
+                MetadataError::InvalidKey {
+                    key: bad.to_string()
+                }
+            );
+        }
+        let keys: Vec<String> = disc.local_info().await.metadata.keys().cloned().collect();
+        assert_eq!(keys, vec!["K".to_string()], "no refused key is stored");
     }
 
     #[tokio::test]
