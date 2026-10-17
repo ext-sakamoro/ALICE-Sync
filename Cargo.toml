@@ -1,6 +1,6 @@
 [package]
 name = "alice-sync"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.88"  # alice-auth 0.5.1 が 1.88 要求、CI msrv job で実 compile
 authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]

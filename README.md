@@ -24,10 +24,10 @@ ALICE-Sync is a high-performance P2P state synchronization engine. Instead of se
 
 ```toml
 [dependencies]
-alice-sync = "0.6"
+alice-sync = "0.7"
 
 # Full P2P infrastructure
-alice-sync = { version = "0.6", features = ["async"] }
+alice-sync = { version = "0.7", features = ["async"] }
 ```
 
 ## Quick Start

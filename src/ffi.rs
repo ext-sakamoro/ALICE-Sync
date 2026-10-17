@@ -928,11 +928,24 @@ pub extern "C" fn as_sync_vec3_hash(x: f32, y: f32, z: f32) -> u64 {
 
 #[no_mangle]
 pub extern "C" fn as_sync_version() -> u32 {
-    ffi_guard(0, || {
-        // 0.6.0 → 0*10000 + 6*100 + 0 = 600
-        600
-    })
+    // major * 10000 + minor * 100 + patch, from Cargo.toml (0.7.0 -> 700)
+    ffi_guard(0, || VERSION_CODE)
 }
+
+const fn parse_u32(s: &str) -> u32 {
+    let b = s.as_bytes();
+    let mut v = 0u32;
+    let mut i = 0;
+    while i < b.len() {
+        v = v * 10 + (b[i] - b'0') as u32;
+        i += 1;
+    }
+    v
+}
+
+const VERSION_CODE: u32 = parse_u32(env!("CARGO_PKG_VERSION_MAJOR")) * 10000
+    + parse_u32(env!("CARGO_PKG_VERSION_MINOR")) * 100
+    + parse_u32(env!("CARGO_PKG_VERSION_PATCH"));
 
 // ============================================================================
 // Tests
@@ -1064,7 +1077,7 @@ mod tests {
 
     #[test]
     fn test_ffi_version() {
-        assert_eq!(as_sync_version(), 600);
+        assert_eq!(as_sync_version(), 700);
     }
 
     #[test]

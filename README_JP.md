@@ -24,10 +24,10 @@ ALICE-Sync は高性能な P2P 状態同期エンジン ワールド全体の状
 
 ```toml
 [dependencies]
-alice-sync = "0.6"
+alice-sync = "0.7"
 
 # Full P2P infrastructure
-alice-sync = { version = "0.6", features = ["async"] }
+alice-sync = { version = "0.7", features = ["async"] }
 ```
 
 ## クイックスタート
