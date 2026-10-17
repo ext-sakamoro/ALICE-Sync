@@ -38,11 +38,19 @@ note = "the crate computes no f32 / f64 max or min today: every max / min / clam
 reference_repo = "ALICE-Physics"
 
 [G3]
-status = "unverified"
-evidence = []
+status = "pass"
+evidence = [
+    "tools/no-outer-fneg-of-fma/{Cargo.toml,Cargo.lock,src/main.rs} (syntax-tree pre-check, byte-identical to ALICE-LOL's, built with --locked: the fma family mul_add / fma / fmaf / fmaf32 / fmaf64 / aarch64 vfma* vfms* / x86 _mm*_fmadd and the rest, every negation spelling of the gate, fma results through casts, From, branch arms and let aliases; a renamed fma-family import or a fma-family path used as a value fails; 73 tests over its own fixtures and the shared probes)",
+    "scripts/fneg_fma_ir_check.py (the gate, byte-identical to ALICE-LOL's: the release LLVM IR of alice-sync with all features, built with -C link-dead-code; a negation whose operand traces back to a fma call fails at the crate's own source line; a missing or empty .ll, a module without functions, or a missing floor fails)",
+    "scripts/test_fneg_fma_ir_check.py with tools/fneg-fma-ir-probes/*.rs (byte-identical to ALICE-LOL's: 47 probes, 35 negated shapes and 12 safe ones, compiled at test time for an aarch64 and an x86_64 target)",
+    "scripts/no-outer-fneg-of-fma-allowlist.toml (expected-fma-calls 0 and expected-src-fma-calls 0, compared exactly; [[ir]] floors 0 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu; no [[allow]] entry)",
+    ".github/workflows/ci.yml test job (ubuntu, macOS, Windows): the tool's tests and the check",
+    ".github/workflows/g3-ir.yml (x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu, both on ubuntu-latest: no dependency has a C build script, so the aarch64 rlib IR cross-builds; on changes to sources, manifests, the toolchain or the checks, and weekly)",
+]
+mutant = "measured 2026-10-17, reverted: `pub fn g3_mutant(a: f32, b: f32, c: f32) -> f32 { -a.mul_add(b, c) }` appended to src/lib.rs makes tools/no-outer-fneg-of-fma exit 1 (`src/lib.rs:317: -a.mul_add(b, c)`, and expected-fma-calls / expected-src-fma-calls = 0 against 1 found) and scripts/fneg_fma_ir_check.py exit 1 (`src/lib.rs:317:5: fneg of a fma result in ...g3_mutant`, aarch64-apple-darwin, 8136 functions, 1 fma call, 1 negated)"
 since = ""
-note = "no src file calls mul_add or fma (the G1 scan returned zero), so there is no outer-negation-of-fma today, but there is no syntax-tree checker ratcheting the absence and no determination yet of whether a Law-bearing float path exists that the gate would apply to. Left unverified pending that audit (C5 adds the checker chain-wide)."
-reference_repo = ""
+note = "no fused multiply-add call in the library sources: the syntax-tree check reads 31 files and counts 0 fma-family calls against the declared 0, so the first new call fails on the count and a negated one fails on the form; the release IR on aarch64-apple-darwin holds 8135 functions and 0 fma calls. Residual: code compiled only for another target (wasm32, a cfg-gated platform module) and a generic function never instantiated in this crate are checked by the syntax tree only; a generic or #[inline] function inlined into another crate is in that crate's IR. copysign(fma, -c) and -fma.abs() are not findings (fabs between the fma and the negation blocks the rewrite)"
+reference_repo = "ALICE-LOL"
 
 [G4]
 status = "pass"

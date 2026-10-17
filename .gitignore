@@ -1,6 +1,9 @@
 # Build artifacts
 /target/
 Cargo.lock
+# the G3 checker is a binary with its own workspace: its lock is committed (byte-identical
+# to ALICE-LOL's) and the checker is built with --locked
+!tools/no-outer-fneg-of-fma/Cargo.lock
 
 # IDE
 .idea/
@@ -12,3 +15,4 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 __pycache__/
+/tools/no-outer-fneg-of-fma/target/
