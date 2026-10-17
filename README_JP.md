@@ -446,13 +446,13 @@ match rollback.add_remote_input(confirmed_input) {
 | `auth` | なし | ALICE-Auth による Ed25519 ZKP のピア認証 |
 | `codec` | なし | ALICE-Codec による wavelet と rANS のイベントストリーム圧縮 |
 | `analytics` | なし | ALICE-Analytics による DDSketch / HLL / CMS の確率的テレメトリ |
-| `ffi` | なし | Unity / UE5 向けの C-ABI FFI (71 関数) |
+| `ffi` | なし | Unity / UE5 向けの C-ABI FFI (75 関数) |
 | `cloud` | なし | クラウド側の複数デバイス空間同期ハブ |
 | `all-bridges` | なし | すべての連携ブリッジを有効にする (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
 
 ## C-ABI FFI (Unity / UE5)
 
-コア型をすべて扱う 71 個の `extern "C"` 関数 `--features ffi` で有効になる
+コア型をすべて扱う 75 個の `extern "C"` 関数 `--features ffi` で有効になる
 
 ### 対象範囲
 
@@ -460,22 +460,22 @@ match rollback.add_remote_input(confirmed_input) {
 |--------|-----------|-------------|
 | World (AoS) | 8 | new, free, hash, entity_count, frame, apply_event, get_position, recalculate_hash |
 | WorldSoA | 5 | new, free, hash, entity_count, apply_event |
-| Node | 11 | new, with_seed, free, hash, state, emit, apply, add_peer, entity_count, events_count, events_bytes |
+| Node | 11 | new, with_seed, free, hash, state, emit, apply, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
 | Event | 8 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes |
 | EventStream | 7 | new, free, push, len, is_empty, current_seq, total_bytes |
 | InputFrame | 10 | new, free, set/get movement, set/get actions, set/get aim, get_frame, get_player_id |
 | InputFrameArray | 3 | free, len, get |
-| Lockstep | 5 | new, free, add_local/remote_input, ready, advance, confirmed_frame, record_checksum |
-| Rollback | 7 | new, free, add_local/remote_input, confirmed/predicted_frame, frames_ahead |
-| Utilities | 4 | fixed_from_f32, fixed_to_f32, vec3_hash, version |
+| Lockstep | 5 | new (takes the peers' `SYNC_SEMANTICS_ID`), free, add_local/remote_input, ready, advance, confirmed_frame, record_checksum |
+| Rollback | 7 | new (takes the peers' `SYNC_SEMANTICS_ID`), free, add_local/remote_input, confirmed/predicted_frame, frames_ahead |
+| Utilities | 5 | fixed_from_f32, fixed_to_f32, vec3_hash, version, semantics_id |
 
 ### Unity C# (`bindings/unity/AliceSync.cs`)
 
-71 個の `[DllImport]` 宣言と、RAII の `IDisposable` ハンドル
+72 個の `[DllImport]` 宣言と、RAII の `IDisposable` ハンドル
 
 ### UE5 C++ (`bindings/ue5/AliceSync.h`)
 
-71 個の `extern "C"` 宣言と、9 個の RAII `std::unique_ptr` ハンドル
+72 個の `extern "C"` 宣言と、9 個の RAII `std::unique_ptr` ハンドル
 
 ## Python バインディング (PyO3 と NumPy のゼロコピー)
 
@@ -515,11 +515,12 @@ data = frame.to_bytes()   # bitcode serialized (~18 bytes)
 decoded = alice_sync.InputFrame.from_bytes(data)
 
 # Lockstep session
-session = alice_sync.LockstepSession(player_count=2)
+peer_id = alice_sync.semantics_id()  # in practice: the 32 bytes the peer sent
+session = alice_sync.LockstepSession(player_count=2, peer_semantics_id=peer_id)
 session.add_local_input(frame)
 
 # Rollback session
-rollback = alice_sync.RollbackSession(player_count=2, local_player=0, max_rollback=8)
+rollback = alice_sync.RollbackSession(player_count=2, local_player=0, peer_semantics_id=peer_id, max_rollback=8)
 predicted = rollback.add_local_input(frame)
 action = rollback.add_remote_input(remote_frame)  # "none" / "rollback:N" / "desync:N"
 ```
@@ -552,7 +553,9 @@ use alice_sync::physics_bridge::PhysicsRollbackSession;
 use alice_sync::InputFrame;
 use alice_physics::{NetcodeConfig, RigidBody, Vec3Fix, Fix128};
 
-let mut session = PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default());
+// the peer's alice_physics::PHYSICS_SEMANTICS_ID, received in the handshake;
+// another identifier is refused with SemanticsMismatch
+let mut session = PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default(), &peer_physics_id)?;
 
 // Add player bodies to physics world
 let body = RigidBody::new_dynamic(Vec3Fix::from_int(0, 10, 0), Fix128::ONE);
@@ -671,8 +674,10 @@ println!("unique peers: {:.0}", tel.unique_peers());
 
 ```
 Handshake:
-  A -> B: Hello { node_id, seq, world_hash }
-  B -> A: Hello { node_id, seq, world_hash }
+  A -> B: Hello { node_id, seq, world_hash, semantics_id }
+  B -> A: Hello { node_id, seq, world_hash, semantics_id }
+  // a session refuses a Hello whose SYNC_SEMANTICS_ID it does not accept,
+  // and every other message from a peer before its accepted Hello
 
 Sync:
   A -> B: Events { [event1, event2, ...] }  // bitcode encoded

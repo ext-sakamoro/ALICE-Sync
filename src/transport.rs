@@ -32,6 +32,8 @@ pub enum TransportError {
     Io(std::io::Error),
     Codec(String),
     Closed,
+    /// A received message refused by the session's handshake (ALICE-Law G7)
+    Handshake(crate::protocol::HandshakeRefused),
 }
 
 impl From<std::io::Error> for TransportError {
@@ -46,6 +48,7 @@ impl std::fmt::Display for TransportError {
             Self::Io(e) => write!(f, "transport I/O: {e}"),
             Self::Codec(s) => write!(f, "transport codec: {s}"),
             Self::Closed => write!(f, "transport closed"),
+            Self::Handshake(r) => write!(f, "handshake refused: {r}"),
         }
     }
 }
@@ -421,6 +424,7 @@ mod tests {
             node_id: NodeId(42),
             seq: 100,
             world_hash: WorldHash(0xBEEF),
+            semantics_id: crate::SYNC_SEMANTICS_ID,
         };
 
         a.send_to(&hello, addr_b).await.unwrap();
@@ -431,6 +435,7 @@ mod tests {
                 node_id,
                 seq,
                 world_hash,
+                ..
             } => {
                 assert_eq!(node_id.0, 42);
                 assert_eq!(seq, 100);

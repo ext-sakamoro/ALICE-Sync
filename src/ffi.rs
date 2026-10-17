@@ -1,4 +1,4 @@
-//! C-ABI FFI for Unity/UE5 — 71 `#[no_mangle] extern "C"` functions
+//! C-ABI FFI for Unity/UE5 — 75 `#[no_mangle] extern "C"` functions
 //!
 //! Prefix: `as_sync_*`
 //!
@@ -286,13 +286,31 @@ pub unsafe extern "C" fn as_sync_node_apply_event(
     })
 }
 
+/// Adds a peer after checking its 32-byte `SYNC_SEMANTICS_ID` (ALICE-Law G7).
+///
+/// Returns 0 when the peer's identifier is this build's, 1 when it is a
+/// verified earlier one, -1 for a null pointer, and -2 for any other
+/// identifier (the peer is not added and `as_sync_last_error` names both).
+///
+/// # Safety
+/// `ptr` is a node handle and `peer_semantics_id` points to 32 readable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn as_sync_node_add_peer(ptr: *mut AsSyncNode, peer_id: u64) {
-    ffi_guard((), || {
+pub unsafe extern "C" fn as_sync_node_add_peer(
+    ptr: *mut AsSyncNode,
+    peer_id: u64,
+    peer_semantics_id: *const u8,
+) -> i32 {
+    ffi_guard(-1, || {
         if ptr.is_null() {
-            return;
+            return -1;
         }
-        (*ptr).0.add_peer(NodeId(peer_id));
+        match handshake(peer_semantics_id) {
+            Ok(status) => {
+                (*ptr).0.add_peer(NodeId(peer_id));
+                status
+            }
+            Err(code) => code,
+        }
     })
 }
 
@@ -626,9 +644,22 @@ pub unsafe extern "C" fn as_sync_input_frame_get_aim(
 // LockstepSession
 // ============================================================================
 
+/// Creates a lockstep session with peers whose 32-byte `SYNC_SEMANTICS_ID` is
+/// `peer_semantics_id` (ALICE-Law G7): null, with `as_sync_last_error`
+/// naming both identifiers, when it is neither this build's nor a verified
+/// earlier one, or when the pointer is null.
+///
+/// # Safety
+/// `peer_semantics_id` points to 32 readable bytes.
 #[no_mangle]
-pub extern "C" fn as_sync_lockstep_new(player_count: u8) -> *mut AsSyncLockstep {
+pub unsafe extern "C" fn as_sync_lockstep_new(
+    player_count: u8,
+    peer_semantics_id: *const u8,
+) -> *mut AsSyncLockstep {
     ffi_guard(ptr::null_mut(), || {
+        if handshake(peer_semantics_id).is_err() {
+            return ptr::null_mut();
+        }
         Box::into_raw(Box::new(AsSyncLockstep(LockstepSession::new(player_count))))
     })
 }
@@ -722,13 +753,24 @@ pub unsafe extern "C" fn as_sync_lockstep_record_checksum(
 // RollbackSession
 // ============================================================================
 
+/// Creates a rollback session with peers whose 32-byte `SYNC_SEMANTICS_ID` is
+/// `peer_semantics_id` (ALICE-Law G7): null, with `as_sync_last_error`
+/// naming both identifiers, when it is neither this build's nor a verified
+/// earlier one, or when the pointer is null.
+///
+/// # Safety
+/// `peer_semantics_id` points to 32 readable bytes.
 #[no_mangle]
-pub extern "C" fn as_sync_rollback_new(
+pub unsafe extern "C" fn as_sync_rollback_new(
     player_count: u8,
     local_player: u8,
     max_rollback: u64,
+    peer_semantics_id: *const u8,
 ) -> *mut AsSyncRollback {
     ffi_guard(ptr::null_mut(), || {
+        if handshake(peer_semantics_id).is_err() {
+            return ptr::null_mut();
+        }
         Box::into_raw(Box::new(AsSyncRollback(RollbackSession::new(
             player_count,
             local_player,
@@ -970,7 +1012,7 @@ mod tests {
     #[test]
     fn test_ffi_lockstep() {
         unsafe {
-            let session = as_sync_lockstep_new(2);
+            let session = as_sync_lockstep_new(2, crate::SYNC_SEMANTICS_ID.as_ptr());
             let input0 = as_sync_input_frame_new(1, 0);
             let input1 = as_sync_input_frame_new(1, 1);
 
@@ -994,7 +1036,7 @@ mod tests {
     #[test]
     fn test_ffi_rollback() {
         unsafe {
-            let session = as_sync_rollback_new(2, 0, 8);
+            let session = as_sync_rollback_new(2, 0, 8, crate::SYNC_SEMANTICS_ID.as_ptr());
             let input = as_sync_input_frame_new(1, 0);
             as_sync_input_frame_set_movement(input, 1, 0, 0);
 
@@ -1183,6 +1225,130 @@ mod guard {
 }
 
 use guard::ffi_guard;
+
+/// Writes this build's 32-byte `SYNC_SEMANTICS_ID` to `out` (ALICE-Law G7):
+/// the value a host sends to its peers and passes to their
+/// `as_sync_*_new` / `as_sync_node_add_peer`. Returns 0, or -1 when `out` is
+/// null or `len` is below 32.
+///
+/// # Safety
+/// `out` points to `len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_semantics_id(out: *mut u8, len: usize) -> i32 {
+    ffi_guard(-1, || {
+        if out.is_null() || len < 32 {
+            return -1;
+        }
+        ptr::copy_nonoverlapping(crate::SYNC_SEMANTICS_ID.as_ptr(), out, 32);
+        0
+    })
+}
+
+/// Reads a peer's 32-byte identifier and checks it: `Ok(0)` this build's,
+/// `Ok(1)` a verified earlier one; `Err(-1)` null, `Err(-2)` any other (with
+/// `as_sync_last_error` naming both identifiers).
+unsafe fn handshake(peer_semantics_id: *const u8) -> Result<i32, i32> {
+    if peer_semantics_id.is_null() {
+        guard::set_last_error("as_sync: peer semantics identifier is null");
+        return Err(-1);
+    }
+    let mut id = [0u8; 32];
+    ptr::copy_nonoverlapping(peer_semantics_id, id.as_mut_ptr(), 32);
+    match crate::semantics::check_semantics(&id) {
+        Ok(crate::semantics::IdStatus::Current) => Ok(0),
+        Ok(crate::semantics::IdStatus::VerifiedPrevious(_)) => Ok(1),
+        Err(m) => {
+            guard::set_last_error(format!("as_sync: {m}"));
+            Err(-2)
+        }
+    }
+}
+
+#[cfg(test)]
+mod handshake_ffi_tests {
+    use super::*;
+
+    fn foreign() -> [u8; 32] {
+        let mut id = crate::SYNC_SEMANTICS_ID;
+        id[5] ^= 0x10;
+        id
+    }
+
+    fn last_error() -> String {
+        let s = as_sync_last_error();
+        assert!(!s.is_null(), "an error message is recorded");
+        let msg = unsafe { std::ffi::CStr::from_ptr(s) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { as_sync_free_error_string(s) };
+        msg
+    }
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    fn assert_names_both(msg: &str) {
+        assert!(msg.contains(&hex(&foreign())), "{msg}");
+        assert!(msg.contains(&hex(&crate::SYNC_SEMANTICS_ID)), "{msg}");
+    }
+
+    #[test]
+    fn semantics_id_is_written_and_short_buffers_are_refused() {
+        let mut out = [0u8; 32];
+        assert_eq!(unsafe { as_sync_semantics_id(out.as_mut_ptr(), 32) }, 0);
+        assert_eq!(out, crate::SYNC_SEMANTICS_ID);
+        assert_eq!(unsafe { as_sync_semantics_id(out.as_mut_ptr(), 31) }, -1);
+        assert_eq!(unsafe { as_sync_semantics_id(ptr::null_mut(), 32) }, -1);
+    }
+
+    #[test]
+    fn lockstep_new_refuses_another_identifier() {
+        as_sync_clear_last_error();
+        let own = crate::SYNC_SEMANTICS_ID;
+        let ok = unsafe { as_sync_lockstep_new(2, own.as_ptr()) };
+        assert!(!ok.is_null());
+        unsafe { as_sync_lockstep_free(ok) };
+        let bad = foreign();
+        assert!(unsafe { as_sync_lockstep_new(2, bad.as_ptr()) }.is_null());
+        assert_names_both(&last_error());
+        assert!(unsafe { as_sync_lockstep_new(2, ptr::null()) }.is_null());
+    }
+
+    #[test]
+    fn rollback_new_refuses_another_identifier() {
+        as_sync_clear_last_error();
+        let own = crate::SYNC_SEMANTICS_ID;
+        let ok = unsafe { as_sync_rollback_new(2, 0, 8, own.as_ptr()) };
+        assert!(!ok.is_null());
+        unsafe { as_sync_rollback_free(ok) };
+        let bad = foreign();
+        assert!(unsafe { as_sync_rollback_new(2, 0, 8, bad.as_ptr()) }.is_null());
+        assert_names_both(&last_error());
+    }
+
+    #[test]
+    fn node_add_peer_refuses_another_identifier() {
+        as_sync_clear_last_error();
+        let node = as_sync_node_new(1);
+        let own = crate::SYNC_SEMANTICS_ID;
+        let bad = foreign();
+        unsafe {
+            assert_eq!(as_sync_node_add_peer(node, 2, own.as_ptr()), 0);
+            assert_eq!((*node).0.peers().count(), 1);
+            assert_eq!(as_sync_node_add_peer(node, 3, bad.as_ptr()), -2);
+            assert_names_both(&last_error());
+            assert_eq!(
+                (*node).0.peers().count(),
+                1,
+                "the refused peer is not added"
+            );
+            assert_eq!(as_sync_node_add_peer(node, 4, ptr::null()), -1);
+            assert_eq!(as_sync_node_add_peer(ptr::null_mut(), 4, own.as_ptr()), -1);
+            as_sync_node_free(node);
+        }
+    }
+}
 
 #[cfg(test)]
 mod guard_ffi_tests {

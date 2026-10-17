@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -52,7 +53,8 @@ extern "C"
     uint8_t as_sync_node_state(const AsSyncNode* ptr);
     int32_t as_sync_node_emit(AsSyncNode* ptr, const AsSyncEvent* evt);
     int32_t as_sync_node_apply_event(AsSyncNode* ptr, const AsSyncEvent* evt);
-    void as_sync_node_add_peer(AsSyncNode* ptr, uint64_t peerId);
+    /* peerSemanticsId: 32 bytes, the peer's SYNC_SEMANTICS_ID; returns 0 / 1 accepted, -1 null, -2 mismatch */
+    int32_t as_sync_node_add_peer(AsSyncNode* ptr, uint64_t peerId, const uint8_t* peerSemanticsId);
     uint32_t as_sync_node_entity_count(const AsSyncNode* ptr);
     uint32_t as_sync_node_events_count(const AsSyncNode* ptr);
     uint32_t as_sync_node_events_bytes(const AsSyncNode* ptr);
@@ -94,7 +96,8 @@ extern "C"
     AsSyncInputFrame* as_sync_input_frame_array_get(const AsSyncInputFrameArray* ptr, uint32_t index);
 
     // Lockstep
-    AsSyncLockstep* as_sync_lockstep_new(uint8_t playerCount);
+    /* null when peerSemanticsId (32 bytes) is not an accepted SYNC_SEMANTICS_ID (see as_sync_last_error) */
+    AsSyncLockstep* as_sync_lockstep_new(uint8_t playerCount, const uint8_t* peerSemanticsId);
     void as_sync_lockstep_free(AsSyncLockstep* ptr);
     void as_sync_lockstep_add_local_input(AsSyncLockstep* ptr, const AsSyncInputFrame* input);
     void as_sync_lockstep_add_remote_input(AsSyncLockstep* ptr, const AsSyncInputFrame* input);
@@ -104,7 +107,8 @@ extern "C"
     void as_sync_lockstep_record_checksum(AsSyncLockstep* ptr, uint64_t frame, uint64_t checksum);
 
     // Rollback
-    AsSyncRollback* as_sync_rollback_new(uint8_t playerCount, uint8_t localPlayer, uint64_t maxRollback);
+    /* null when peerSemanticsId (32 bytes) is not an accepted SYNC_SEMANTICS_ID (see as_sync_last_error) */
+    AsSyncRollback* as_sync_rollback_new(uint8_t playerCount, uint8_t localPlayer, uint64_t maxRollback, const uint8_t* peerSemanticsId);
     void as_sync_rollback_free(AsSyncRollback* ptr);
     AsSyncInputFrameArray* as_sync_rollback_add_local_input(AsSyncRollback* ptr, const AsSyncInputFrame* input);
     uint8_t as_sync_rollback_add_remote_input(AsSyncRollback* ptr, const AsSyncInputFrame* input, uint64_t* outRollbackFrame);
@@ -117,6 +121,8 @@ extern "C"
     float as_sync_fixed_to_f32(int32_t bits);
     uint64_t as_sync_vec3_hash(float x, float y, float z);
     uint32_t as_sync_version();
+    /* writes this build's 32-byte SYNC_SEMANTICS_ID; 0, or -1 when out is null or len < 32 */
+    int32_t as_sync_semantics_id(uint8_t* out, size_t len);
 }
 
 // ============================================================================

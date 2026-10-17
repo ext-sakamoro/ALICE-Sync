@@ -35,6 +35,7 @@
 //! ```
 
 use crate::input_sync::{InputFrame, RollbackAction, RollbackSession, SyncResult};
+use crate::semantics::{check_semantics_against, SemanticsMismatch};
 use crate::world::WorldHash;
 use alice_physics::{
     DeterministicSimulation, FrameInput, InputApplicator, NetcodeConfig, SimulationChecksum,
@@ -153,7 +154,10 @@ pub fn world_hash_to_physics_checksum(hash: WorldHash) -> SimulationChecksum {
 /// use alice_sync::physics_bridge::PhysicsRollbackSession;
 /// use alice_physics::NetcodeConfig;
 ///
-/// let mut session = PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default());
+/// // the peer's alice-physics identifier, received in the session handshake
+/// let mut session = PhysicsRollbackSession::new(
+///     2, 0, 8, NetcodeConfig::default(), &peer_physics_id,
+/// )?;
 ///
 /// // Each frame:
 /// let input = InputFrame::new(frame, 0).with_movement(1, 0, 0);
@@ -173,18 +177,34 @@ pub struct PhysicsRollbackSession {
 }
 
 impl PhysicsRollbackSession {
-    /// Create a new physics rollback session.
-    #[must_use]
+    /// Create a new physics rollback session with a peer whose simulation
+    /// reports `peer_physics_id` (its `alice_physics::PHYSICS_SEMANTICS_ID`).
+    ///
+    /// Rollback compares the peer's checksums with this simulation's, which is
+    /// only meaningful when both run the same physics semantics (ALICE-Law
+    /// G7): the identifier must be this build's `PHYSICS_SEMANTICS_ID` or one
+    /// in `PREVIOUS_PHYSICS_SEMANTICS_IDS`.
+    ///
+    /// # Errors
+    ///
+    /// [`SemanticsMismatch`] naming the peer's identifier and this build's
+    /// when they differ.
     pub fn new(
         player_count: u8,
         local_player: u8,
         max_rollback: u64,
         netcode_config: NetcodeConfig,
-    ) -> Self {
-        Self {
+        peer_physics_id: &[u8; 32],
+    ) -> Result<Self, SemanticsMismatch> {
+        check_semantics_against(
+            peer_physics_id,
+            &alice_physics::PHYSICS_SEMANTICS_ID,
+            alice_physics::PREVIOUS_PHYSICS_SEMANTICS_IDS,
+        )?;
+        Ok(Self {
             sync: RollbackSession::new(player_count, local_player, max_rollback),
             sim: DeterministicSimulation::new(netcode_config),
-        }
+        })
     }
 
     /// Advance one frame with local input.
@@ -397,6 +417,23 @@ mod tests {
         assert_eq!(back, physics_checksum);
     }
 
+    /// A peer with another physics identifier is refused naming both; an
+    /// identifier in the previous list is accepted.
+    #[test]
+    fn a_peer_with_another_physics_identifier_is_refused() {
+        let mut foreign = alice_physics::PHYSICS_SEMANTICS_ID;
+        foreign[31] ^= 1;
+        match PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default(), &foreign) {
+            Err(m) => {
+                assert_eq!(m.stored, foreign);
+                assert_eq!(m.expected, alice_physics::PHYSICS_SEMANTICS_ID);
+            }
+            Ok(_) => panic!("a foreign physics identifier was accepted"),
+        }
+        let earlier = alice_physics::PREVIOUS_PHYSICS_SEMANTICS_IDS[0];
+        assert!(PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default(), &earlier).is_ok());
+    }
+
     #[test]
     fn test_physics_rollback_session_advance() {
         // `NetcodeConfig` は non_exhaustive なので struct literal も
@@ -404,7 +441,14 @@ mod tests {
         // `player_count: 2` は default と同値なので、値を assert で固定する
         let netcode_config = NetcodeConfig::default();
         assert_eq!(netcode_config.player_count, 2);
-        let mut session = PhysicsRollbackSession::new(2, 0, 8, netcode_config);
+        let mut session = PhysicsRollbackSession::new(
+            2,
+            0,
+            8,
+            netcode_config,
+            &alice_physics::PHYSICS_SEMANTICS_ID,
+        )
+        .expect("this build's identifier");
 
         // Add player bodies
         for i in 0..2u8 {
@@ -436,7 +480,14 @@ mod tests {
         let netcode_config = NetcodeConfig::default();
         assert_eq!(netcode_config.player_count, 2);
         assert_eq!(netcode_config.max_snapshots, 10);
-        let mut session = PhysicsRollbackSession::new(2, 0, 8, netcode_config);
+        let mut session = PhysicsRollbackSession::new(
+            2,
+            0,
+            8,
+            netcode_config,
+            &alice_physics::PHYSICS_SEMANTICS_ID,
+        )
+        .expect("this build's identifier");
 
         // Add player bodies
         for i in 0..2u8 {

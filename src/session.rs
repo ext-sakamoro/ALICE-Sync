@@ -29,7 +29,8 @@ use crate::channel::PubSub;
 use crate::crdt::{CrdtMergeable, LwwMap};
 use crate::discovery::Discovery;
 use crate::input_sync::{InputFrame, LockstepSession, RollbackAction, RollbackSession, SyncResult};
-use crate::protocol::Message;
+use crate::protocol::{HandshakeRefused, Message};
+use crate::semantics::{check_semantics_against, IdStatus, PREVIOUS_SYNC_SEMANTICS_IDS};
 use crate::transport::{Envelope, SyncTransport, TransportError};
 use crate::{NodeId, WorldHash};
 
@@ -173,6 +174,10 @@ pub enum SessionEvent {
     StateChanged(SessionState),
     /// Tick completed
     Tick { seq: u64 },
+    /// A received message refused by the handshake (ALICE-Law G7): a Hello
+    /// with another semantics identifier, or a message before an accepted
+    /// Hello. The message is dropped
+    MessageRefused(HandshakeRefused),
 }
 
 // ============================================================================
@@ -319,6 +324,7 @@ impl SessionBuilder {
             stats: Arc::new(RwLock::new(SessionStats::default())),
             event_tx,
             mode_state,
+            gate: PeerGate::new(PREVIOUS_SYNC_SEMANTICS_IDS),
         }
     }
 }
@@ -348,6 +354,46 @@ pub struct SyncSession<T: SyncTransport> {
     stats: Arc<RwLock<SessionStats>>,
     event_tx: broadcast::Sender<SessionEvent>,
     mode_state: ModeState,
+    gate: PeerGate,
+}
+
+/// The peers whose Hello carried an accepted semantics identifier.
+#[derive(Clone)]
+struct PeerGate {
+    verified: Arc<RwLock<std::collections::BTreeMap<SocketAddr, IdStatus>>>,
+    previous: &'static [[u8; 32]],
+}
+
+impl PeerGate {
+    fn new(previous: &'static [[u8; 32]]) -> Self {
+        Self {
+            verified: Arc::new(RwLock::new(std::collections::BTreeMap::new())),
+            previous,
+        }
+    }
+
+    /// Accepts a Hello whose identifier is this build's or a verified earlier
+    /// one and records the peer; refuses any other Hello, and any other
+    /// message from a peer not yet recorded.
+    async fn admit(&self, envelope: &Envelope) -> Result<(), HandshakeRefused> {
+        let peer = envelope.from;
+        if let Message::Hello { semantics_id, .. } = &envelope.message {
+            match check_semantics_against(semantics_id, &crate::SYNC_SEMANTICS_ID, self.previous) {
+                Ok(status) => {
+                    self.verified.write().await.insert(peer, status);
+                    Ok(())
+                }
+                Err(mismatch) => {
+                    self.verified.write().await.remove(&peer);
+                    Err(HandshakeRefused::SemanticsMismatch { peer, mismatch })
+                }
+            }
+        } else if self.verified.read().await.contains_key(&peer) {
+            Ok(())
+        } else {
+            Err(HandshakeRefused::NotHandshaken { peer })
+        }
+    }
 }
 
 impl<T: SyncTransport + 'static> SyncSession<T> {
@@ -417,6 +463,7 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
             node_id: self.config.node_id,
             seq: 0,
             world_hash,
+            semantics_id: crate::SYNC_SEMANTICS_ID,
         };
         self.transport.send_to(&hello, peer).await?;
         let mut stats = self.stats.write().await;
@@ -434,12 +481,29 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
     }
 
     /// Receive the next message from any peer.
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Handshake`] when the message is refused: a Hello
+    /// whose semantics identifier is neither this build's nor a verified
+    /// earlier one, or any other message from a peer before its accepted
+    /// Hello (ALICE-Law G7). The transport's own errors otherwise.
     pub async fn recv(&self) -> Result<Envelope, TransportError> {
         let envelope = self.transport.recv().await?;
+        self.gate
+            .admit(&envelope)
+            .await
+            .map_err(TransportError::Handshake)?;
         self.discovery.peer_seen(&envelope.from).await;
         let mut stats = self.stats.write().await;
         stats.messages_received += 1;
         Ok(envelope)
+    }
+
+    /// How the peer's accepted Hello identifier relates to this build
+    /// (`None` before an accepted Hello, or after a refused one).
+    pub async fn peer_status(&self, peer: SocketAddr) -> Option<IdStatus> {
+        self.gate.verified.read().await.get(&peer).copied()
     }
 
     // ========================================================================
@@ -721,6 +785,7 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
         let event_tx = self.event_tx.clone();
         let stats = Arc::clone(&self.stats);
         let state = Arc::clone(&self.state);
+        let gate = self.gate.clone();
 
         tokio::spawn(async move {
             loop {
@@ -730,6 +795,10 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
 
                 match transport.recv().await {
                     Ok(envelope) => {
+                        if let Err(refused) = gate.admit(&envelope).await {
+                            let _ = event_tx.send(SessionEvent::MessageRefused(refused));
+                            continue;
+                        }
                         discovery.peer_seen(&envelope.from).await;
                         stats.write().await.messages_received += 1;
                         let _ = event_tx.send(SessionEvent::MessageReceived(envelope));
@@ -902,6 +971,166 @@ mod tests {
         assert_eq!(session.crdt_get("key1").await, Some(b"value1".to_vec()));
         assert_eq!(session.crdt_get("key2").await, Some(b"value2".to_vec()));
         assert_eq!(session.crdt_get("key3").await, None);
+    }
+
+    // ========================================================================
+    // Handshake (ALICE-Law G7): the Hello carries SYNC_SEMANTICS_ID
+    // ========================================================================
+
+    fn pair_sessions() -> (
+        SyncSession<ChannelTransport>,
+        SyncSession<ChannelTransport>,
+        SocketAddr,
+        SocketAddr,
+    ) {
+        let (a, b) = ChannelTransport::pair();
+        let addr_a = a.local_addr().unwrap();
+        let addr_b = b.local_addr().unwrap();
+        let build = |t, id| {
+            SessionBuilder::new()
+                .node_id(id)
+                .discovery(false)
+                .tick_rate(0)
+                .build(t)
+        };
+        (build(a, 1), build(b, 2), addr_a, addr_b)
+    }
+
+    fn hello_with(id: [u8; 32]) -> Message {
+        Message::Hello {
+            node_id: NodeId(1),
+            seq: 0,
+            world_hash: WorldHash(7),
+            semantics_id: id,
+        }
+    }
+
+    /// An Events message before any Hello is refused, and so is a HashCheck.
+    #[tokio::test]
+    async fn events_before_an_accepted_hello_are_refused() {
+        let (a, b, addr_a, addr_b) = pair_sessions();
+        for msg in [
+            Message::Events { events: Vec::new() },
+            Message::HashCheck {
+                seq: 1,
+                world_hash: WorldHash(9),
+            },
+        ] {
+            a.transport().send_to(&msg, addr_b).await.unwrap();
+            match b.recv().await {
+                Err(TransportError::Handshake(HandshakeRefused::NotHandshaken { peer })) => {
+                    assert_eq!(peer, addr_a);
+                }
+                other => panic!("expected NotHandshaken, got {other:?}"),
+            }
+        }
+        assert_eq!(b.peer_status(addr_a).await, None);
+    }
+
+    /// A Hello with another identifier is refused naming both identifiers, and
+    /// the peer's later messages stay refused.
+    #[tokio::test]
+    async fn a_hello_with_another_identifier_is_refused_naming_both() {
+        let (a, b, addr_a, addr_b) = pair_sessions();
+        let mut foreign = crate::SYNC_SEMANTICS_ID;
+        foreign[0] ^= 1;
+        a.transport()
+            .send_to(&hello_with(foreign), addr_b)
+            .await
+            .unwrap();
+        match b.recv().await {
+            Err(TransportError::Handshake(HandshakeRefused::SemanticsMismatch {
+                peer,
+                mismatch,
+            })) => {
+                assert_eq!(peer, addr_a);
+                assert_eq!(mismatch.stored, foreign);
+                assert_eq!(mismatch.expected, crate::SYNC_SEMANTICS_ID);
+            }
+            other => panic!("expected SemanticsMismatch, got {other:?}"),
+        }
+        a.transport()
+            .send_to(&Message::Events { events: Vec::new() }, addr_b)
+            .await
+            .unwrap();
+        assert!(matches!(
+            b.recv().await,
+            Err(TransportError::Handshake(
+                HandshakeRefused::NotHandshaken { .. }
+            ))
+        ));
+    }
+
+    /// After a Hello with this build's identifier, the peer's messages pass.
+    #[tokio::test]
+    async fn a_matching_hello_admits_the_peer() {
+        let (a, b, addr_a, addr_b) = pair_sessions();
+        a.handshake(addr_b, WorldHash(1)).await.unwrap();
+        assert!(matches!(
+            b.recv().await,
+            Ok(Envelope {
+                message: Message::Hello { .. },
+                ..
+            })
+        ));
+        assert_eq!(b.peer_status(addr_a).await, Some(IdStatus::Current));
+        a.transport()
+            .send_to(&Message::Events { events: Vec::new() }, addr_b)
+            .await
+            .unwrap();
+        assert!(matches!(
+            b.recv().await,
+            Ok(Envelope {
+                message: Message::Events { .. },
+                ..
+            })
+        ));
+    }
+
+    /// A Hello with an identifier in the previous list is admitted with the
+    /// typed VerifiedPrevious status (the release's own list is empty, so the
+    /// list is set on the gate here).
+    #[tokio::test]
+    async fn a_previous_identifier_is_admitted_as_verified_previous() {
+        static EARLIER: [[u8; 32]; 1] = [[9u8; 32]];
+        let (a, mut b, addr_a, addr_b) = pair_sessions();
+        b.gate = PeerGate::new(&EARLIER);
+        a.transport()
+            .send_to(&hello_with(EARLIER[0]), addr_b)
+            .await
+            .unwrap();
+        assert!(b.recv().await.is_ok());
+        assert_eq!(
+            b.peer_status(addr_a).await,
+            Some(IdStatus::VerifiedPrevious(EARLIER[0]))
+        );
+    }
+
+    /// The background receive loop drops a refused message and reports it.
+    #[tokio::test]
+    async fn the_receive_loop_reports_a_refused_message() {
+        let (a, b, addr_a, addr_b) = pair_sessions();
+        let mut events = b.subscribe_events();
+        b.start().await;
+        a.transport()
+            .send_to(&Message::Events { events: Vec::new() }, addr_b)
+            .await
+            .unwrap();
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), events.recv())
+                .await
+                .expect("an event within 5 s")
+                .unwrap()
+            {
+                SessionEvent::MessageRefused(HandshakeRefused::NotHandshaken { peer }) => {
+                    assert_eq!(peer, addr_a);
+                    break;
+                }
+                SessionEvent::MessageReceived(_) => panic!("the message was not refused"),
+                _ => {}
+            }
+        }
+        b.stop().await;
     }
 
     #[tokio::test]

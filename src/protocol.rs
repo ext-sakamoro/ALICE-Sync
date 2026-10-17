@@ -24,14 +24,49 @@ use crate::{Event, NodeId, WorldHash};
 use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+/// Why a session refused a received message (ALICE-Law G7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeRefused {
+    /// The peer's Hello carried an identifier that is neither this build's
+    /// `SYNC_SEMANTICS_ID` nor a verified earlier one.
+    SemanticsMismatch {
+        /// The sending peer.
+        peer: std::net::SocketAddr,
+        /// The two identifiers.
+        mismatch: crate::semantics::SemanticsMismatch,
+    },
+    /// A message other than Hello from a peer whose Hello has not been
+    /// accepted.
+    NotHandshaken {
+        /// The sending peer.
+        peer: std::net::SocketAddr,
+    },
+}
+
+impl std::fmt::Display for HandshakeRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SemanticsMismatch { peer, mismatch } => write!(f, "peer {peer}: {mismatch}"),
+            Self::NotHandshaken { peer } => {
+                write!(f, "peer {peer}: message before an accepted Hello")
+            }
+        }
+    }
+}
+
+impl std::error::Error for HandshakeRefused {}
+
 /// Protocol message types
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum Message {
-    /// Initial handshake
+    /// Initial handshake: carries the sender's `SYNC_SEMANTICS_ID`; a
+    /// receiving session refuses every other message from a peer until a
+    /// Hello whose identifier it accepts (ALICE-Law G7)
     Hello {
         node_id: NodeId,
         seq: u64,
         world_hash: WorldHash,
+        semantics_id: [u8; 32],
     },
 
     /// Request events since sequence number
@@ -114,6 +149,7 @@ impl Protocol {
             node_id: self.node_id,
             seq,
             world_hash,
+            semantics_id: crate::SYNC_SEMANTICS_ID,
         }
     }
 
@@ -196,6 +232,7 @@ mod tests {
             node_id: NodeId(1),
             seq: 1000,
             world_hash: WorldHash::zero(),
+            semantics_id: crate::SYNC_SEMANTICS_ID,
         };
 
         let compact = hello.to_compact_bytes();
@@ -242,6 +279,7 @@ mod tests {
             node_id: NodeId(7),
             seq: 42,
             world_hash: WorldHash(0xDEAD_BEEF),
+            semantics_id: crate::SYNC_SEMANTICS_ID,
         };
         let bytes = msg.to_compact_bytes();
         let restored = Message::from_compact_bytes(&bytes).unwrap();
@@ -250,6 +288,7 @@ mod tests {
                 node_id,
                 seq,
                 world_hash,
+                ..
             } => {
                 assert_eq!(node_id.0, 7);
                 assert_eq!(seq, 42);
@@ -344,6 +383,7 @@ mod tests {
                 node_id,
                 seq,
                 world_hash,
+                ..
             } => {
                 assert_eq!(node_id.0, 3);
                 assert_eq!(seq, 10);

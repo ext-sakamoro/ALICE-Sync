@@ -83,11 +83,18 @@ note = "the identifier is a constant of this crate version: a dependency bump or
 reference_repo = "ALICE-Physics"
 
 [G7]
-status = "fail-known"
-evidence = ["src/physics_bridge.rs:93", "src/physics_bridge.rs:130", "bindings/ue5/AliceSync.h", "bindings/unity/AliceSync.cs"]
+status = "pass"
+evidence = [
+    "type-erasing boundaries that receive another producer's Law-bearing values, each with its error naming both identifiers and its mismatch test: (1) network: Message::Hello carries semantics_id; SyncSession::recv and the start() receive loop admit a peer only after a Hello whose identifier semantics::check_semantics_against accepts (TransportError::Handshake(HandshakeRefused::SemanticsMismatch { peer, mismatch }) / SessionEvent::MessageRefused) and refuse every other message before it (HandshakeRefused::NotHandshaken); tests in src/session.rs: events_before_an_accepted_hello_are_refused, a_hello_with_another_identifier_is_refused_naming_both, a_matching_hello_admits_the_peer, a_previous_identifier_is_admitted_as_verified_previous (IdStatus::VerifiedPrevious through peer_status), the_receive_loop_reports_a_refused_message",
+    "(2) physics bridge: PhysicsRollbackSession::new takes the peer's alice-physics identifier and returns SemanticsMismatch unless it is PHYSICS_SEMANTICS_ID or in PREVIOUS_PHYSICS_SEMANTICS_IDS; test a_peer_with_another_physics_identifier_is_refused",
+    "(3) C ABI: as_sync_lockstep_new / as_sync_rollback_new take a 32-byte peer identifier (null + as_sync_last_error naming both on mismatch), as_sync_node_add_peer returns -2 and does not add the peer; as_sync_semantics_id writes this build's; tests in src/ffi.rs handshake_ffi_tests (one per entry point); bindings/ue5/AliceSync.h and bindings/unity/AliceSync.cs updated",
+    "(4) Python: LockstepSession / RollbackSession take peer_semantics_id and raise ValueError naming both; alice_sync.semantics_id(); test peer_check_refuses_another_identifier",
+    "scripts/boundary_guard.py (ci.yml entropy-guard job and preflight, tests scripts/test_boundary_guard.py) scans every extern \"C\" fn, every pymethods / pyfunction fn and every bytes decoder of src/ and requires a decision in scripts/boundaries.toml: handshake with the name of its mismatch test (checked to exist) or local with a reason; 118 entry points, 7 handshake; a new entry point without a decision, a stale entry or a missing test fails, and 0 found fails",
+]
+mutant = "measured 2026-10-17, each reverted: the session gate admitting non-Hello messages from unknown peers fails 3 session tests; the gate comparing its own identifier instead of the Hello's fails 2; the C ABI handshake comparing its own identifier fails the 3 entry-point tests; the Python check comparing its own identifier fails peer_check_refuses_another_identifier; the physics bridge comparing alice-physics' own identifier fails a_peer_with_another_physics_identifier_is_refused"
 since = ""
-note = "Law-bearing values cross the crate boundary with no producer-identifier handshake. src/physics_bridge.rs converts InputFrame <-> FrameInput (the i16 -> Fix128 input conversion, around line 93) and SimulationChecksum -> WorldHash (around line 130) between alice-sync and alice-physics with no check of a G6 identifier and no distinctly-typed mismatch error; the C-ABI bindings (bindings/ue5/AliceSync.h, bindings/unity/AliceSync.cs) are a second type-erasing boundary. The gate's mechanism -- a handshake error type and a mismatch test -- does not exist here, and depends on G6 (there is no identifier to carry yet)."
-reference_repo = ""
+note = "breaking (0.7.0): Message::Hello gains semantics_id (wire format), SyncSession refuses messages before an accepted Hello, PhysicsRollbackSession::new returns Result and takes the peer's physics identifier, the C ABI as_sync_lockstep_new / as_sync_rollback_new / as_sync_node_add_peer take a peer identifier (add_peer now returns i32), and the Python session constructors take peer_semantics_id. Event, InputFrame and the reliability headers are decoders of integers as the sender supplied them, recorded as local in scripts/boundaries.toml; they reach a session after its handshake. The Message decoders are recorded as handshake through the session gate test: a caller that decodes Message bytes without a session does not get the gate."
+reference_repo = "ALICE-Physics"
 
 [G8]
 status = "pass"

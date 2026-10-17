@@ -113,7 +113,8 @@ namespace Alice.Sync
 
         public int Emit(Event evt) => NativeMethods.as_sync_node_emit(Ptr, evt.Ptr);
         public int ApplyEvent(Event evt) => NativeMethods.as_sync_node_apply_event(Ptr, evt.Ptr);
-        public void AddPeer(ulong peerId) => NativeMethods.as_sync_node_add_peer(Ptr, peerId);
+        /// <summary>0 / 1 accepted, -1 null, -2 the peer's SYNC_SEMANTICS_ID differs (see LastError).</summary>
+        public int AddPeer(ulong peerId, byte[] peerSemanticsId) => NativeMethods.as_sync_node_add_peer(Ptr, peerId, peerSemanticsId);
 
         public void Dispose()
         {
@@ -289,7 +290,7 @@ namespace Alice.Sync
         internal IntPtr Ptr;
         private bool _disposed;
 
-        public LockstepSession(byte playerCount) { Ptr = NativeMethods.as_sync_lockstep_new(playerCount); }
+        public LockstepSession(byte playerCount, byte[] peerSemanticsId) { Ptr = NativeMethods.as_sync_lockstep_new(playerCount, peerSemanticsId); }
 
         public bool Ready => NativeMethods.as_sync_lockstep_ready(Ptr) != 0;
         public ulong ConfirmedFrame => NativeMethods.as_sync_lockstep_confirmed_frame(Ptr);
@@ -331,9 +332,9 @@ namespace Alice.Sync
         internal IntPtr Ptr;
         private bool _disposed;
 
-        public RollbackSession(byte playerCount, byte localPlayer, ulong maxRollback)
+        public RollbackSession(byte playerCount, byte localPlayer, ulong maxRollback, byte[] peerSemanticsId)
         {
-            Ptr = NativeMethods.as_sync_rollback_new(playerCount, localPlayer, maxRollback);
+            Ptr = NativeMethods.as_sync_rollback_new(playerCount, localPlayer, maxRollback, peerSemanticsId);
         }
 
         public ulong ConfirmedFrame => NativeMethods.as_sync_rollback_confirmed_frame(Ptr);
@@ -375,6 +376,11 @@ namespace Alice.Sync
         public static float FixedToF32(int bits) => NativeMethods.as_sync_fixed_to_f32(bits);
         public static ulong Vec3Hash(float x, float y, float z) => NativeMethods.as_sync_vec3_hash(x, y, z);
         public static uint Version => NativeMethods.as_sync_version();
+        /// <summary>This build's 32-byte SYNC_SEMANTICS_ID, sent to peers for the handshake.</summary>
+        public static byte[] SemanticsId
+        {
+            get { var b = new byte[32]; NativeMethods.as_sync_semantics_id(b, (UIntPtr)32); return b; }
+        }
     }
 
     // ========================================================================
@@ -411,7 +417,7 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern byte as_sync_node_state(IntPtr ptr);
         [DllImport(Lib)] internal static extern int as_sync_node_emit(IntPtr ptr, IntPtr evt);
         [DllImport(Lib)] internal static extern int as_sync_node_apply_event(IntPtr ptr, IntPtr evt);
-        [DllImport(Lib)] internal static extern void as_sync_node_add_peer(IntPtr ptr, ulong peerId);
+        [DllImport(Lib)] internal static extern int as_sync_node_add_peer(IntPtr ptr, ulong peerId, byte[] peerSemanticsId);
         [DllImport(Lib)] internal static extern uint as_sync_node_entity_count(IntPtr ptr);
         [DllImport(Lib)] internal static extern uint as_sync_node_events_count(IntPtr ptr);
         [DllImport(Lib)] internal static extern uint as_sync_node_events_bytes(IntPtr ptr);
@@ -453,7 +459,7 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern IntPtr as_sync_input_frame_array_get(IntPtr ptr, uint index);
 
         // Lockstep
-        [DllImport(Lib)] internal static extern IntPtr as_sync_lockstep_new(byte playerCount);
+        [DllImport(Lib)] internal static extern IntPtr as_sync_lockstep_new(byte playerCount, byte[] peerSemanticsId);
         [DllImport(Lib)] internal static extern void as_sync_lockstep_free(IntPtr ptr);
         [DllImport(Lib)] internal static extern void as_sync_lockstep_add_local_input(IntPtr ptr, IntPtr input);
         [DllImport(Lib)] internal static extern void as_sync_lockstep_add_remote_input(IntPtr ptr, IntPtr input);
@@ -463,7 +469,7 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern void as_sync_lockstep_record_checksum(IntPtr ptr, ulong frame, ulong checksum);
 
         // Rollback
-        [DllImport(Lib)] internal static extern IntPtr as_sync_rollback_new(byte playerCount, byte localPlayer, ulong maxRollback);
+        [DllImport(Lib)] internal static extern IntPtr as_sync_rollback_new(byte playerCount, byte localPlayer, ulong maxRollback, byte[] peerSemanticsId);
         [DllImport(Lib)] internal static extern void as_sync_rollback_free(IntPtr ptr);
         [DllImport(Lib)] internal static extern IntPtr as_sync_rollback_add_local_input(IntPtr ptr, IntPtr input);
         [DllImport(Lib)] internal static extern byte as_sync_rollback_add_remote_input(IntPtr ptr, IntPtr input, out ulong rollbackFrame);
@@ -476,5 +482,6 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern float as_sync_fixed_to_f32(int bits);
         [DllImport(Lib)] internal static extern ulong as_sync_vec3_hash(float x, float y, float z);
         [DllImport(Lib)] internal static extern uint as_sync_version();
+        [DllImport(Lib)] internal static extern int as_sync_semantics_id(byte[] output, UIntPtr len);
     }
 }

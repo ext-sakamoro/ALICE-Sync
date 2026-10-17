@@ -129,11 +129,17 @@ pub struct PyLockstepSession {
 
 #[pymethods]
 impl PyLockstepSession {
+    /// Args:
+    ///     player_count: Number of players
+    ///     peer_semantics_id: The peers' 32-byte SYNC_SEMANTICS_ID (bytes);
+    ///         ValueError naming both identifiers when it is neither this
+    ///         build's nor a verified earlier one
     #[new]
-    fn new(player_count: u8) -> Self {
-        Self {
+    fn new(player_count: u8, peer_semantics_id: &[u8]) -> PyResult<Self> {
+        peer_check(peer_semantics_id).map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(Self {
             inner: LockstepSession::new(player_count),
-        }
+        })
     }
 
     /// Add a local player's input.
@@ -212,13 +218,22 @@ impl PyRollbackSession {
     /// Args:
     ///     player_count: Total number of players
     ///     local_player: This client's player ID
+    ///     peer_semantics_id: The peers' 32-byte SYNC_SEMANTICS_ID (bytes);
+    ///         ValueError naming both identifiers when it is neither this
+    ///         build's nor a verified earlier one
     ///     max_rollback: Max frames that can be rolled back (default: 8)
     #[new]
-    #[pyo3(signature = (player_count, local_player, max_rollback=8))]
-    fn new(player_count: u8, local_player: u8, max_rollback: u64) -> Self {
-        Self {
+    #[pyo3(signature = (player_count, local_player, peer_semantics_id, max_rollback=8))]
+    fn new(
+        player_count: u8,
+        local_player: u8,
+        peer_semantics_id: &[u8],
+        max_rollback: u64,
+    ) -> PyResult<Self> {
+        peer_check(peer_semantics_id).map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(Self {
             inner: RollbackSession::new(player_count, local_player, max_rollback),
-        }
+        })
     }
 
     /// Add local player's input. Returns list of all inputs (confirmed + predicted).
@@ -356,6 +371,27 @@ impl PyWorldSoA {
 }
 
 /// Module version.
+/// Checks a peer's identifier for the session constructors (ALICE-Law G7):
+/// `Err` with both identifiers in hex when it is not 32 bytes or is neither
+/// this build's `SYNC_SEMANTICS_ID` nor a verified earlier one.
+fn peer_check(peer_semantics_id: &[u8]) -> Result<(), String> {
+    let id: [u8; 32] = peer_semantics_id.try_into().map_err(|_| {
+        format!(
+            "peer_semantics_id must be 32 bytes, got {}",
+            peer_semantics_id.len()
+        )
+    })?;
+    crate::semantics::check_semantics(&id)
+        .map(|_| ())
+        .map_err(|m| m.to_string())
+}
+
+/// This build's 32-byte SYNC_SEMANTICS_ID, sent to peers for the handshake.
+#[pyfunction]
+fn semantics_id() -> Vec<u8> {
+    crate::SYNC_SEMANTICS_ID.to_vec()
+}
+
 #[pyfunction]
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -372,6 +408,7 @@ fn alice_sync(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRollbackSession>()?;
     m.add_class::<PyWorldSoA>()?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(semantics_id, m)?)?;
     Ok(())
 }
 
@@ -390,5 +427,18 @@ mod tests {
         assert_eq!(decoded.player_id, 0);
         assert_eq!(decoded.movement, [10, -5, 3]);
         assert_eq!(decoded.actions, 0x7);
+    }
+
+    /// The session constructors' check refuses another identifier naming both,
+    /// and a wrong length; this build's identifier passes.
+    #[test]
+    fn peer_check_refuses_another_identifier() {
+        assert_eq!(peer_check(&crate::SYNC_SEMANTICS_ID), Ok(()));
+        let mut foreign = crate::SYNC_SEMANTICS_ID;
+        foreign[0] ^= 1;
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let msg = peer_check(&foreign).unwrap_err();
+        assert!(msg.contains(&hex(&foreign)) && msg.contains(&hex(&crate::SYNC_SEMANTICS_ID)));
+        assert!(peer_check(&[0u8; 31]).unwrap_err().contains("32 bytes"));
     }
 }
