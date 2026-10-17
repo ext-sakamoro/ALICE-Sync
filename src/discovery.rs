@@ -44,6 +44,47 @@ pub struct PeerInfo {
     pub source: DiscoverySource,
 }
 
+/// Why [`Discovery::set_metadata`] refused a key
+///
+/// DNS-SD TXT keys compare case-insensitively (RFC 6763 section 6.4), and the
+/// mDNS TXT record keeps only the first of two keys that differ by case; a key
+/// that differs from a stored one only by case is refused rather than dropped
+/// from the advertised record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataError {
+    /// `new` differs from the stored key `existing` only by ASCII case
+    CaseOnlyDuplicate {
+        /// The key already in the local metadata
+        existing: String,
+        /// The refused key
+        new: String,
+    },
+}
+
+impl std::fmt::Display for MetadataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CaseOnlyDuplicate { existing, new } => write!(
+                f,
+                "metadata key {new:?} differs from the existing key {existing:?} only by case \
+                 (TXT keys are case-insensitive)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MetadataError {}
+
+/// The TXT properties advertised for `metadata`, in key order (the mDNS
+/// registration uses exactly this list)
+#[cfg(any(feature = "mdns", test))]
+fn txt_properties(metadata: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    metadata
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 /// How a peer was discovered
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoverySource {
@@ -112,13 +153,28 @@ impl Discovery {
         self.callbacks.write().await.push(callback);
     }
 
-    /// Set local metadata (advertised to other peers).
-    pub async fn set_metadata(&self, key: &str, value: &str) {
-        self.local_info
-            .write()
-            .await
+    /// Set local metadata (advertised to other peers in the mDNS TXT record).
+    ///
+    /// Setting a key that is already stored replaces its value.
+    ///
+    /// # Errors
+    ///
+    /// [`MetadataError::CaseOnlyDuplicate`] when `key` differs from a stored
+    /// key only by ASCII case (TXT keys are case-insensitive); nothing is stored.
+    pub async fn set_metadata(&self, key: &str, value: &str) -> Result<(), MetadataError> {
+        let mut info = self.local_info.write().await;
+        if let Some(existing) = info
             .metadata
-            .insert(key.to_string(), value.to_string());
+            .keys()
+            .find(|k| k.as_str() != key && k.eq_ignore_ascii_case(key))
+        {
+            return Err(MetadataError::CaseOnlyDuplicate {
+                existing: existing.clone(),
+                new: key.to_string(),
+            });
+        }
+        info.metadata.insert(key.to_string(), value.to_string());
+        Ok(())
     }
 
     /// Manually register a peer.
@@ -317,12 +373,8 @@ impl Discovery {
             let ip_str = local.addr.ip().to_string();
             let port = local.addr.port();
 
-            // the TXT record in key order (local.metadata is a BTreeMap)
-            let properties: Vec<(String, String)> = local
-                .metadata
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            // the TXT record: the local metadata in key order
+            let properties = txt_properties(&local.metadata);
 
             let service_type = MDNS_SERVICE_TYPE.trim_end_matches('.');
             match ServiceInfo::new(
@@ -488,12 +540,50 @@ mod tests {
     #[tokio::test]
     async fn test_metadata() {
         let disc = Discovery::new(addr(5000), "node-a");
-        disc.set_metadata("version", "0.6.0").await;
-        disc.set_metadata("room", "lobby").await;
+        disc.set_metadata("version", "0.6.0").await.unwrap();
+        disc.set_metadata("room", "lobby").await.unwrap();
 
         let info = disc.local_info().await;
         assert_eq!(info.metadata.get("version").unwrap(), "0.6.0");
         assert_eq!(info.metadata.get("room").unwrap(), "lobby");
+    }
+
+    /// The advertised TXT record is the local metadata in key order, and the
+    /// metadata of a peer registered with `register_peer` (stored as given,
+    /// exact keys, case-sensitive) never appears in it.
+    #[tokio::test]
+    async fn txt_record_is_the_local_metadata_in_key_order_and_never_a_peers() {
+        let disc = Discovery::new(addr(5000), "node-a");
+        for (k, v) in [("room", "lobby"), ("Version", "1"), ("alpha", "x")] {
+            disc.set_metadata(k, v).await.unwrap();
+        }
+        let remote: Vec<(String, String)> = [("A", "1"), ("a", "2"), ("secret", "peer")]
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        disc.register_peer(addr(5001), "node-b", remote).await;
+        let peer = disc
+            .live_peers()
+            .await
+            .into_iter()
+            .find(|p| p.addr == addr(5001))
+            .expect("peer registered");
+        assert_eq!(
+            peer.metadata.len(),
+            3,
+            "remote keys are stored as given, case-sensitive"
+        );
+
+        let txt = txt_properties(&disc.local_info().await.metadata);
+        let want: Vec<(String, String)> = [("Version", "1"), ("alpha", "x"), ("room", "lobby")]
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        assert_eq!(txt, want, "TXT record = local metadata in key order");
+        assert!(txt
+            .iter()
+            .all(|(k, _)| k != "secret" && k != "A" && k != "a"));
+        assert_eq!(txt.len(), 3, "compared nothing");
     }
 
     #[tokio::test]
