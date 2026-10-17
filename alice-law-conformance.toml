@@ -40,7 +40,9 @@ reference_repo = "ALICE-Physics"
 [G3]
 status = "pass"
 evidence = [
-    "tools/no-outer-fneg-of-fma/{Cargo.toml,Cargo.lock,src/main.rs} (syntax-tree pre-check, byte-identical to ALICE-LOL's, built with --locked: the fma family mul_add / fma / fmaf / fmaf32 / fmaf64 / aarch64 vfma* vfms* / x86 _mm*_fmadd and the rest, every negation spelling of the gate, fma results through casts, From, branch arms and let aliases; a renamed fma-family import or a fma-family path used as a value fails; 73 tests over its own fixtures and the shared probes)",
+    "tools/no-outer-fneg-of-fma/src/main.rs (syntax-tree pre-check, byte-identical to ALICE-LOL's, built with --locked: the fma family mul_add / fma / fmaf / fmaf32 / fmaf64 / aarch64 vfma* vfms* / x86 _mm*_fmadd and the rest, every negation spelling of the gate, fma results through casts, From, branch arms and let aliases; a renamed fma-family import or a fma-family path used as a value fails; 73 tests over its own fixtures and the shared probes)",
+    "tools/no-outer-fneg-of-fma/Cargo.toml (the checker's own workspace, byte-identical to ALICE-LOL's)",
+    "tools/no-outer-fneg-of-fma/Cargo.lock (byte-identical to ALICE-LOL's; the checker is built and tested with --locked, so a missing or drifting lock fails)",
     "scripts/fneg_fma_ir_check.py (the gate, byte-identical to ALICE-LOL's: the release LLVM IR of alice-sync with all features, built with -C link-dead-code; a negation whose operand traces back to a fma call fails at the crate's own source line; a missing or empty .ll, a module without functions, or a missing floor fails)",
     "scripts/test_fneg_fma_ir_check.py with tools/fneg-fma-ir-probes/*.rs (byte-identical to ALICE-LOL's: 47 probes, 35 negated shapes and 12 safe ones, compiled at test time for an aarch64 and an x86_64 target)",
     "scripts/no-outer-fneg-of-fma-allowlist.toml (expected-fma-calls 0 and expected-src-fma-calls 0, compared exactly; [[ir]] floors 0 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu; no [[allow]] entry)",
