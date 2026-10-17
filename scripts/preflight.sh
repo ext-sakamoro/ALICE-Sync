@@ -86,6 +86,10 @@ step "ci.yml / entropy-guard: Entropy guard (tests, then src/)"
 python3 scripts/test_entropy_guard.py
 python3 scripts/entropy_guard.py
 
+step "ci.yml / entropy-guard: Order guard (G13, tests, then src/ and Cargo.toml)"
+python3 scripts/test_order_guard.py
+python3 scripts/order_guard.py
+
 step "ci.yml / entropy-guard: Serialize guard (G8, tests, then src/)"
 python3 scripts/test_serialize_guard.py
 python3 scripts/serialize_guard.py

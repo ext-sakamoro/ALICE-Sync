@@ -180,6 +180,13 @@ jobs:
         run: python3 scripts/test_entropy_guard.py
       - name: Entropy guard
         run: python3 scripts/entropy_guard.py
+      # ALICE-Law G13: unspecified-order collections, threads, rayon / crossbeam in src/ and the
+      # dependencies, each reviewed site listed with its line hashes and reason in
+      # scripts/order_allowlist.toml (the clippy.toml bans are the type-resolved half)
+      - name: Order guard (test, then check)
+        run: |
+          python3 scripts/test_order_guard.py
+          python3 scripts/order_guard.py
       # G8: every serde type of src/ is behind serde-raw or listed non-durable
       - name: Serialize guard (tests)
         run: python3 scripts/test_serialize_guard.py

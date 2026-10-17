@@ -491,11 +491,11 @@ type FragmentEntry = (u8, Vec<Option<Vec<u8>>>);
 #[derive(Debug)]
 pub struct ReassemblyBuffer {
     /// Pending messages: `message_id` → (`fragment_count`, received fragments)
-    pending: rustc_hash::FxHashMap<u16, FragmentEntry>,
+    pending: std::collections::BTreeMap<u16, FragmentEntry>,
     /// Timeout for incomplete messages
     timeout: Duration,
     /// Creation time for each pending message
-    timestamps: rustc_hash::FxHashMap<u16, Instant>,
+    timestamps: std::collections::BTreeMap<u16, Instant>,
 }
 
 impl Default for ReassemblyBuffer {
@@ -508,9 +508,9 @@ impl ReassemblyBuffer {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            pending: rustc_hash::FxHashMap::default(),
+            pending: std::collections::BTreeMap::new(),
             timeout: Duration::from_secs(5),
-            timestamps: rustc_hash::FxHashMap::default(),
+            timestamps: std::collections::BTreeMap::new(),
         }
     }
 

@@ -1,0 +1,5 @@
+# scripts/order_guard.py (ALICE-Law G13): production sites whose order cannot
+# reach a Law-bearing output, with the exact line count, the SHA-256 of each
+# allowed line (stripped, in file order; the comment shows the line) and the reason
+# (no site is allowed: src/ uses BTreeMap / BTreeSet only and starts no thread)
+[allow]
