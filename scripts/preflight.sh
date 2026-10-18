@@ -39,6 +39,9 @@ step "ci.yml / fmt: run"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo fmt --all -- --check )
 
 step "ci.yml / clippy: Identifier moves (tests, then against the published release)"
+# text files are LF in the index and the working tree (.github/workflows/eol.yml, shared by the ALICE crates)
+python3 scripts/test_check_eol.py
+python3 scripts/check_eol.py
 python3 scripts/test_id_move_check.py
 python3 scripts/id_move_check.py
 
