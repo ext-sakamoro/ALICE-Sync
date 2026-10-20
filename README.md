@@ -40,24 +40,24 @@ fn main() {
     let mut node_a = Node::new(NodeId(1));
     let mut node_b = Node::new(NodeId(2));
 
-    // Node A: Spawn an entity
-    let spawn = Event::new(EventKind::Spawn {
+    // Node A: Spawn an entity (emit stamps it with A's id, sequence and Lamport time)
+    node_a.emit(Event::new(EventKind::Spawn {
         entity: 1,
         kind: 0,
         pos: [0, 0, 0],  // i16 fixed-point coordinates
-    });
-    node_a.apply_event(&spawn).unwrap();
+    })).unwrap();
 
     // Node A: Move the entity
-    let motion = Event::new(EventKind::Motion {
+    node_a.emit(Event::new(EventKind::Motion {
         entity: 1,
         delta: [100, 0, 0],  // Move right
-    });
-    node_a.apply_event(&motion).unwrap();
+    })).unwrap();
 
     // Sync: Send events to Node B (not world data!)
-    node_b.apply_event(&spawn).unwrap();
-    node_b.apply_event(&motion).unwrap();
+    // Any arrival order, or a duplicate, gives the same world
+    for e in node_a.events().all() {
+        node_b.apply_event(e).unwrap();
+    }
 
     // Verify: Both nodes have identical world state
     assert_eq!(node_a.world_hash(), node_b.world_hash());
@@ -446,13 +446,15 @@ match rollback.add_remote_input(confirmed_input) {
 | `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |
 | `codec` | No | Wavelet + rANS event stream compression via ALICE-Codec |
 | `analytics` | No | DDSketch/HLL/CMS probabilistic telemetry via ALICE-Analytics |
-| `ffi` | No | C-ABI FFI for Unity/UE5 (75 functions) |
+| `ffi` | No | C-ABI FFI for Unity/UE5 (79 functions) |
 | `cloud` | No | Cloud-side multi-device spatial synchronization hub |
 | `all-bridges` | No | Enable all integration bridges (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
 
 ## C-ABI FFI (Unity / UE5)
 
-75 `extern "C"` functions covering all core types. Enable with `--features ffi`.
+79 `extern "C"` functions covering all core types. Enable with `--features ffi`.
+
+To sync two nodes, emit on the sender (`as_sync_node_emit`) and give the receiver the sender's stamped events (`as_sync_node_event_at`, 0 to `as_sync_node_events_count` - 1) through `as_sync_node_apply_event`: any arrival order, or a duplicate, gives the same world. An event made with `as_sync_event_new_*` and never emitted has no origin or sequence number and is refused (-2). Node ids must be unique: two nodes with the same id stamp different events with the same key; every receiver still converges to one world (the colliding events are ordered by their content), but not to what either node meant.
 
 ### Coverage
 
@@ -460,8 +462,8 @@ match rollback.add_remote_input(confirmed_input) {
 |--------|-----------|-------------|
 | World (AoS) | 8 | new, free, hash, entity_count, frame, apply_event, get_position, recalculate_hash |
 | WorldSoA | 5 | new, free, hash, entity_count, apply_event |
-| Node | 11 | new, with_seed, free, hash, state, emit, apply, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
-| Event | 8 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes |
+| Node | 12 | new, with_seed, free, hash, state, emit, apply (events from another node, any order), event_at, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
+| Event | 11 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes, origin, seq, timestamp |
 | EventStream | 7 | new, free, push, len, is_empty, current_seq, total_bytes |
 | InputFrame | 10 | new, free, set/get movement, set/get actions, set/get aim, get_frame, get_player_id |
 | InputFrameArray | 3 | free, len, get |
@@ -471,11 +473,11 @@ match rollback.add_remote_input(confirmed_input) {
 
 ### Unity C# (`bindings/unity/AliceSync.cs`)
 
-72 `[DllImport]` declarations with RAII `IDisposable` handles.
+76 `[DllImport]` declarations with RAII `IDisposable` handles.
 
 ### UE5 C++ (`bindings/ue5/AliceSync.h`)
 
-72 `extern "C"` declarations with 9 RAII `std::unique_ptr` handles.
+76 `extern "C"` declarations with 9 RAII `std::unique_ptr` handles.
 
 ## Python Bindings (PyO3 + NumPy Zero-Copy)
 

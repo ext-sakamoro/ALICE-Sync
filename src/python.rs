@@ -305,19 +305,31 @@ impl PyWorldSoA {
     }
 
     /// Spawn an entity. Returns slot index.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the Python binding of the single-writer WorldSoA, applied in the order called: the Python bindings have no transport and no Node, so no peer's events reach it (ALICE-Law G13)"
+    )]
     fn spawn(&mut self, entity_id: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
-        self.inner.storage.spawn(entity_id, kind, x, y, z)
+        self.inner.spawn_raw(entity_id, kind, x, y, z)
     }
 
     /// Despawn an entity by slot.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the Python binding of the single-writer WorldSoA, applied in the order called: the Python bindings have no transport and no Node, so no peer's events reach it (ALICE-Law G13)"
+    )]
     fn despawn(&mut self, slot: u32) -> bool {
-        self.inner.storage.despawn(slot)
+        self.inner.despawn_slot(slot)
     }
 
     /// Apply batch motions using Demon Mode (sort + coalesce + 8-wide SIMD).
     ///
     /// Args:
     ///     motions: list of `(entity_id, dx, dy, dz)` tuples
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the Python binding of the single-writer WorldSoA, applied in the order called: the Python bindings have no transport and no Node, so no peer's events reach it (ALICE-Law G13)"
+    )]
     fn apply_motions(&mut self, motions: Vec<(u32, i16, i16, i16)>) {
         let motion_data: Vec<MotionData> = motions
             .iter()
@@ -336,12 +348,12 @@ impl PyWorldSoA {
     ///
     /// Reads from `SoA` arrays directly — zero intermediate copy.
     fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<i32>> {
-        let n = self.inner.storage.capacity;
+        let n = self.inner.storage().capacity;
         let mut data = Vec::with_capacity(n * 3);
         for i in 0..n {
-            data.push(self.inner.storage.pos_x[i]);
-            data.push(self.inner.storage.pos_y[i]);
-            data.push(self.inner.storage.pos_z[i]);
+            data.push(self.inner.storage().pos_x[i]);
+            data.push(self.inner.storage().pos_y[i]);
+            data.push(self.inner.storage().pos_z[i]);
         }
         let arr = data.into_pyarray(py);
         arr.reshape([n, 3]).unwrap()
@@ -359,12 +371,12 @@ impl PyWorldSoA {
 
     /// Total capacity.
     fn capacity(&self) -> usize {
-        self.inner.storage.capacity
+        self.inner.storage().capacity
     }
 
     fn __repr__(&self) -> String {
         let ec = self.inner.entity_count();
-        let cap = self.inner.storage.capacity;
+        let cap = self.inner.storage().capacity;
         let h = self.inner.hash().0;
         format!("<WorldSoA entities={ec} capacity={cap} hash={h:016x}>")
     }

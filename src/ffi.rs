@@ -100,6 +100,10 @@ pub unsafe extern "C" fn as_sync_world_frame(ptr: *const AsSyncWorld) -> u64 {
 }
 
 #[no_mangle]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_apply_event (ALICE-Law G13)"
+)]
 pub unsafe extern "C" fn as_sync_world_apply_event(
     ptr: *mut AsSyncWorld,
     event: *const AsSyncEvent,
@@ -189,6 +193,10 @@ pub unsafe extern "C" fn as_sync_world_soa_entity_count(ptr: *const AsSyncWorldS
 }
 
 #[no_mangle]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_apply_event (ALICE-Law G13)"
+)]
 pub unsafe extern "C" fn as_sync_world_soa_apply_event(
     ptr: *mut AsSyncWorldSoA,
     event: *const AsSyncEvent,
@@ -270,6 +278,13 @@ pub unsafe extern "C" fn as_sync_node_emit(ptr: *mut AsSyncNode, event: *const A
     })
 }
 
+/// Applies an event received from another node (ALICE-Law G13): the node's world is the same for
+/// every arrival order of the same events and unchanged by a duplicate. The event must be one a
+/// node stamped, taken from that node with `as_sync_node_event_at`; an event made by
+/// `as_sync_event_new_*` and never emitted is refused.
+///
+/// Returns 0 on success, -1 for a null pointer, -2 for an unstamped event (with
+/// `as_sync_last_error`).
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_apply_event(
     ptr: *mut AsSyncNode,
@@ -281,7 +296,30 @@ pub unsafe extern "C" fn as_sync_node_apply_event(
         }
         match (*ptr).0.apply_event(&(*event).0) {
             Ok(()) => 0,
+            Err(e @ crate::SyncError::Unstamped) => {
+                guard::set_last_error(format!("as_sync_node_apply_event: {e}"));
+                -2
+            }
             Err(_) => -1,
+        }
+    })
+}
+
+/// A copy of the node's `index`-th emitted event (0 to `as_sync_node_events_count` - 1), stamped, for another node's
+/// `as_sync_node_apply_event`; null for a null pointer or an index out of range. Free it with
+/// `as_sync_event_free`.
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_node_event_at(
+    ptr: *const AsSyncNode,
+    index: u32,
+) -> *mut AsSyncEvent {
+    ffi_guard(ptr::null_mut(), || {
+        if ptr.is_null() {
+            return ptr::null_mut();
+        }
+        match (*ptr).0.events().all().get(index as usize) {
+            Some(e) => Box::into_raw(Box::new(AsSyncEvent(e.clone()))),
+            None => ptr::null_mut(),
         }
     })
 }
@@ -428,6 +466,24 @@ pub unsafe extern "C" fn as_sync_event_free(ptr: *mut AsSyncEvent) {
             drop(Box::from_raw(ptr));
         }
     })
+}
+
+/// The node that originated the event (0 for an unstamped event or null).
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_event_origin(ptr: *const AsSyncEvent) -> u64 {
+    ffi_guard(0, || if ptr.is_null() { 0 } else { (*ptr).0.origin })
+}
+
+/// The event's sequence number in its origin's log, from 1 (0 for an unstamped event or null).
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_event_seq(ptr: *const AsSyncEvent) -> u64 {
+    ffi_guard(0, || if ptr.is_null() { 0 } else { (*ptr).0.seq.0 })
+}
+
+/// The event's Lamport time (0 for an unstamped event or null).
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_event_timestamp(ptr: *const AsSyncEvent) -> u64 {
+    ffi_guard(0, || if ptr.is_null() { 0 } else { (*ptr).0.timestamp })
 }
 
 #[no_mangle]
@@ -985,15 +1041,49 @@ mod tests {
             let node_a = as_sync_node_new(1);
             let node_b = as_sync_node_new(2);
 
-            let spawn = as_sync_event_new_spawn(1, 0, 0, 0, 0);
-            as_sync_node_apply_event(node_a, spawn);
-            as_sync_node_apply_event(node_b, spawn);
-            as_sync_event_free(spawn);
-
+            // node_a emits a spawn and three motions; node_b receives them in reverse order
+            let made = [
+                as_sync_event_new_spawn(1, 0, 0, 0, 0),
+                as_sync_event_new_motion(1, 10, 0, 0),
+                as_sync_event_new_motion(1, 0, 20, 0),
+                as_sync_event_new_motion(1, 0, 0, 30),
+            ];
+            for e in made {
+                assert_eq!(as_sync_node_emit(node_a, e), 0);
+                as_sync_event_free(e);
+            }
+            assert_eq!(as_sync_node_events_count(node_a), 4);
+            assert!(as_sync_node_event_at(node_a, 4).is_null());
+            for i in (0..4).rev() {
+                let e = as_sync_node_event_at(node_a, i);
+                assert_eq!(as_sync_event_origin(e), 1);
+                assert_eq!(as_sync_event_seq(e), u64::from(i) + 1);
+                assert_eq!(as_sync_node_apply_event(node_b, e), 0);
+                assert_eq!(
+                    as_sync_node_apply_event(node_b, e),
+                    0,
+                    "a duplicate changes nothing"
+                );
+                as_sync_event_free(e);
+            }
             assert_eq!(
                 as_sync_node_world_hash(node_a),
                 as_sync_node_world_hash(node_b)
             );
+            assert_eq!(as_sync_node_entity_count(node_b), 1);
+
+            // an event that was never emitted is refused, not dropped as a duplicate
+            let unstamped = as_sync_event_new_motion(1, 5, 5, 5);
+            assert_eq!(as_sync_event_seq(unstamped), 0);
+            let before = as_sync_node_world_hash(node_b);
+            assert_eq!(as_sync_node_apply_event(node_b, unstamped), -2);
+            assert_eq!(as_sync_node_world_hash(node_b), before);
+            let msg = as_sync_last_error();
+            assert!(!msg.is_null());
+            let text = std::ffi::CStr::from_ptr(msg).to_string_lossy().into_owned();
+            as_sync_free_error_string(msg);
+            assert!(text.contains("Unstamped"), "{text}");
+            as_sync_event_free(unstamped);
 
             as_sync_node_free(node_a);
             as_sync_node_free(node_b);

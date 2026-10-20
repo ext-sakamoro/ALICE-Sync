@@ -427,9 +427,14 @@ impl World {
             .and_then(|h| self.state.entities.get_mut(h))
     }
 
-    /// Iterate all entities
+    /// Iterate all entities in entity id order (not in storage order, which depends on the order
+    /// entities were spawned and removed)
     pub fn iter_entities(&self) -> impl Iterator<Item = &Entity> {
-        self.state.entities.iter().map(|(_, e)| e)
+        self.state
+            .id_map
+            .iter()
+            .filter(|h| h.is_valid())
+            .filter_map(|&h| self.state.entities.get(h))
     }
 
     // ========================================================================
@@ -500,6 +505,10 @@ impl World {
     /// # Errors
     ///
     /// Returns an error if any individual event fails to apply.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_stream_batched(&mut self, stream: &crate::EventStream) -> Result<()> {
         let meta = stream.metadata();
         if meta.is_empty() {

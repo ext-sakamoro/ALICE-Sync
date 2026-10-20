@@ -10,7 +10,7 @@
 //! means updating the pin there and the identifier.
 
 use alice_sync::fixed_point::{Fixed, Vec3Fixed};
-use alice_sync::{Event, EventKind, World};
+use alice_sync::{Event, EventKind, Node, NodeId, World};
 use sha2::{Digest, Sha256};
 
 fn hex(bytes: &[u8]) -> String {
@@ -139,6 +139,63 @@ fn golden_world() {
         out.extend_from_slice(&e.compute_hash().to_le_bytes());
     }
     assert_eq!(digest(&out), GOLDEN_WORLD, "world state golden moved");
+}
+
+pub const GOLDEN_RECEIVE: &str = "b0f4dd9b848374e314f1d88ae220e926d8a3d05d49d08b3a77d8d9673bb2b242";
+
+/// The world a node builds from events of three peers (ALICE-Law G13): the world scenario split
+/// across three origins that see some of each other's events (so their Lamport times interleave),
+/// with entity 2 re-spawned by another origin, received in reverse and with every third event
+/// delivered twice
+#[test]
+fn golden_receive() {
+    let mut peers = [
+        Node::new(NodeId(1)),
+        Node::new(NodeId(2)),
+        Node::new(NodeId(3)),
+    ];
+    for (i, kind) in scenario().into_iter().enumerate() {
+        peers[i % 3]
+            .emit(Event::new(kind))
+            .expect("emit is infallible");
+        if i % 10 == 9 {
+            let seen: Vec<Event> = peers[i % 3].events().all().to_vec();
+            for e in &seen {
+                peers[(i + 1) % 3]
+                    .apply_event(e)
+                    .expect("apply is infallible");
+            }
+        }
+    }
+    peers[1]
+        .emit(Event::new(EventKind::Spawn {
+            entity: 2,
+            kind: 11,
+            pos: [-5, 5, -5],
+        }))
+        .expect("emit is infallible");
+    let mut all: Vec<Event> = Vec::new();
+    for p in &peers {
+        all.extend(p.events().all().iter().cloned());
+    }
+    let mut node = Node::new(NodeId(9));
+    for (i, e) in all.iter().rev().enumerate() {
+        node.apply_event(e).expect("apply is infallible");
+        if i % 3 == 0 {
+            node.apply_event(e).expect("apply is infallible");
+        }
+    }
+    let world = node.world();
+    let mut out = Vec::new();
+    out.extend_from_slice(&world.hash().0.to_le_bytes());
+    out.extend_from_slice(&world.frame().to_le_bytes());
+    for e in world.iter_entities() {
+        out.extend_from_slice(&e.id.to_le_bytes());
+        out.extend_from_slice(&e.kind.to_le_bytes());
+        out.extend_from_slice(&e.position.hash_bits().to_le_bytes());
+        out.extend_from_slice(&e.compute_hash().to_le_bytes());
+    }
+    assert_eq!(digest(&out), GOLDEN_RECEIVE, "receive golden moved");
 }
 
 pub const GOLDEN_CRDT: &str = "54f05313b39a7b671f53bf5c87fb4e37cb1b64f40b402ef98517047c4a730bc8";

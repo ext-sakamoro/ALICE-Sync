@@ -42,28 +42,28 @@ pub const MAX_PROPS: usize = 16;
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldStorage {
     // Generation tracking (for handle validation)
-    pub generations: Vec<u32>,
-    pub alive: Vec<bool>,
-    pub free_list: Vec<u32>,
+    pub(crate) generations: Vec<u32>,
+    pub(crate) alive: Vec<bool>,
+    pub(crate) free_list: Vec<u32>,
 
     // Core components (cache-line aligned arrays)
-    pub ids: Vec<u32>,
-    pub kinds: Vec<u16>,
+    pub(crate) ids: Vec<u32>,
+    pub(crate) kinds: Vec<u16>,
 
     // Position: 3 separate arrays for Vertical SIMD
-    pub pos_x: Vec<i32>, // Fixed-point raw bits
-    pub pos_y: Vec<i32>,
-    pub pos_z: Vec<i32>,
+    pub(crate) pos_x: Vec<i32>, // Fixed-point raw bits
+    pub(crate) pos_y: Vec<i32>,
+    pub(crate) pos_z: Vec<i32>,
 
     // Properties: 16 separate arrays + active bitmask
-    pub prop_values: [Vec<i32>; MAX_PROPS],
-    pub prop_active: Vec<u16>,
+    pub(crate) prop_values: [Vec<i32>; MAX_PROPS],
+    pub(crate) prop_active: Vec<u16>,
 
     // Metadata
-    pub count: usize,
-    pub capacity: usize,
-    pub frame: u64,
-    pub seed: u64,
+    pub(crate) count: usize,
+    pub(crate) capacity: usize,
+    pub(crate) frame: u64,
+    pub(crate) seed: u64,
 }
 
 impl Default for WorldStorage {
@@ -342,6 +342,10 @@ impl WorldStorage {
 
     /// Add delta to 8 consecutive entities' positions (Vertical SIMD)
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn add_positions_8(&mut self, start: usize, dx: i32x8, dy: i32x8, dz: i32x8) {
         let px = self.load_pos_x_8(start);
         let py = self.load_pos_y_8(start);
@@ -439,7 +443,7 @@ use crate::{Event, EventKind, MotionData, Result};
 /// - 100% cache efficiency
 #[derive(Debug, Clone)]
 pub struct WorldSoA {
-    pub storage: WorldStorage,
+    storage: WorldStorage,
     current_hash: WorldHash,
     /// `entity_id` -> slot mapping
     id_to_slot: Vec<u32>,
@@ -489,6 +493,10 @@ impl WorldSoA {
     ///
     /// Currently infallible but returns `Result` for future error handling.
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply(&mut self, event: &Event) -> Result<()> {
         match &event.kind {
             EventKind::Motion { entity, delta } => {
@@ -571,6 +579,46 @@ impl WorldSoA {
         self.current_hash
     }
 
+    /// The component arrays, read-only (a change goes through [`WorldSoA::apply`] and the batch
+    /// methods, which keep the hash and the id map with it)
+    #[inline(always)]
+    #[must_use]
+    pub const fn storage(&self) -> &WorldStorage {
+        &self.storage
+    }
+
+    /// Spawn `entity` at raw Q-format coordinates and return its slot, keeping the hash and the
+    /// id map (the same as [`WorldSoA::apply`] with a Spawn, without the i16 coordinate shift)
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
+    pub fn spawn_raw(&mut self, entity: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
+        let slot = self.storage.spawn(entity, kind, x, y, z);
+        self.current_hash = self.current_hash.xor(self.storage.compute_hash(slot));
+        self.ensure_id_capacity(entity);
+        self.id_to_slot[entity as usize] = slot;
+        slot
+    }
+
+    /// Despawn the entity in `slot`, keeping the hash and the id map; false when the slot holds
+    /// no live entity
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
+    pub fn despawn_slot(&mut self, slot: u32) -> bool {
+        if !self.storage.is_alive(slot) {
+            return false;
+        }
+        let entity = self.storage.ids[slot as usize];
+        self.current_hash = self.current_hash.xor(self.storage.compute_hash(slot));
+        if self.id_to_slot.get(entity as usize) == Some(&slot) {
+            self.id_to_slot[entity as usize] = u32::MAX;
+        }
+        self.storage.despawn(slot)
+    }
+
     /// Recalculate hash (O(N), for verification)
     pub fn recalculate_hash(&mut self) -> WorldHash {
         let mut hash = 0u64;
@@ -609,6 +657,10 @@ impl WorldSoA {
     ///
     /// Requires entities to be at consecutive slots (use with sorted data)
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_motions_vertical_8(&mut self, start_slot: usize, dx: i32x8, dy: i32x8, dz: i32x8) {
         // Compute old hashes for 8 entities
         let old_hashes = self.storage.compute_hashes_8(start_slot);
@@ -630,6 +682,10 @@ impl WorldSoA {
 
     /// Batch apply motion events (with automatic Vertical SIMD for consecutive entities)
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_motions_batch(&mut self, motions: &[MotionData]) {
         for m in motions {
             if let Some(slot) = self.get_slot(m.entity) {
@@ -662,6 +718,10 @@ impl WorldSoA {
     /// 3. Coalesce multiple motions to the same entity
     /// 4. Apply with maximum cache efficiency
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_motions_sorted(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
             return;
@@ -805,6 +865,10 @@ impl WorldSoA {
     ///
     /// Use when motions are already sorted by `entity_id`
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_motions_presorted(&mut self, motions: &[MotionData]) {
         // Resolve entity_id -> slot mapping (already sorted)
         let mut slot_motions: Vec<(u32, &MotionData)> = Vec::with_capacity(motions.len());
@@ -845,6 +909,10 @@ impl WorldSoA {
     ///
     /// Hypothesis: Faster when fragmentation is low (ID ≈ Slot)
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_motions_demon(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
             return;
@@ -972,6 +1040,10 @@ impl WorldSoA {
     ///
     /// This is the maximum performance path when entities are densely packed.
     /// Process 8 entities per iteration.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_uniform_motion_vertical(
         &mut self,
         start_slot: usize,
@@ -1016,6 +1088,30 @@ impl WorldSoA {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_raw_and_despawn_slot_keep_the_hash_and_the_id_map() {
+        let mut raw = WorldSoA::new(0);
+        let slot = raw.spawn_raw(7, 2, 3 << 6, -(4 << 6), 5 << 6);
+        let mut via_event = WorldSoA::new(0);
+        via_event
+            .apply(&Event::new(EventKind::Spawn {
+                entity: 7,
+                kind: 2,
+                pos: [3, -4, 5],
+            }))
+            .unwrap();
+        assert_eq!(raw.hash(), via_event.hash(), "the same as a Spawn event");
+        assert_eq!(raw.get_slot(7), Some(slot));
+        let incremental = raw.hash();
+        assert_eq!(raw.recalculate_hash(), incremental);
+
+        assert!(raw.despawn_slot(slot));
+        assert!(!raw.despawn_slot(slot), "the slot is no longer live");
+        assert_eq!(raw.get_slot(7), None);
+        assert_eq!(raw.hash(), WorldHash::zero());
+        assert_eq!(raw.recalculate_hash(), WorldHash::zero());
+    }
 
     #[test]
     fn test_spawn_despawn() {
