@@ -112,7 +112,18 @@ namespace Alice.Sync
         public uint EventsBytes => NativeMethods.as_sync_node_events_bytes(Ptr);
 
         public int Emit(Event evt) => NativeMethods.as_sync_node_emit(Ptr, evt.Ptr);
+        /// <summary>Applies an event received from another node: the world is the same for every
+        /// arrival order and for duplicates. Pass events taken from the emitting node with EventAt;
+        /// 0 applied, -1 null, -2 an event that was never emitted (see LastError).</summary>
         public int ApplyEvent(Event evt) => NativeMethods.as_sync_node_apply_event(Ptr, evt.Ptr);
+        /// <summary>A copy of this node's index-th emitted event (0 .. EventsCount - 1), stamped with
+        /// its origin, sequence number and Lamport time, for another node's ApplyEvent; null when out
+        /// of range.</summary>
+        public Event EventAt(uint index)
+        {
+            IntPtr p = NativeMethods.as_sync_node_event_at(Ptr, index);
+            return p == IntPtr.Zero ? null : Event.FromNative(p);
+        }
         /// <summary>0 / 1 accepted, -1 null, -2 the peer's SYNC_SEMANTICS_ID differs (see LastError).</summary>
         public int AddPeer(ulong peerId, byte[] peerSemanticsId) => NativeMethods.as_sync_node_add_peer(Ptr, peerId, peerSemanticsId);
 
@@ -159,6 +170,14 @@ namespace Alice.Sync
             => new Event(NativeMethods.as_sync_event_new_tick(frame));
 
         public uint SizeBytes => NativeMethods.as_sync_event_size_bytes(Ptr);
+        /// <summary>The emitting node (0 until a node emits the event).</summary>
+        public ulong Origin => NativeMethods.as_sync_event_origin(Ptr);
+        /// <summary>The sequence number in the origin's log, from 1 (0 until emitted).</summary>
+        public ulong Seq => NativeMethods.as_sync_event_seq(Ptr);
+        /// <summary>The Lamport time (0 until emitted).</summary>
+        public ulong Timestamp => NativeMethods.as_sync_event_timestamp(Ptr);
+
+        internal static Event FromNative(IntPtr ptr) => new Event(ptr);
 
         public void Dispose()
         {
@@ -417,6 +436,7 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern byte as_sync_node_state(IntPtr ptr);
         [DllImport(Lib)] internal static extern int as_sync_node_emit(IntPtr ptr, IntPtr evt);
         [DllImport(Lib)] internal static extern int as_sync_node_apply_event(IntPtr ptr, IntPtr evt);
+        [DllImport(Lib)] internal static extern IntPtr as_sync_node_event_at(IntPtr ptr, uint index);
         [DllImport(Lib)] internal static extern int as_sync_node_add_peer(IntPtr ptr, ulong peerId, byte[] peerSemanticsId);
         [DllImport(Lib)] internal static extern uint as_sync_node_entity_count(IntPtr ptr);
         [DllImport(Lib)] internal static extern uint as_sync_node_events_count(IntPtr ptr);
@@ -431,6 +451,9 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern IntPtr as_sync_event_new_tick(ulong frame);
         [DllImport(Lib)] internal static extern void as_sync_event_free(IntPtr ptr);
         [DllImport(Lib)] internal static extern uint as_sync_event_size_bytes(IntPtr ptr);
+        [DllImport(Lib)] internal static extern ulong as_sync_event_origin(IntPtr ptr);
+        [DllImport(Lib)] internal static extern ulong as_sync_event_seq(IntPtr ptr);
+        [DllImport(Lib)] internal static extern ulong as_sync_event_timestamp(IntPtr ptr);
 
         // EventStream
         [DllImport(Lib)] internal static extern IntPtr as_sync_event_stream_new();

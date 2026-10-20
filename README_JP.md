@@ -40,24 +40,24 @@ fn main() {
     let mut node_a = Node::new(NodeId(1));
     let mut node_b = Node::new(NodeId(2));
 
-    // Node A: Spawn an entity
-    let spawn = Event::new(EventKind::Spawn {
+    // Node A: Spawn an entity (emit stamps it with A's id, sequence and Lamport time)
+    node_a.emit(Event::new(EventKind::Spawn {
         entity: 1,
         kind: 0,
         pos: [0, 0, 0],  // i16 fixed-point coordinates
-    });
-    node_a.apply_event(&spawn).unwrap();
+    })).unwrap();
 
     // Node A: Move the entity
-    let motion = Event::new(EventKind::Motion {
+    node_a.emit(Event::new(EventKind::Motion {
         entity: 1,
         delta: [100, 0, 0],  // Move right
-    });
-    node_a.apply_event(&motion).unwrap();
+    })).unwrap();
 
     // Sync: Send events to Node B (not world data!)
-    node_b.apply_event(&spawn).unwrap();
-    node_b.apply_event(&motion).unwrap();
+    // Any arrival order, or a duplicate, gives the same world
+    for e in node_a.events().all() {
+        node_b.apply_event(e).unwrap();
+    }
 
     // Verify: Both nodes have identical world state
     assert_eq!(node_a.world_hash(), node_b.world_hash());
@@ -446,13 +446,15 @@ match rollback.add_remote_input(confirmed_input) {
 | `auth` | なし | ALICE-Auth による Ed25519 ZKP のピア認証 |
 | `codec` | なし | ALICE-Codec による wavelet と rANS のイベントストリーム圧縮 |
 | `analytics` | なし | ALICE-Analytics による DDSketch / HLL / CMS の確率的テレメトリ |
-| `ffi` | なし | Unity / UE5 向けの C-ABI FFI (75 関数) |
+| `ffi` | なし | Unity / UE5 向けの C-ABI FFI (79 関数) |
 | `cloud` | なし | クラウド側の複数デバイス空間同期ハブ |
 | `all-bridges` | なし | すべての連携ブリッジを有効にする (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
 
 ## C-ABI FFI (Unity / UE5)
 
-コア型をすべて扱う 75 個の `extern "C"` 関数 `--features ffi` で有効になる
+コア型をすべて扱う 79 個の `extern "C"` 関数 `--features ffi` で有効になる
+
+2 つの node を同期するには、送り手で `as_sync_node_emit` し、送り手が刻んだ event (`as_sync_node_event_at`、0 から `as_sync_node_events_count` - 1) を受け手の `as_sync_node_apply_event` に渡す 届く順や重複に依らず同じ world になる `as_sync_event_new_*` で作って emit していない event は origin と sequence 番号を持たないので拒否する (-2)
 
 ### 対象範囲
 
@@ -460,8 +462,8 @@ match rollback.add_remote_input(confirmed_input) {
 |--------|-----------|-------------|
 | World (AoS) | 8 | new, free, hash, entity_count, frame, apply_event, get_position, recalculate_hash |
 | WorldSoA | 5 | new, free, hash, entity_count, apply_event |
-| Node | 11 | new, with_seed, free, hash, state, emit, apply, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
-| Event | 8 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes |
+| Node | 12 | new, with_seed, free, hash, state, emit, apply (events from another node, any order), event_at, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
+| Event | 11 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes, origin, seq, timestamp |
 | EventStream | 7 | new, free, push, len, is_empty, current_seq, total_bytes |
 | InputFrame | 10 | new, free, set/get movement, set/get actions, set/get aim, get_frame, get_player_id |
 | InputFrameArray | 3 | free, len, get |
@@ -471,11 +473,11 @@ match rollback.add_remote_input(confirmed_input) {
 
 ### Unity C# (`bindings/unity/AliceSync.cs`)
 
-72 個の `[DllImport]` 宣言と、RAII の `IDisposable` ハンドル
+76 個の `[DllImport]` 宣言と、RAII の `IDisposable` ハンドル
 
 ### UE5 C++ (`bindings/ue5/AliceSync.h`)
 
-72 個の `extern "C"` 宣言と、9 個の RAII `std::unique_ptr` ハンドル
+76 個の `extern "C"` 宣言と、9 個の RAII `std::unique_ptr` ハンドル
 
 ## Python バインディング (PyO3 と NumPy のゼロコピー)
 

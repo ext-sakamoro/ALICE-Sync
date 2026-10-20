@@ -13,13 +13,15 @@
 //! # Hex form
 //!
 //! ```text
-//! c844437ee0ad82dfae3ccbeb9bf1c0bfe8111b83060bd9d4305c2d8111d56095
+//! 705744d7b16a6be1f9510f9fa05ae9571a21f09660592e0bdf7841139173b772
 //! ```
 //!
 //! # Entries
 //!
 //! [`SYNC_SEMANTICS_PINS`]: one entry per golden (`"fixed"`, `"world"`,
-//! `"crdt"`, the SHA-256 recorded in `tests/determinism_golden.rs`), plus one
+//! `"crdt"`, `"receive"`, the SHA-256 recorded in `tests/determinism_golden.rs`;
+//! `"receive"` is the world a node builds from events of several peers received
+//! out of order, ALICE-Law G13), plus one
 //! per bridged Law-bearing crate: `"alice-physics"` (its
 //! `PHYSICS_SEMANTICS_ID`, the `physics` bridge) and `"alice-analytics"` (its
 //! `SEMANTICS_ID`, the `analytics` bridge), at the versions this release
@@ -72,7 +74,7 @@ pub(crate) const fn hex32(s: &str) -> [u8; 32] {
 }
 
 /// The pins folded into [`SYNC_SEMANTICS_ID`], as `(name, digest)`.
-pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 5] = [
+pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 6] = [
     (
         "fixed",
         hex32("dc65b542978e3eb841faee4a7202f7416cee5cd6ce4fdd64cebc18a97ba31f9d"),
@@ -84,6 +86,10 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 5] = [
     (
         "crdt",
         hex32("54f05313b39a7b671f53bf5c87fb4e37cb1b64f40b402ef98517047c4a730bc8"),
+    ),
+    (
+        "receive",
+        hex32("b0f4dd9b848374e314f1d88ae220e926d8a3d05d49d08b3a77d8d9673bb2b242"),
     ),
     (
         "alice-physics",
@@ -98,7 +104,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 5] = [
 /// The semantics identifier of this crate: the fold of
 /// [`SYNC_SEMANTICS_PINS`] (see the module documentation).
 pub const SYNC_SEMANTICS_ID: [u8; 32] =
-    hex32("c844437ee0ad82dfae3ccbeb9bf1c0bfe8111b83060bd9d4305c2d8111d56095");
+    hex32("705744d7b16a6be1f9510f9fa05ae9571a21f09660592e0bdf7841139173b772");
 
 /// Earlier values of [`SYNC_SEMANTICS_ID`] whose pinned bits this release
 /// still reproduces (none yet: this is the first identifier).
