@@ -123,10 +123,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build (no default features)
         run: cargo build --lib --no-default-features
+      # scripts/run_tests.sh fails the step when no test ran or when a named golden, identifier
+      # or order test binary ran none (a feature or target mismatch would otherwise pass as an
+      # empty run); the full suite still runs
       - name: Test (default = std)
-        run: cargo test
+        shell: bash
+        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test
       - name: Test (all native features)
-        run: cargo test --features "$NATIVE_FEATURES"
+        shell: bash
+        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test --features "$NATIVE_FEATURES"
       # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
       # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)
@@ -136,6 +141,15 @@ jobs:
       - name: Float environment (debug)
         shell: bash
         run: scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment
+      # ALICE-Law G11 (c): the files shared with the other crates are the bytes ALICE-Law's
+      # table records (table and checker fetched at .github/shared-files-pin, both SHA-256
+      # pinned); a difference, an unlisted shared path or nothing compared fails
+      - name: Shared files equal ALICE-Law's table
+        shell: bash
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" scripts/test_shared_files.py
+          scripts/shared_files.sh
       - name: Doc tests
         run: cargo test --doc --features "$NATIVE_FEATURES"
       # ALICE-Law G3, syntax-tree pre-check (tools/no-outer-fneg-of-fma, byte-identical to

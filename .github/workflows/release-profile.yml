@@ -44,9 +44,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Release-profile golden and oracle tests
         run: >-
-          scripts/run_tests.sh float_edge_golden,analytic_oracle,float_environment=2 --
+          scripts/run_tests.sh determinism_golden,float_edge_golden,analytic_oracle,float_environment=2 --
           cargo test --release --features "$RELEASE_TEST_FEATURES"
-          --test float_edge_golden --test analytic_oracle --test float_environment
+          --test determinism_golden --test float_edge_golden --test analytic_oracle --test float_environment
       # G14, dynamic half: the flags cargo really passes to rustc, read from `-v` in a
       # fresh target directory (a reused one prints Fresh without the command line),
       # for the default, all-features and no-default feature sets; fails on a

@@ -21,6 +21,28 @@ fn digest(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+/// The SHA-256 of `bytes` when it is not `expected`
+fn golden_mismatch(bytes: &[u8], expected: &str) -> Option<String> {
+    let got = digest(bytes);
+    (got != expected).then_some(got)
+}
+
+fn assert_golden(bytes: &[u8], expected: &str, what: &str) {
+    if let Some(got) = golden_mismatch(bytes, expected) {
+        panic!("{what}: {got}, recorded {expected}");
+    }
+}
+
+#[test]
+fn checker_rejects_a_wrong_digest() {
+    let recorded = digest(b"recorded bits");
+    assert_eq!(golden_mismatch(b"recorded bits", &recorded), None);
+    assert!(
+        golden_mismatch(b"moved bits", &recorded).is_some(),
+        "a scenario whose bits moved must not match its recorded digest"
+    );
+}
+
 /// Inputs spanning signs, the step, saturation edges and large magnitudes.
 const RAW: [i32; 14] = [
     0,
@@ -77,7 +99,7 @@ fn golden_fixed() {
     for c in v.to_f32_array() {
         out.extend_from_slice(&c.to_bits().to_le_bytes());
     }
-    assert_eq!(digest(&out), GOLDEN_FIXED, "Fixed arithmetic golden moved");
+    assert_golden(&out, GOLDEN_FIXED, "Fixed arithmetic golden moved");
 }
 
 pub const GOLDEN_WORLD: &str = "875410bef5edafaaff33e1e74a2c879b987e394f784f5ef361b6d828d531f593";
@@ -138,7 +160,7 @@ fn golden_world() {
         out.extend_from_slice(&e.position.hash_bits().to_le_bytes());
         out.extend_from_slice(&e.compute_hash().to_le_bytes());
     }
-    assert_eq!(digest(&out), GOLDEN_WORLD, "world state golden moved");
+    assert_golden(&out, GOLDEN_WORLD, "world state golden moved");
 }
 
 pub const GOLDEN_RECEIVE: &str = "b0f4dd9b848374e314f1d88ae220e926d8a3d05d49d08b3a77d8d9673bb2b242";
@@ -195,7 +217,7 @@ fn golden_receive() {
         out.extend_from_slice(&e.position.hash_bits().to_le_bytes());
         out.extend_from_slice(&e.compute_hash().to_le_bytes());
     }
-    assert_eq!(digest(&out), GOLDEN_RECEIVE, "receive golden moved");
+    assert_golden(&out, GOLDEN_RECEIVE, "receive golden moved");
 }
 
 pub const GOLDEN_CRDT: &str = "54f05313b39a7b671f53bf5c87fb4e37cb1b64f40b402ef98517047c4a730bc8";
@@ -243,5 +265,5 @@ fn golden_crdt() {
     for v in s2.values() {
         out.extend_from_slice(&v.to_le_bytes());
     }
-    assert_eq!(digest(&out), GOLDEN_CRDT, "CRDT merge golden moved");
+    assert_golden(&out, GOLDEN_CRDT, "CRDT merge golden moved");
 }
