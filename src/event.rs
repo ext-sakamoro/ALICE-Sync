@@ -296,6 +296,8 @@ pub struct EventStream {
 
     next_seq: u64,
     next_id: u64,
+    /// Lamport clock: the least timestamp the next pushed event may carry
+    clock: u64,
 }
 
 impl EventStream {
@@ -305,12 +307,14 @@ impl EventStream {
         Self::default()
     }
 
-    /// Push a new event, assigning ID and sequence
+    /// Push a new event, assigning ID, sequence and a Lamport timestamp: the sequence number, or
+    /// more when [`EventStream::observe`] saw a later timestamp from another node
     pub fn push(&mut self, mut event: Event, origin: u64) -> EventId {
         event.id = EventId(self.next_id);
         event.seq = SeqNum(self.next_seq);
         event.origin = origin;
-        event.timestamp = self.next_seq;
+        event.timestamp = self.next_seq.max(self.clock);
+        self.clock = event.timestamp.saturating_add(1);
 
         // Store in SoA arrays
         let (event_type, index) = match &event.kind {
@@ -388,6 +392,15 @@ impl EventStream {
         let id = event.id;
         self.events.push(event);
         id
+    }
+
+    /// Advance the Lamport clock past `timestamp`, the timestamp of an event received from another
+    /// node, so the events pushed after it are ordered after it
+    pub const fn observe(&mut self, timestamp: u64) {
+        let next = timestamp.saturating_add(1);
+        if next > self.clock {
+            self.clock = next;
+        }
     }
 
     /// Get events since a sequence number

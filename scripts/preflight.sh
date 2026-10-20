@@ -57,6 +57,16 @@ step "ci.yml / clippy: Clippy (no default features)"
 relint
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo clippy --lib --no-default-features -- -D warnings )
 
+step "ci.yml / clippy: Clippy library configuration (tests)"
+python3 scripts/test_clippy_lib_gate.py
+
+step "ci.yml / clippy: Clippy library configuration (generated, canary flagged)"
+python3 scripts/clippy_lib_gate.py
+
+step "ci.yml / clippy: Clippy library code (default and all native features)"
+relint
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CLIPPY_CONF_DIR=".github/clippy-lib"; cargo clippy --lib -- -D clippy::disallowed_methods -D clippy::disallowed_types && cargo clippy --lib --features "$NATIVE_FEATURES" -- -D clippy::disallowed_methods -D clippy::disallowed_types )
+
 step "ci.yml / clippy: Clippy canary data (generator tests)"
 python3 scripts/test_gen_clippy_canary_calls.py
 

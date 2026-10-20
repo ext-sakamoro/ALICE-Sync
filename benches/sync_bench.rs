@@ -14,7 +14,7 @@ fn bench_event_apply(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_apply");
 
     let mut node = Node::new(NodeId(1));
-    node.apply_event(&Event::new(EventKind::Spawn {
+    node.emit(Event::new(EventKind::Spawn {
         entity: 1,
         kind: 0,
         pos: [0, 0, 0],
@@ -28,7 +28,7 @@ fn bench_event_apply(c: &mut Criterion) {
 
     group.bench_function("motion_single", |b| {
         b.iter(|| {
-            node.apply_event(black_box(&motion)).unwrap();
+            node.emit(black_box(motion.clone())).unwrap();
         });
     });
 
@@ -170,27 +170,30 @@ fn bench_serialization(c: &mut Criterion) {
 fn bench_sync_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("sync_throughput");
 
-    let events: Vec<Event> = (0..1000)
-        .map(|i| {
-            Event::new(EventKind::Motion {
+    // 100 spawns and 1000 motions as another node emits them (stamped), applied as received
+    let mut source = Node::new(NodeId(2));
+    for i in 0..100u32 {
+        source
+            .emit(Event::new(EventKind::Spawn {
+                entity: i,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
+    }
+    for i in 0..1000 {
+        source
+            .emit(Event::new(EventKind::Motion {
                 entity: (i % 100) as u32,
                 delta: [1, 0, 0],
-            })
-        })
-        .collect();
+            }))
+            .unwrap();
+    }
+    let events: Vec<Event> = source.events().all().to_vec();
 
     group.bench_function("apply_1000_events", |b| {
         b.iter(|| {
             let mut node = Node::new(NodeId(1));
-
-            for i in 0..100u32 {
-                node.apply_event(&Event::new(EventKind::Spawn {
-                    entity: i,
-                    kind: 0,
-                    pos: [0, 0, 0],
-                }))
-                .unwrap();
-            }
 
             for e in &events {
                 node.apply_event(black_box(e)).unwrap();

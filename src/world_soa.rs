@@ -489,6 +489,10 @@ impl WorldSoA {
     ///
     /// Currently infallible but returns `Result` for future error handling.
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply(&mut self, event: &Event) -> Result<()> {
         match &event.kind {
             EventKind::Motion { entity, delta } => {
@@ -662,6 +666,10 @@ impl WorldSoA {
     /// 3. Coalesce multiple motions to the same entity
     /// 4. Apply with maximum cache efficiency
     #[inline(always)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_motions_sorted(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
             return;
@@ -972,6 +980,10 @@ impl WorldSoA {
     ///
     /// This is the maximum performance path when entities are densely packed.
     /// Process 8 entities per iteration.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
     pub fn apply_uniform_motion_vertical(
         &mut self,
         start_slot: usize,

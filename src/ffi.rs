@@ -100,6 +100,10 @@ pub unsafe extern "C" fn as_sync_world_frame(ptr: *const AsSyncWorld) -> u64 {
 }
 
 #[no_mangle]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_apply_event (ALICE-Law G13)"
+)]
 pub unsafe extern "C" fn as_sync_world_apply_event(
     ptr: *mut AsSyncWorld,
     event: *const AsSyncEvent,
@@ -189,6 +193,10 @@ pub unsafe extern "C" fn as_sync_world_soa_entity_count(ptr: *const AsSyncWorldS
 }
 
 #[no_mangle]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_apply_event (ALICE-Law G13)"
+)]
 pub unsafe extern "C" fn as_sync_world_soa_apply_event(
     ptr: *mut AsSyncWorldSoA,
     event: *const AsSyncEvent,

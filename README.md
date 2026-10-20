@@ -40,24 +40,24 @@ fn main() {
     let mut node_a = Node::new(NodeId(1));
     let mut node_b = Node::new(NodeId(2));
 
-    // Node A: Spawn an entity
-    let spawn = Event::new(EventKind::Spawn {
+    // Node A: Spawn an entity (emit stamps it with A's id, sequence and Lamport time)
+    node_a.emit(Event::new(EventKind::Spawn {
         entity: 1,
         kind: 0,
         pos: [0, 0, 0],  // i16 fixed-point coordinates
-    });
-    node_a.apply_event(&spawn).unwrap();
+    })).unwrap();
 
     // Node A: Move the entity
-    let motion = Event::new(EventKind::Motion {
+    node_a.emit(Event::new(EventKind::Motion {
         entity: 1,
         delta: [100, 0, 0],  // Move right
-    });
-    node_a.apply_event(&motion).unwrap();
+    })).unwrap();
 
     // Sync: Send events to Node B (not world data!)
-    node_b.apply_event(&spawn).unwrap();
-    node_b.apply_event(&motion).unwrap();
+    // Any arrival order, or a duplicate, gives the same world
+    for e in node_a.events().all() {
+        node_b.apply_event(e).unwrap();
+    }
 
     // Verify: Both nodes have identical world state
     assert_eq!(node_a.world_hash(), node_b.world_hash());

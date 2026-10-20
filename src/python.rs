@@ -305,11 +305,19 @@ impl PyWorldSoA {
     }
 
     /// Spawn an entity. Returns slot index.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the Python binding of the single-writer WorldSoA, applied in the order called; peers' events go through a Node (ALICE-Law G13)"
+    )]
     fn spawn(&mut self, entity_id: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
         self.inner.storage.spawn(entity_id, kind, x, y, z)
     }
 
     /// Despawn an entity by slot.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the Python binding of the single-writer WorldSoA, applied in the order called; peers' events go through a Node (ALICE-Law G13)"
+    )]
     fn despawn(&mut self, slot: u32) -> bool {
         self.inner.storage.despawn(slot)
     }
@@ -318,6 +326,10 @@ impl PyWorldSoA {
     ///
     /// Args:
     ///     motions: list of `(entity_id, dx, dy, dz)` tuples
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the Python binding of the single-writer WorldSoA, applied in the order called; peers' events go through a Node (ALICE-Law G13)"
+    )]
     fn apply_motions(&mut self, motions: Vec<(u32, i16, i16, i16)>) {
         let motion_data: Vec<MotionData> = motions
             .iter()
