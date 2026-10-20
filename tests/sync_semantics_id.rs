@@ -56,6 +56,7 @@ fn golden_pins_are_the_recorded_goldens() {
         ("fixed", "GOLDEN_FIXED"),
         ("world", "GOLDEN_WORLD"),
         ("crdt", "GOLDEN_CRDT"),
+        ("receive", "GOLDEN_RECEIVE"),
     ] {
         let key = format!("pub const {constant}: &str = \"");
         let start = src
@@ -71,11 +72,18 @@ fn golden_pins_are_the_recorded_goldens() {
         assert_eq!(hex(&pin), recorded, "pin {name} differs from {constant}");
         compared += 1;
     }
-    assert_eq!(compared, 3);
+    assert_eq!(compared, 4);
     let names: Vec<_> = SYNC_SEMANTICS_PINS.iter().map(|(n, _)| *n).collect();
     assert_eq!(
         names,
-        ["fixed", "world", "crdt", "alice-physics", "alice-analytics"]
+        [
+            "fixed",
+            "world",
+            "crdt",
+            "receive",
+            "alice-physics",
+            "alice-analytics"
+        ]
     );
 }
 

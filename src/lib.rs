@@ -45,17 +45,17 @@
 //! ```rust
 //! use alice_sync::{Node, NodeId, Event, EventKind};
 //!
-//! // Two nodes process the same events → identical world hash
+//! // node_a emits events; node_b applies them as received → identical world hash
 //! let mut node_a = Node::new(NodeId(1));
 //! let mut node_b = Node::new(NodeId(2));
 //!
-//! let spawn = Event::new(EventKind::Spawn { entity: 1, kind: 0, pos: [0, 0, 0] });
-//! let motion = Event::new(EventKind::Motion { entity: 1, delta: [100, 0, 0] });
+//! node_a.emit(Event::new(EventKind::Spawn { entity: 1, kind: 0, pos: [0, 0, 0] })).unwrap();
+//! node_a.emit(Event::new(EventKind::Motion { entity: 1, delta: [100, 0, 0] })).unwrap();
 //!
-//! node_a.apply_event(&spawn).unwrap();
-//! node_a.apply_event(&motion).unwrap();
-//! node_b.apply_event(&spawn).unwrap();
-//! node_b.apply_event(&motion).unwrap();
+//! // any arrival order gives the same world: here the motion arrives before its spawn
+//! for e in node_a.events().all().iter().rev() {
+//!     node_b.apply_event(e).unwrap();
+//! }
 //!
 //! assert_eq!(node_a.world_hash(), node_b.world_hash());
 //! ```
@@ -135,6 +135,7 @@ pub mod cache_bridge;
 pub mod cloud_bridge;
 #[cfg(feature = "codec")]
 pub mod codec_bridge;
+pub mod converge;
 pub mod determinism;
 pub mod event;
 #[cfg(feature = "ffi")]
@@ -219,9 +220,18 @@ pub type Result<T> = std::result::Result<T, SyncError>;
 /// Error types for ALICE-Sync
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncError {
-    CausalityViolation { expected: u64, got: u64 },
-    StateDivergence { local: WorldHash, remote: WorldHash },
+    CausalityViolation {
+        expected: u64,
+        got: u64,
+    },
+    StateDivergence {
+        local: WorldHash,
+        remote: WorldHash,
+    },
     UnknownNode(NodeId),
+    /// [`Node::apply_event`] was given an event no stream stamped (sequence number 0, see
+    /// [`Event::is_stamped`]): it cannot be told apart from another unstamped event
+    Unstamped,
     NetworkError(String),
     SerializationError(String),
 }
@@ -240,6 +250,10 @@ impl std::fmt::Display for SyncError {
                 )
             }
             Self::UnknownNode(id) => write!(f, "Unknown node: {id:?}"),
+            Self::Unstamped => write!(
+                f,
+                "Unstamped event: apply_event takes events a stream stamped (emit), not Event::new"
+            ),
             Self::NetworkError(msg) => write!(f, "Network error: {msg}"),
             Self::SerializationError(msg) => write!(f, "Serialization error: {msg}"),
         }
@@ -257,23 +271,30 @@ mod tests {
         let mut node_a = Node::new(NodeId(1));
         let mut node_b = Node::new(NodeId(2));
 
-        let spawn = Event::new(EventKind::Spawn {
-            entity: 1,
-            kind: 0,
-            pos: [0, 0, 0],
-        });
-        let motion = Event::new(EventKind::Motion {
-            entity: 1,
-            delta: [1000, 0, 0],
-        });
+        node_a
+            .emit(Event::new(EventKind::Spawn {
+                entity: 1,
+                kind: 0,
+                pos: [0, 0, 0],
+            }))
+            .unwrap();
+        node_a
+            .emit(Event::new(EventKind::Motion {
+                entity: 1,
+                delta: [1000, 0, 0],
+            }))
+            .unwrap();
 
-        node_a.apply_event(&spawn).unwrap();
-        node_a.apply_event(&motion).unwrap();
-
-        node_b.apply_event(&spawn).unwrap();
-        node_b.apply_event(&motion).unwrap();
+        for e in node_a.events().all() {
+            node_b.apply_event(e).unwrap();
+        }
 
         assert_eq!(node_a.world_hash(), node_b.world_hash());
+        let moved = node_b.world().get_entity(1).unwrap().position;
+        assert_ne!(
+            moved,
+            crate::fixed_point::Vec3Fixed::from_i16_array([0, 0, 0])
+        );
     }
 
     #[test]

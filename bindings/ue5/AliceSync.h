@@ -52,7 +52,13 @@ extern "C"
     uint64_t as_sync_node_world_hash(const AsSyncNode* ptr);
     uint8_t as_sync_node_state(const AsSyncNode* ptr);
     int32_t as_sync_node_emit(AsSyncNode* ptr, const AsSyncEvent* evt);
+    /* an event received from another node, taken from it with as_sync_node_event_at (the world is the
+       same for every arrival order and for duplicates; node ids must be unique, two nodes with one id
+       stamp different events alike); returns 0 applied, -1 null, -2 an event
+       never emitted (see as_sync_last_error) */
     int32_t as_sync_node_apply_event(AsSyncNode* ptr, const AsSyncEvent* evt);
+    /* a copy of the node's index-th emitted event, stamped; null out of range; free with as_sync_event_free */
+    AsSyncEvent* as_sync_node_event_at(const AsSyncNode* ptr, uint32_t index);
     /* peerSemanticsId: 32 bytes, the peer's SYNC_SEMANTICS_ID; returns 0 / 1 accepted, -1 null, -2 mismatch */
     int32_t as_sync_node_add_peer(AsSyncNode* ptr, uint64_t peerId, const uint8_t* peerSemanticsId);
     uint32_t as_sync_node_entity_count(const AsSyncNode* ptr);
@@ -68,6 +74,10 @@ extern "C"
     AsSyncEvent* as_sync_event_new_tick(uint64_t frame);
     void as_sync_event_free(AsSyncEvent* ptr);
     uint32_t as_sync_event_size_bytes(const AsSyncEvent* ptr);
+    /* origin node, sequence number (from 1) and Lamport time; 0 until a node emits the event */
+    uint64_t as_sync_event_origin(const AsSyncEvent* ptr);
+    uint64_t as_sync_event_seq(const AsSyncEvent* ptr);
+    uint64_t as_sync_event_timestamp(const AsSyncEvent* ptr);
 
     // EventStream
     AsSyncEventStream* as_sync_event_stream_new();

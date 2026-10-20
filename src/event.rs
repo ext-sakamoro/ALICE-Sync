@@ -127,6 +127,15 @@ pub struct Event {
 }
 
 impl Event {
+    /// Whether a stream stamped this event: [`EventStream::push`] numbers events from 1, so an
+    /// event with sequence number 0 was made by [`Event::new`] and never pushed (it has no origin,
+    /// sequence number or time that tell it apart from another unstamped event)
+    #[inline]
+    #[must_use]
+    pub const fn is_stamped(&self) -> bool {
+        self.seq.0 != 0
+    }
+
     /// Create a new event (ID and seq assigned later)
     #[must_use]
     pub const fn new(kind: EventKind) -> Self {
@@ -294,8 +303,12 @@ pub struct EventStream {
     // Legacy: unified event list for API compatibility
     events: Vec<Event>,
 
+    /// the number of events pushed: the next one gets sequence number `next_seq + 1` (sequence
+    /// numbers start at 1; 0 marks an event no stream has stamped, see [`Event::is_stamped`])
     next_seq: u64,
     next_id: u64,
+    /// Lamport clock: the least timestamp the next pushed event may carry
+    clock: u64,
 }
 
 impl EventStream {
@@ -305,12 +318,16 @@ impl EventStream {
         Self::default()
     }
 
-    /// Push a new event, assigning ID and sequence
+    /// Push a new event, assigning ID, a sequence number (1 for the first event) and a Lamport
+    /// timestamp: the sequence number, or more when [`EventStream::observe`] saw a later timestamp
+    /// from another node
     pub fn push(&mut self, mut event: Event, origin: u64) -> EventId {
+        let seq = self.next_seq + 1;
         event.id = EventId(self.next_id);
-        event.seq = SeqNum(self.next_seq);
+        event.seq = SeqNum(seq);
         event.origin = origin;
-        event.timestamp = self.next_seq;
+        event.timestamp = seq.max(self.clock);
+        self.clock = event.timestamp.saturating_add(1);
 
         // Store in SoA arrays
         let (event_type, index) = match &event.kind {
@@ -376,7 +393,7 @@ impl EventStream {
 
         // Store metadata for ordered replay
         self.meta.push(EventMeta {
-            seq: self.next_seq,
+            seq,
             origin,
             event_type,
             index,
@@ -388,6 +405,15 @@ impl EventStream {
         let id = event.id;
         self.events.push(event);
         id
+    }
+
+    /// Advance the Lamport clock past `timestamp`, the timestamp of an event received from another
+    /// node, so the events pushed after it are ordered after it
+    pub const fn observe(&mut self, timestamp: u64) {
+        let next = timestamp.saturating_add(1);
+        if next > self.clock {
+            self.clock = next;
+        }
     }
 
     /// Get events since a sequence number
@@ -424,10 +450,10 @@ impl EventStream {
         &self.meta
     }
 
-    /// Current sequence number
+    /// The sequence number of the last event pushed (0 when none was)
     #[must_use]
     pub const fn current_seq(&self) -> SeqNum {
-        SeqNum(self.next_seq.saturating_sub(1))
+        SeqNum(self.next_seq)
     }
 
     /// Total events count
@@ -678,7 +704,14 @@ mod tests {
         assert_eq!(stream.len(), 2);
         assert_eq!(id0.0, 0);
         assert_eq!(id1.0, 1);
-        assert_eq!(stream.current_seq(), SeqNum(1));
+        assert_eq!(
+            stream.all()[0].seq,
+            SeqNum(1),
+            "sequence numbers start at 1"
+        );
+        assert!(stream.all()[0].is_stamped());
+        assert!(!Event::new(EventKind::Tick { frame: 1 }).is_stamped());
+        assert_eq!(stream.current_seq(), SeqNum(2));
     }
 
     #[test]
@@ -793,7 +826,7 @@ mod tests {
         }
 
         let tail = stream.since(SeqNum(7));
-        assert_eq!(tail.len(), 3); // seqs 7, 8, 9
+        assert_eq!(tail.len(), 4); // seqs 7, 8, 9, 10
         assert_eq!(tail[0].seq, SeqNum(7));
     }
 

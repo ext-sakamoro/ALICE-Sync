@@ -20,6 +20,7 @@
 //!
 //! v0.3: Zero-copy event access via slice references
 
+use crate::converge::Converge;
 use crate::{Event, EventStream, Result, SyncError, World, WorldHash};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -64,6 +65,9 @@ pub struct Peer {
 pub struct Node {
     pub id: NodeId,
     world: World,
+    /// the keyed records the world is derived from (ALICE-Law G13: the same world for every
+    /// arrival order of the same events)
+    converge: Converge,
     events: EventStream,
     peers: BTreeMap<NodeId, Peer>,
     state: NodeState,
@@ -76,6 +80,7 @@ impl Node {
         Self {
             id,
             world: World::new(0),
+            converge: Converge::new(),
             events: EventStream::new(),
             peers: BTreeMap::new(),
             state: NodeState::Disconnected,
@@ -88,6 +93,7 @@ impl Node {
         Self {
             id,
             world: World::new(seed),
+            converge: Converge::new(),
             events: EventStream::new(),
             peers: BTreeMap::new(),
             state: NodeState::Disconnected,
@@ -120,28 +126,33 @@ impl Node {
     pub fn emit(&mut self, event: Event) -> Result<()> {
         self.events.push(event, self.id.0);
         let event_with_id = self.events.all().last().unwrap();
-        self.world.apply(event_with_id)?;
-        Ok(())
+        self.converge.apply(&mut self.world, event_with_id)
     }
 
-    /// Apply an event (from local or remote).
+    /// Apply an event received from another node, under the key it was stamped with (its
+    /// timestamp, origin and sequence number); events this node originates go through
+    /// [`Node::emit`].
+    ///
+    /// The world is a function of the set of events applied, not of their order: applying the same
+    /// events in any order, or one of them twice, gives the same world and the same hash (see
+    /// [`crate::converge`]). The node's Lamport clock moves past the event's timestamp, so the
+    /// events it emits afterwards are ordered after it.
+    ///
+    /// Node ids must be unique: two nodes with the same id stamp different events with the same
+    /// origin and sequence number, and a receiver keeps whichever arrives first.
     ///
     /// # Errors
     ///
-    /// Returns an error if the event fails to apply to the world state.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the event stream is empty after pushing (should never happen).
+    /// [`SyncError::Unstamped`] for an event no stream stamped (made by [`Event::new`] and never
+    /// emitted): it has no origin and sequence number to tell it apart from another one, so it is
+    /// refused rather than taken for a duplicate. An error if the event fails to apply to the world
+    /// state.
     pub fn apply_event(&mut self, event: &Event) -> Result<()> {
-        if event.seq.0 == 0 {
-            let owned = event.clone();
-            self.events.push(owned, event.origin);
-            let stamped = self.events.all().last().unwrap();
-            self.world.apply(stamped)
-        } else {
-            self.world.apply(event)
+        if !event.is_stamped() {
+            return Err(SyncError::Unstamped);
         }
+        self.events.observe(event.timestamp);
+        self.converge.apply(&mut self.world, event)
     }
 
     /// Add a peer
