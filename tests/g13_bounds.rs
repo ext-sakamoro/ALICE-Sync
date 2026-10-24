@@ -128,7 +128,11 @@ fn model(events: &[Event], max_live: usize, max_records: usize) -> Vec<EntityRow
         .cloned()
         .collect();
     let unbounded = apply_all(&kept, usize::MAX, usize::MAX);
-    let live: Vec<u32> = unbounded.iter_entities().map(|e| e.id).take(max_live).collect();
+    let live: Vec<u32> = unbounded
+        .iter_entities()
+        .map(|e| e.id)
+        .take(max_live)
+        .collect();
     rows(&unbounded, |id| live.contains(&id))
 }
 
@@ -169,7 +173,10 @@ fn bounded_worlds_are_the_same_for_every_arrival_order_and_match_the_model() {
     }
     assert_eq!(compared, 1200);
     // the bounds must bite in a good share of the cases, or this test checks nothing about them
-    assert!(bound_bit >= 100, "the bounds changed only {bound_bit} of 400 worlds");
+    assert!(
+        bound_bit >= 100,
+        "the bounds changed only {bound_bit} of 400 worlds"
+    );
 }
 
 #[test]
@@ -203,4 +210,36 @@ fn a_smaller_id_evicts_the_largest_and_a_despawn_readmits_the_next() {
     assert_eq!(ids(&w), [7, 9]);
     let mut copy = w.clone();
     assert_eq!(w.hash(), copy.recalculate_hash());
+}
+
+/// The world itself holds no more than `MAX_LIVE_ENTITIES`: a Spawn of a new id past it is refused,
+/// a Spawn of a live id is not, and a stored world never holds more than a decode accepts
+#[test]
+fn the_world_refuses_a_new_entity_past_the_limit() {
+    use alice_sync::world::MAX_LIVE_ENTITIES;
+    let spawn = |entity| {
+        Event::new(EventKind::Spawn {
+            entity,
+            kind: 0,
+            pos: [0, 0, 0],
+        })
+    };
+    let mut w = World::new(0);
+    let limit = u32::try_from(MAX_LIVE_ENTITIES).unwrap();
+    for id in 0..limit {
+        w.apply(&spawn(id)).unwrap();
+    }
+    assert!(matches!(
+        w.apply(&spawn(limit)),
+        Err(alice_sync::SyncError::TooManyEntities { limit: l }) if l == MAX_LIVE_ENTITIES
+    ));
+    assert_eq!(w.iter_entities().count(), MAX_LIVE_ENTITIES);
+    // a live id may spawn again (a new incarnation replaces it after its Despawn)
+    w.apply(&Event::new(EventKind::Despawn { entity: 0 }))
+        .unwrap();
+    w.apply(&spawn(0)).unwrap();
+    w.apply(&Event::new(EventKind::Despawn { entity: 7 }))
+        .unwrap();
+    w.apply(&spawn(limit)).unwrap();
+    assert_eq!(w.iter_entities().count(), MAX_LIVE_ENTITIES);
 }

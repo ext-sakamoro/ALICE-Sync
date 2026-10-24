@@ -182,7 +182,6 @@ impl Converge {
         }
         let rec = self.entities.entry(entity).or_default();
         let was_live = rec.live_spawn().is_some();
-        let admitted = self.admitted.contains(&entity);
         match event.kind {
             EventKind::Spawn { kind, pos, .. } => {
                 if rec.spawn.is_some_and(|s| s >= (key, kind, pos)) {
@@ -204,8 +203,10 @@ impl Converge {
                 if !rec.motions.insert((key, delta)) {
                     return Ok(()); // already in the set
                 }
-                if admitted && rec.live_spawn().is_some() {
-                    // motion is a wrapping sum, so adding it now equals replaying in key order
+                if rec.live_spawn().is_some() {
+                    // motion is a wrapping sum, so adding it now equals replaying in key order; a
+                    // waiting entity is not in the world, which ignores the event, and it is
+                    // rebuilt from its record when it enters
                     world.apply(event)?;
                 }
                 return Ok(());
@@ -216,7 +217,7 @@ impl Converge {
                 }
                 rec.props.insert(prop, (key, value));
                 return match rec.live_spawn() {
-                    Some(s) if admitted && key > s.0 => world.apply(event),
+                    Some(s) if key > s.0 => world.apply(event),
                     _ => Ok(()),
                 };
             }
@@ -228,7 +229,9 @@ impl Converge {
         match (was_live, is_live) {
             (false, true) => self.admit_or_wait(world, entity),
             (true, false) => self.end_live(world, entity),
-            _ if admitted => Self::rebuild(world, entity, &self.entities[&entity]),
+            _ if self.admitted.contains(&entity) => {
+                Self::rebuild(world, entity, &self.entities[&entity])
+            }
             _ => Ok(()),
         }
     }
