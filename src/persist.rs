@@ -1,5 +1,5 @@
 //! Durable form of ALICE-Sync's Law-bearing state, stamped with
-//! [`SYNC_SEMANTICS_ID`].
+//! [`SYNC_STATE_SEMANTICS_ID`] (the Hello handshake carries [`crate::SYNC_SEMANTICS_ID`]).
 //!
 //! The fixed-point types ([`Fixed`], [`Vec3Fixed`]) and the state built from
 //! them ([`Entity`], [`WorldState`], and with the `async` feature
@@ -20,15 +20,15 @@
 //! assert_eq!(decoded.status, IdStatus::Current);
 //! ```
 //!
-//! # Format (version 2)
+//! # Format (version 3)
 //!
 //! All integers little-endian.
 //!
 //! | bytes | content |
 //! |---|---|
 //! | 4 | magic `ASYN` |
-//! | 2 | format version, `2` |
-//! | 32 | the writer's `SYNC_SEMANTICS_ID` |
+//! | 2 | format version, `3` |
+//! | 32 | the writer's `SYNC_STATE_SEMANTICS_ID` |
 //! | 1 | type tag (`1` Fixed, `2` Vec3Fixed, `3` Entity, `4` WorldState, `5` LwwRegister) |
 //! | rest | the value's body |
 //!
@@ -48,17 +48,20 @@
 //! ([`crate::arena::Handle`]) are meaningful only inside the process that made
 //! them and are not kept across an encode and decode.
 //!
-//! Version 1 stored the arena layout (slots, generations, free list, a dense id
-//! map). It is still read, as [`FormatStatus::Legacy`]; [`decode_state_strict`]
-//! refuses it.
+//! Version 2 had today's body and carried the writer's full `SYNC_SEMANTICS_ID`. Version 1 also
+//! carried it and stored the arena layout (slots, generations, free list, a dense id map). Both are
+//! still read, as [`FormatStatus::Legacy`]; [`decode_state_strict`] refuses them.
 //!
 //! # Reading
 //!
-//! [`decode_state`] compares the stored identifier with this build's through
-//! [`check_semantics`]: its own identifier gives [`IdStatus::Current`], one in
-//! [`PREVIOUS_SYNC_SEMANTICS_IDS`](crate::PREVIOUS_SYNC_SEMANTICS_IDS) gives
-//! [`IdStatus::VerifiedPrevious`], and any other identifier is
-//! [`PersistError::Semantics`] naming both. A decoded `WorldState` is checked
+//! [`decode_state`] compares the identifier of a version 3 file with this build's through
+//! [`check_state_semantics`]: its own state identifier gives [`IdStatus::Current`], one in
+//! [`PREVIOUS_SYNC_STATE_SEMANTICS_IDS`](crate::PREVIOUS_SYNC_STATE_SEMANTICS_IDS) gives
+//! [`IdStatus::VerifiedPrevious`], and any other identifier is [`PersistError::Semantics`] naming
+//! both. A version 1 or 2 file carries a full identifier: it is looked up in
+//! [`PERSISTED_FULL_SYNC_SEMANTICS_IDS`] and the state identifier it maps to is checked the same
+//! way; a full identifier the table does not hold is [`PersistError::Semantics`]. The full
+//! identifier itself is never compared here. A decoded `WorldState` is checked
 //! for the invariants the world's unchecked accessors rely on (ids strictly
 //! ascending in version 2; the arena and id map in version 1), so a malformed
 //! file is an error rather than undefined behaviour. The memory a decode
@@ -70,17 +73,78 @@ use crate::arena::{Arena, Handle};
 use crate::crdt::LwwRegister;
 use crate::fixed_point::{Fixed, Vec3Fixed};
 pub use crate::semantics::IdStatus;
-use crate::semantics::{check_semantics, SemanticsMismatch, SYNC_SEMANTICS_ID};
+use crate::semantics::{check_state_semantics, SemanticsMismatch, SYNC_STATE_SEMANTICS_ID};
 use crate::world::{Entity, EntityProps, WorldState, MAX_LIVE_ENTITIES, MAX_PROPS};
 
 /// The first four bytes of every encoded value.
 pub const MAGIC: [u8; 4] = *b"ASYN";
 
 /// The format version this release writes.
-pub const FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 3;
 
 /// Earlier format versions this release still reads, as [`FormatStatus::Legacy`].
-pub const LEGACY_FORMAT_VERSIONS: [u16; 1] = [1];
+pub const LEGACY_FORMAT_VERSIONS: [u16; 2] = [1, 2];
+
+/// An earlier full `SYNC_SEMANTICS_ID` that format 1 and 2 files carry, with the state identifier
+/// it implies and the pins it was folded from (a test recomputes both folds from `pins`)
+#[derive(Debug)]
+pub struct PersistedFullId {
+    /// The full identifier stored in the header
+    pub full: [u8; 32],
+    /// The fold of the state pins among `pins`
+    pub state: [u8; 32],
+    /// The pins `full` is the fold of
+    pub pins: &'static [(&'static str, [u8; 32])],
+}
+
+/// The full identifiers format 1 and 2 files may carry. Read by [`decode_state`] only; the Hello
+/// handshake never consults it.
+pub const PERSISTED_FULL_SYNC_SEMANTICS_IDS: &[PersistedFullId] = &[PersistedFullId {
+    full: crate::semantics::hex32(
+        "705744d7b16a6be1f9510f9fa05ae9571a21f09660592e0bdf7841139173b772",
+    ),
+    state: crate::semantics::hex32(
+        "2591de396e984ec245198762324c0e540c7d476d64c122e53ced71225791efc6",
+    ),
+    pins: &[
+        (
+            "fixed",
+            crate::semantics::hex32(
+                "dc65b542978e3eb841faee4a7202f7416cee5cd6ce4fdd64cebc18a97ba31f9d",
+            ),
+        ),
+        (
+            "world",
+            crate::semantics::hex32(
+                "875410bef5edafaaff33e1e74a2c879b987e394f784f5ef361b6d828d531f593",
+            ),
+        ),
+        (
+            "crdt",
+            crate::semantics::hex32(
+                "54f05313b39a7b671f53bf5c87fb4e37cb1b64f40b402ef98517047c4a730bc8",
+            ),
+        ),
+        (
+            "receive",
+            crate::semantics::hex32(
+                "b0f4dd9b848374e314f1d88ae220e926d8a3d05d49d08b3a77d8d9673bb2b242",
+            ),
+        ),
+        (
+            "alice-physics",
+            crate::semantics::hex32(
+                "79ca52976f404dfb453908970ebe45f584970ff9344a56a06aae3fc9c3c38108",
+            ),
+        ),
+        (
+            "alice-analytics",
+            crate::semantics::hex32(
+                "d2209b30f6f1f45baa1b638bcdfee34ac64773b2e63b9c083b2e77afc691398e",
+            ),
+        ),
+    ],
+}];
 
 const HEADER_LEN: usize = 4 + 2 + 32;
 
@@ -181,10 +245,10 @@ pub trait Persist: sealed::Sealed + Sized {
     }
 }
 
-/// Encodes `value` with the header and this build's `SYNC_SEMANTICS_ID`.
+/// Encodes `value` with the header and this build's `SYNC_STATE_SEMANTICS_ID`.
 #[must_use]
 pub fn encode_state<T: Persist>(value: &T) -> Vec<u8> {
-    encode_with_id(value, &SYNC_SEMANTICS_ID)
+    encode_with_id(value, &SYNC_STATE_SEMANTICS_ID)
 }
 
 pub(crate) fn encode_with_id<T: Persist>(value: &T, id: &[u8; 32]) -> Vec<u8> {
@@ -205,7 +269,25 @@ pub(crate) fn encode_with_id<T: Persist>(value: &T, id: &[u8; 32]) -> Vec<u8> {
 /// this build's nor a verified earlier one, another type's tag, truncated or
 /// trailing bytes, or a value that violates its type's invariants.
 pub fn decode_state<T: Persist>(bytes: &[u8]) -> Result<Decoded<T>, PersistError> {
-    decode_with(bytes, check_semantics)
+    decode_with(bytes, check_stored_id)
+}
+
+/// The check of [`decode_state`]: a version 3 identifier is a state identifier; an earlier
+/// version's is a full identifier, read through [`PERSISTED_FULL_SYNC_SEMANTICS_IDS`]
+fn check_stored_id(id: &[u8; 32], format: FormatStatus) -> Result<IdStatus, SemanticsMismatch> {
+    match format {
+        FormatStatus::Current => check_state_semantics(id),
+        FormatStatus::Legacy(_) => match PERSISTED_FULL_SYNC_SEMANTICS_IDS
+            .iter()
+            .find(|e| e.full == *id)
+        {
+            Some(e) => check_state_semantics(&e.state),
+            None => Err(SemanticsMismatch {
+                stored: *id,
+                expected: SYNC_STATE_SEMANTICS_ID,
+            }),
+        },
+    }
 }
 
 /// Decodes a value written in the current format only.
@@ -224,7 +306,7 @@ pub fn decode_state_strict<T: Persist>(bytes: &[u8]) -> Result<Decoded<T>, Persi
 
 pub(crate) fn decode_with<T: Persist>(
     bytes: &[u8],
-    check: impl FnOnce(&[u8; 32]) -> Result<IdStatus, SemanticsMismatch>,
+    check: impl FnOnce(&[u8; 32], FormatStatus) -> Result<IdStatus, SemanticsMismatch>,
 ) -> Result<Decoded<T>, PersistError> {
     let mut r = Reader { bytes };
     if r.take(4)? != MAGIC {
@@ -242,7 +324,7 @@ pub(crate) fn decode_with<T: Persist>(
         .take(32)?
         .try_into()
         .map_err(|_| PersistError::Truncated)?;
-    let status = check(&id)?;
+    let status = check(&id, format)?;
     let value = read_tagged::<T>(&mut r, format)?;
     if !r.bytes.is_empty() {
         return Err(PersistError::TrailingBytes(r.bytes.len()));
@@ -263,7 +345,8 @@ fn read_tagged<T: Persist>(r: &mut Reader<'_>, format: FormatStatus) -> Result<T
         });
     }
     match format {
-        FormatStatus::Current => T::read_body(r),
+        // format 2 has today's body; only format 1 laid the world out differently
+        FormatStatus::Current | FormatStatus::Legacy(2) => T::read_body(r),
         FormatStatus::Legacy(_) => T::read_body_v1(r),
     }
 }
@@ -486,8 +569,8 @@ mod tests {
     fn a_previous_identifier_is_accepted_as_verified_previous() {
         let earlier = [7u8; 32];
         let bytes = encode_with_id(&Fixed(42), &earlier);
-        let d = decode_with::<Fixed>(&bytes, |id| {
-            check_semantics_against(id, &SYNC_SEMANTICS_ID, &[earlier])
+        let d = decode_with::<Fixed>(&bytes, |id, _| {
+            check_semantics_against(id, &SYNC_STATE_SEMANTICS_ID, &[earlier])
         })
         .unwrap();
         assert_eq!(d.value, Fixed(42));

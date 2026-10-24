@@ -8,3 +8,7 @@ tags = ["v{version}"]
 [[id]]
 path = "alice_sync::semantics::SYNC_SEMANTICS_ID"
 previous = "alice_sync::semantics::PREVIOUS_SYNC_SEMANTICS_IDS"
+
+[[id]]
+path = "alice_sync::semantics::SYNC_STATE_SEMANTICS_ID"
+previous = "alice_sync::semantics::PREVIOUS_SYNC_STATE_SEMANTICS_IDS"

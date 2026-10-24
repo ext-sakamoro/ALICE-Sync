@@ -110,6 +110,24 @@ pub const SYNC_SEMANTICS_ID: [u8; 32] =
 /// still reproduces (none yet: this is the first identifier).
 pub const PREVIOUS_SYNC_SEMANTICS_IDS: &[[u8; 32]] = &[];
 
+/// The pins of [`SYNC_SEMANTICS_PINS`] that the meaning of stored state depends on (`crdt`:
+/// `LwwRegister`; `fixed`: `Fixed` / `Vec3Fixed`; `receive`: the world built from events received
+/// out of order, which a stored world is; `world`: `Entity` / `WorldState`), in the fold's order.
+/// The bridge pins (`alice-physics`, `alice-analytics`) are not among them: no stored type holds a
+/// value of either crate.
+pub const SYNC_STATE_PIN_NAMES: [&str; 4] = ["crdt", "fixed", "receive", "world"];
+
+/// The identifier stored state carries (`crate::persist`, ALICE-Law G8): the fold of the pins
+/// named in [`SYNC_STATE_PIN_NAMES`], by the same procedure as [`SYNC_SEMANTICS_ID`]. A change of a
+/// bridge pin moves [`SYNC_SEMANTICS_ID`] (the Hello handshake, G7) and leaves this one, so stored
+/// worlds stay readable while a peer on another bridge is refused.
+pub const SYNC_STATE_SEMANTICS_ID: [u8; 32] =
+    hex32("2591de396e984ec245198762324c0e540c7d476d64c122e53ced71225791efc6");
+
+/// Earlier values of [`SYNC_STATE_SEMANTICS_ID`] whose pinned bits this release still reproduces
+/// (none yet: this is the first state identifier).
+pub const PREVIOUS_SYNC_STATE_SEMANTICS_IDS: &[[u8; 32]] = &[];
+
 /// How a stored or received identifier relates to this build's
 /// [`SYNC_SEMANTICS_ID`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +173,20 @@ impl std::error::Error for SemanticsMismatch {}
 /// [`SYNC_SEMANTICS_ID`] nor in [`PREVIOUS_SYNC_SEMANTICS_IDS`].
 pub fn check_semantics(stored: &[u8; 32]) -> Result<IdStatus, SemanticsMismatch> {
     check_semantics_against(stored, &SYNC_SEMANTICS_ID, PREVIOUS_SYNC_SEMANTICS_IDS)
+}
+
+/// Compares an identifier carried by stored state with this build's [`SYNC_STATE_SEMANTICS_ID`].
+///
+/// # Errors
+///
+/// [`SemanticsMismatch`] naming both identifiers when `stored` is neither
+/// [`SYNC_STATE_SEMANTICS_ID`] nor in [`PREVIOUS_SYNC_STATE_SEMANTICS_IDS`].
+pub fn check_state_semantics(stored: &[u8; 32]) -> Result<IdStatus, SemanticsMismatch> {
+    check_semantics_against(
+        stored,
+        &SYNC_STATE_SEMANTICS_ID,
+        PREVIOUS_SYNC_STATE_SEMANTICS_IDS,
+    )
 }
 
 /// [`check_semantics`] against an explicit current identifier and list of

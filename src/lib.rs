@@ -212,7 +212,10 @@ pub use physics_bridge::{
     sync_inputs_to_physics, world_hash_to_physics_checksum, PhysicsRollbackSession,
 };
 pub use protocol::{Message, Protocol};
-pub use semantics::{PREVIOUS_SYNC_SEMANTICS_IDS, SYNC_SEMANTICS_ID, SYNC_SEMANTICS_PINS};
+pub use semantics::{
+    PREVIOUS_SYNC_SEMANTICS_IDS, PREVIOUS_SYNC_STATE_SEMANTICS_IDS, SYNC_SEMANTICS_ID,
+    SYNC_SEMANTICS_PINS, SYNC_STATE_SEMANTICS_ID,
+};
 pub use world::{Entity, EntityProps, World, WorldHash, WorldState, MAX_PROPS};
 pub use world_soa::{Slot, WorldSoA, WorldStorage};
 

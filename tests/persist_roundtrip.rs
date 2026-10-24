@@ -11,7 +11,7 @@ use alice_sync::persist::{
     decode_state, decode_state_strict, encode_state, FormatStatus, IdStatus, Persist, PersistError,
     FORMAT_VERSION, MAGIC,
 };
-use alice_sync::{Entity, Event, EventKind, World, WorldState, SYNC_SEMANTICS_ID};
+use alice_sync::{Entity, Event, EventKind, World, WorldState, SYNC_STATE_SEMANTICS_ID};
 
 const ID: std::ops::Range<usize> = 6..38;
 
@@ -55,7 +55,7 @@ fn roundtrip<T: Persist + core::fmt::Debug>(value: &T) -> T {
     assert_eq!(&bytes[..4], &MAGIC);
     assert_eq!(&bytes[4..6], &FORMAT_VERSION.to_le_bytes());
     assert_eq!(
-        &bytes[ID], &SYNC_SEMANTICS_ID,
+        &bytes[ID], &SYNC_STATE_SEMANTICS_ID,
         "the writer stamps this build's identifier"
     );
     let d = decode_state::<T>(&bytes).expect("own bytes decode");
@@ -79,9 +79,9 @@ fn assert_mismatch<T: Persist + core::fmt::Debug>(value: &T) {
     match decode_state::<T>(&bytes) {
         Err(PersistError::Semantics(m)) => {
             assert_eq!(m.stored, stored);
-            assert_eq!(m.expected, SYNC_SEMANTICS_ID);
+            assert_eq!(m.expected, SYNC_STATE_SEMANTICS_ID);
             let text = m.to_string();
-            assert!(text.contains(&hex(&stored)) && text.contains(&hex(&SYNC_SEMANTICS_ID)));
+            assert!(text.contains(&hex(&stored)) && text.contains(&hex(&SYNC_STATE_SEMANTICS_ID)));
         }
         other => panic!("expected a semantics mismatch, got {other:?}"),
     }
@@ -162,14 +162,16 @@ fn header_and_framing_errors() {
     bad[0] = b'X';
     assert_eq!(decode_state::<Fixed>(&bad), Err(PersistError::BadMagic));
     let mut bad = bytes.clone();
-    bad[4] = 3;
+    bad[4] = 4;
     assert_eq!(
         decode_state::<Fixed>(&bad),
-        Err(PersistError::UnsupportedVersion(3))
+        Err(PersistError::UnsupportedVersion(4))
     );
     // version 1 is an earlier format: read, marked legacy, and refused by the strict reader
+    // (a version 1 header carries a full identifier, read through the table of earlier ones)
     let mut v1 = bytes.clone();
     v1[4] = 1;
+    v1[ID].copy_from_slice(&alice_sync::persist::PERSISTED_FULL_SYNC_SEMANTICS_IDS[0].full);
     let d = decode_state::<Fixed>(&v1).unwrap();
     assert_eq!((d.value, d.format), (Fixed(5), FormatStatus::Legacy(1)));
     assert_eq!(
