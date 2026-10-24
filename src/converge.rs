@@ -239,7 +239,7 @@ impl Converge {
     /// Whether `entity` has (or now gets) a record: when the table is full, a larger id than every
     /// kept one is not recorded, and a smaller one drops the largest kept record
     fn make_room_for(&mut self, world: &mut World, entity: u32) -> Result<bool> {
-        if self.entities.contains_key(&entity) || self.entities.len() < self.max_records {
+        if self.entities.len() < self.max_records || self.entities.contains_key(&entity) {
             return Ok(true);
         }
         let Some((&largest, _)) = self.entities.last_key_value() else {

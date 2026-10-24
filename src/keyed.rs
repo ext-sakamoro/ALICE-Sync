@@ -47,22 +47,36 @@ pub(crate) fn sorted<K: Ord + Copy, V: Copy>(map: &KeyedMap<K, V>) -> Vec<(K, V)
 /// are looked up in a keyed table
 pub(crate) const DENSE_IDS: u32 = 4 * crate::world::MAX_LIVE_ENTITIES as u32;
 
+/// A value of an [`IdIndex`] with a reserved value marking an empty dense entry
+pub(crate) trait Slot: Copy + PartialEq {
+    /// Never stored as a value
+    const EMPTY: Self;
+}
+
+impl Slot for crate::arena::Handle {
+    const EMPTY: Self = Self::INVALID;
+}
+
+impl Slot for u32 {
+    const EMPTY: Self = Self::MAX;
+}
+
 /// An index from entity id to `V`: a dense table for ids below its bound, a keyed table above
 #[derive(Debug, Clone)]
 pub(crate) struct IdIndex<V> {
     bound: u32,
-    dense: Vec<Option<V>>,
+    dense: Vec<V>,
     keyed: KeyedMap<u32, V>,
     len: usize,
 }
 
-impl<V: Copy> Default for IdIndex<V> {
+impl<V: Slot> Default for IdIndex<V> {
     fn default() -> Self {
         Self::with_dense_bound(DENSE_IDS)
     }
 }
 
-impl<V: Copy> IdIndex<V> {
+impl<V: Slot> IdIndex<V> {
     /// An empty index whose dense table covers ids below `bound` (at most [`DENSE_IDS`])
     pub(crate) fn with_dense_bound(bound: u32) -> Self {
         Self {
@@ -73,25 +87,29 @@ impl<V: Copy> IdIndex<V> {
         }
     }
 
+    #[inline]
     pub(crate) fn get(&self, id: u32) -> Option<V> {
-        if id < self.bound {
-            self.dense.get(id as usize).copied().flatten()
-        } else {
-            self.keyed.get(&id).copied()
+        // the dense table never reaches past the bound, so an id it holds is below it
+        match self.dense.get(id as usize) {
+            Some(&v) => (v != V::EMPTY).then_some(v),
+            None if id >= self.bound => self.keyed.get(&id).copied(),
+            None => None,
         }
     }
 
-    /// Set the entry of `id`, returning the one it replaces
+    /// Set the entry of `id`, returning the one it replaces (`value` must not be [`Slot::EMPTY`])
     pub(crate) fn insert(&mut self, id: u32, value: V) -> Option<V> {
+        debug_assert!(value != V::EMPTY, "the empty marker is not a value");
         let old = if id < self.bound {
             let i = id as usize;
             if i >= self.dense.len() {
                 // grow exactly, at least doubling, never past the bound
                 let want = (i + 1).max(2 * self.dense.len()).min(self.bound as usize);
                 self.dense.reserve_exact(want - self.dense.len());
-                self.dense.resize(want, None);
+                self.dense.resize(want, V::EMPTY);
             }
-            self.dense[i].replace(value)
+            let old = std::mem::replace(&mut self.dense[i], value);
+            (old != V::EMPTY).then_some(old)
         } else {
             self.keyed.insert(id, value)
         };
@@ -103,7 +121,10 @@ impl<V: Copy> IdIndex<V> {
 
     pub(crate) fn remove(&mut self, id: u32) -> Option<V> {
         let old = if id < self.bound {
-            self.dense.get_mut(id as usize).and_then(Option::take)
+            self.dense
+                .get_mut(id as usize)
+                .map(|v| std::mem::replace(v, V::EMPTY))
+                .filter(|&v| v != V::EMPTY)
         } else {
             self.keyed.remove(&id)
         };
@@ -124,7 +145,8 @@ impl<V: Copy> IdIndex<V> {
             self.dense
                 .iter()
                 .enumerate()
-                .filter_map(|(i, v)| v.map(|v| (u32::try_from(i).unwrap_or(u32::MAX), v))),
+                .filter(|(_, &v)| v != V::EMPTY)
+                .map(|(i, &v)| (u32::try_from(i).unwrap_or(u32::MAX), v)),
         );
         out.extend(sorted(&self.keyed));
         out
@@ -136,12 +158,12 @@ pub(crate) mod serde_sorted {
     //! `serde-raw` form of an [`IdIndex`]: the entries as a sequence in ascending id order, so the
     //! raw bytes do not depend on the table's key or on where the dense part ends
 
-    use super::IdIndex;
+    use super::{IdIndex, Slot};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub(crate) fn serialize<V, S>(index: &IdIndex<V>, s: S) -> Result<S::Ok, S::Error>
     where
-        V: Copy + Serialize,
+        V: Slot + Serialize,
         S: Serializer,
     {
         index.sorted().serialize(s)
@@ -149,7 +171,7 @@ pub(crate) mod serde_sorted {
 
     pub(crate) fn deserialize<'de, V, D>(d: D) -> Result<IdIndex<V>, D::Error>
     where
-        V: Copy + Deserialize<'de>,
+        V: Slot + Deserialize<'de>,
         D: Deserializer<'de>,
     {
         let entries: Vec<(u32, V)> = Vec::deserialize(d)?;
@@ -185,6 +207,8 @@ mod tests {
         assert_eq!(ix.sorted(), [(3, 1), (99, 2), (100, 3), (u32::MAX, 4)]);
         assert_eq!(ix.remove(99), Some(2));
         assert_eq!(ix.remove(99), None);
+        // an emptied or never-set dense entry reads as absent, not as the empty marker
+        assert_eq!((ix.get(99), ix.get(50), ix.get(0)), (None, None, None));
         assert_eq!(ix.remove(u32::MAX), Some(4));
         assert_eq!((ix.len(), ix.get(3), ix.get(100)), (2, Some(1), Some(3)));
         assert_eq!(ix.insert(3, 9), Some(1));
