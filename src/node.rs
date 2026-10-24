@@ -170,7 +170,7 @@ impl Node {
             events: self.events.since(crate::event::SeqNum(from)).to_vec(),
             checkpoints: author
                 .checkpoints()
-                .range(from + 1..)
+                .range((std::ops::Bound::Excluded(from), std::ops::Bound::Unbounded))
                 .map(|(_, c)| c.clone())
                 .collect(),
         };

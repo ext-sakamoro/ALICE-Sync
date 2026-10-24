@@ -41,6 +41,7 @@
 //! checkpoints, not by how they were grouped.
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use alice_identity::artifact::{
     sha256_payload, sign_artifact, verify_artifact, ArtifactError, ArtifactSignature,
@@ -538,17 +539,21 @@ impl Verifier {
                     });
                     break;
                 }
+                // each event is recorded as applied as it applies: an event that fails stays held, and
+                // the ones before it are not applied again
                 for s in state.applied + 1..=to {
+                    let e = state.pending.get(&s).expect("the run was found held above");
+                    apply(e).map_err(AuthorshipError::Apply)?;
                     let e = state
                         .pending
                         .remove(&s)
                         .expect("the run was found held above");
-                    apply(&e).map_err(AuthorshipError::Apply)?;
+                    state.head = chain_next(&state.head, &e);
+                    state.applied = s;
                     state.applied_events.insert(s, e);
                     applied += 1;
                 }
-                state.applied = to;
-                state.head = ours;
+                debug_assert_eq!(state.head, ours);
             }
         }
         match mismatch.or(full) {
@@ -558,24 +563,25 @@ impl Verifier {
     }
 
     /// The events applied and the checkpoints held for each origin, past `since` (the sequence number a
-    /// peer already has, per origin; 0 for an origin it does not name)
+    /// peer already has, per origin; 0 for an origin it does not name), up to the last held checkpoint
+    /// at or before the last applied event: a batch ends at a checkpoint its receiver can check the
+    /// chain against, so applied events past that checkpoint wait for the next one
     #[must_use]
     pub fn since(&self, since: &BTreeMap<Origin, u64>) -> SignedEvents {
         let mut out = SignedEvents::default();
         for (origin, state) in &self.authors {
             let from = since.get(origin).copied().unwrap_or(0);
-            out.events.extend(
-                state
-                    .applied_events
-                    .range(from + 1..)
-                    .map(|(_, e)| e.clone()),
-            );
-            out.checkpoints.extend(
-                state
-                    .checkpoints
-                    .range(from + 1..=state.applied)
-                    .map(|(_, c)| c.clone()),
-            );
+            let Some((&to, _)) = state.checkpoints.range(..=state.applied).next_back() else {
+                continue;
+            };
+            if to <= from {
+                continue;
+            }
+            let span = (Bound::Excluded(from), Bound::Included(to));
+            out.events
+                .extend(state.applied_events.range(span).map(|(_, e)| e.clone()));
+            out.checkpoints
+                .extend(state.checkpoints.range(span).map(|(_, c)| c.clone()));
         }
         out
     }
