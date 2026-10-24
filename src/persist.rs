@@ -73,7 +73,7 @@ use crate::crdt::LwwRegister;
 use crate::fixed_point::{Fixed, Vec3Fixed};
 pub use crate::semantics::IdStatus;
 use crate::semantics::{check_semantics, SemanticsMismatch, SYNC_SEMANTICS_ID};
-use crate::world::{Entity, EntityProps, WorldState, MAX_PROPS};
+use crate::world::{Entity, EntityProps, WorldState, MAX_LIVE_ENTITIES, MAX_PROPS};
 
 /// The first four bytes of every encoded value.
 pub const MAGIC: [u8; 4] = *b"ASYN";
@@ -385,6 +385,11 @@ impl Persist for WorldState {
     }
     fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
         let n = r.u32()? as usize;
+        if n > MAX_LIVE_ENTITIES {
+            return Err(PersistError::Malformed(
+                "more live entities than MAX_LIVE_ENTITIES",
+            ));
+        }
         // no more entities can follow than the bytes hold bodies for
         let mut entities = Arena::with_capacity(n.min(r.bytes.len() / ENTITY_BODY_LEN));
         let mut id_map = BTreeMap::new();

@@ -163,6 +163,10 @@ impl Entity {
 // World State - entities in an arena, looked up by id through an ordered map
 // ============================================================================
 
+/// Live entities a world holds at most: [`World::apply`] refuses a Spawn of a new id past it, and a
+/// stored world with more is malformed
+pub const MAX_LIVE_ENTITIES: usize = 1 << 16;
+
 /// World state container with O(log n) entity lookup by id
 ///
 /// The id map holds one entry per live entity, ordered by id: its memory follows the number of
@@ -254,6 +258,13 @@ impl World {
             }
 
             EventKind::Spawn { entity, kind, pos } => {
+                if self.state.get_handle(*entity).is_none()
+                    && self.state.id_map.len() >= MAX_LIVE_ENTITIES
+                {
+                    return Err(crate::SyncError::TooManyEntities {
+                        limit: MAX_LIVE_ENTITIES,
+                    });
+                }
                 let new_entity = Entity {
                     id: *entity,
                     kind: *kind,

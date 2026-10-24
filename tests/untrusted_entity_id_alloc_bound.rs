@@ -164,6 +164,12 @@ fn a_small_stored_world_naming_the_largest_id_decodes_within_its_own_size() {
     let mut claims_more = bytes.clone();
     claims_more[39..43].copy_from_slice(&u32::MAX.to_le_bytes());
     let (decoded, peak) = peak_during(|| decode_state::<WorldState>(&claims_more));
-    assert!(matches!(decoded, Err(PersistError::Truncated)));
+    assert!(matches!(decoded, Err(PersistError::Malformed(_))));
     assert!(peak <= SLACK, "a count of u32::MAX took {peak} bytes");
+    // a count at the limit, with one body after it: truncated, reserving by the bytes held
+    let limit = u32::try_from(alice_sync::world::MAX_LIVE_ENTITIES).unwrap();
+    claims_more[39..43].copy_from_slice(&limit.to_le_bytes());
+    let (decoded, peak) = peak_during(|| decode_state::<WorldState>(&claims_more));
+    assert!(matches!(decoded, Err(PersistError::Truncated)));
+    assert!(peak <= SLACK, "a count of {limit} took {peak} bytes");
 }

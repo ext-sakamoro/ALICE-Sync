@@ -37,7 +37,23 @@
 //! after its greatest Spawn (a Spawn with a greater key drops the Motions keyed before it, which can
 //! never count again); one frame. The Motions of one incarnation are not bounded: dropping them
 //! needs a point every peer has passed (causal stability), which this module does not track.
+//!
+//! # Bounds
+//!
+//! The number of entities is bounded without letting the arrival order decide which ones count:
+//!
+//! - records are kept for the [`MAX_ENTITY_RECORDS`] smallest entity ids named by any event; an
+//!   event naming a larger id while the table is full is not recorded, and a smaller one drops the
+//!   record of the largest. A dropped id is larger than every id kept from then on, so it is never
+//!   recorded again, and the ids kept are the same for every arrival order of the same events;
+//! - the world holds the [`MAX_LIVE_ENTITIES`] smallest live ids among the records; a live entity
+//!   past that waits, recorded but not in the world, and enters it (rebuilt from its record) when a
+//!   smaller one ends.
+//!
+//! Any peer can choose ids, so one that floods small ids takes the room of others: a bound per
+//! author needs events whose author is authenticated, which they do not carry yet.
 
+use crate::world::MAX_LIVE_ENTITIES;
 use crate::{Event, EventKind, Result, World};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -87,19 +103,52 @@ impl EntityRecord {
     }
 }
 
+/// Entity records kept at most: the smallest ids named by any event (see the module documentation)
+pub const MAX_ENTITY_RECORDS: usize = 4 * MAX_LIVE_ENTITIES;
+
 /// The records behind a node's world; see the module documentation
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Converge {
+    /// live entities the world holds at most (at most [`MAX_LIVE_ENTITIES`])
+    max_live: usize,
+    /// entity records kept at most
+    max_records: usize,
     entities: BTreeMap<u32, EntityRecord>,
+    /// live ids in the world: the [`MAX_LIVE_ENTITIES`] smallest live ids
+    admitted: BTreeSet<u32>,
+    /// live ids past the limit, in the records only
+    waiting: BTreeSet<u32>,
     /// the greatest (key, frame) Tick
     frame: Option<(Key, u64)>,
 }
 
+impl Default for Converge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Converge {
-    /// An empty record set
+    /// An empty record set with the limits [`MAX_LIVE_ENTITIES`] and [`MAX_ENTITY_RECORDS`]
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self::with_limits(MAX_LIVE_ENTITIES, MAX_ENTITY_RECORDS)
+    }
+
+    /// An empty record set holding at most `max_live` live entities in the world (no more than
+    /// [`MAX_LIVE_ENTITIES`], which the world itself refuses past) and at most `max_records` entity
+    /// records (no fewer than `max_live`)
+    #[must_use]
+    pub fn with_limits(max_live: usize, max_records: usize) -> Self {
+        let max_live = max_live.min(MAX_LIVE_ENTITIES);
+        Self {
+            max_live,
+            max_records: max_records.max(max_live),
+            entities: BTreeMap::new(),
+            admitted: BTreeSet::new(),
+            waiting: BTreeSet::new(),
+            frame: None,
+        }
     }
 
     /// Record `event` and bring `world` to the state of the recorded set; an event already in the
@@ -114,62 +163,130 @@ impl Converge {
     )]
     pub fn apply(&mut self, world: &mut World, event: &Event) -> Result<()> {
         let key = Key::of(event);
+        let entity = match event.kind {
+            EventKind::Spawn { entity, .. }
+            | EventKind::Despawn { entity }
+            | EventKind::Motion { entity, .. }
+            | EventKind::Property { entity, .. } => entity,
+            EventKind::Tick { frame } => {
+                if self.frame.is_some_and(|f| f >= (key, frame)) {
+                    return Ok(());
+                }
+                self.frame = Some((key, frame));
+                return world.apply(event);
+            }
+            EventKind::Input { .. } | EventKind::Custom { .. } => return Ok(()),
+        };
+        if !self.make_room_for(world, entity)? {
+            return Ok(()); // past the records kept, for every arrival order
+        }
+        let rec = self.entities.entry(entity).or_default();
+        let was_live = rec.live_spawn().is_some();
+        let admitted = self.admitted.contains(&entity);
         match event.kind {
-            EventKind::Spawn { entity, kind, pos } => {
-                let rec = self.entities.entry(entity).or_default();
+            EventKind::Spawn { kind, pos, .. } => {
                 if rec.spawn.is_some_and(|s| s >= (key, kind, pos)) {
                     return Ok(());
                 }
                 rec.spawn = Some((key, kind, pos));
                 rec.motions.retain(|&(k, _)| k > key);
-                Self::rebuild(world, entity, rec)
             }
-            EventKind::Despawn { entity } => {
-                let rec = self.entities.entry(entity).or_default();
+            EventKind::Despawn { .. } => {
                 if rec.despawn.is_some_and(|d| d >= key) {
                     return Ok(());
                 }
                 rec.despawn = Some(key);
-                Self::rebuild(world, entity, rec)
             }
-            EventKind::Motion { entity, delta } => {
-                let rec = self.entities.entry(entity).or_default();
+            EventKind::Motion { delta, .. } => {
                 if rec.spawn.is_some_and(|s| key <= s.0) {
                     return Ok(()); // an earlier incarnation's
                 }
                 if !rec.motions.insert((key, delta)) {
                     return Ok(()); // already in the set
                 }
-                if rec.live_spawn().is_some() {
+                if admitted && rec.live_spawn().is_some() {
                     // motion is a wrapping sum, so adding it now equals replaying in key order
                     world.apply(event)?;
                 }
-                Ok(())
+                return Ok(());
             }
-            EventKind::Property {
-                entity,
-                prop,
-                value,
-            } => {
-                let rec = self.entities.entry(entity).or_default();
+            EventKind::Property { prop, value, .. } => {
                 if rec.props.get(&prop).is_some_and(|&w| w >= (key, value)) {
                     return Ok(());
                 }
                 rec.props.insert(prop, (key, value));
-                match rec.live_spawn() {
-                    Some(s) if key > s.0 => world.apply(event),
+                return match rec.live_spawn() {
+                    Some(s) if admitted && key > s.0 => world.apply(event),
                     _ => Ok(()),
-                }
+                };
             }
-            EventKind::Tick { frame } => {
-                if self.frame.is_some_and(|f| f >= (key, frame)) {
-                    return Ok(());
-                }
-                self.frame = Some((key, frame));
-                world.apply(event)
+            EventKind::Tick { .. } | EventKind::Input { .. } | EventKind::Custom { .. } => {
+                unreachable!("handled above")
             }
-            EventKind::Input { .. } | EventKind::Custom { .. } => Ok(()),
         }
+        let is_live = rec.live_spawn().is_some();
+        match (was_live, is_live) {
+            (false, true) => self.admit_or_wait(world, entity),
+            (true, false) => self.end_live(world, entity),
+            _ if admitted => Self::rebuild(world, entity, &self.entities[&entity]),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether `entity` has (or now gets) a record: when the table is full, a larger id than every
+    /// kept one is not recorded, and a smaller one drops the largest kept record
+    fn make_room_for(&mut self, world: &mut World, entity: u32) -> Result<bool> {
+        if self.entities.contains_key(&entity) || self.entities.len() < self.max_records {
+            return Ok(true);
+        }
+        let Some((&largest, _)) = self.entities.last_key_value() else {
+            return Ok(true);
+        };
+        if entity > largest {
+            return Ok(false);
+        }
+        if self.admitted.contains(&largest) || self.waiting.contains(&largest) {
+            self.end_live(world, largest)?;
+        }
+        self.entities.remove(&largest);
+        Ok(true)
+    }
+
+    /// A live entity enters the world if it is among the smallest live ids, pushing the largest
+    /// admitted one out to wait; otherwise it waits
+    fn admit_or_wait(&mut self, world: &mut World, entity: u32) -> Result<()> {
+        if self.admitted.len() < self.max_live {
+            self.admitted.insert(entity);
+            return Self::rebuild(world, entity, &self.entities[&entity]);
+        }
+        match self.admitted.last().copied() {
+            Some(largest) if entity < largest => {
+                self.admitted.remove(&largest);
+                world.apply(&Event::new(EventKind::Despawn { entity: largest }))?;
+                self.waiting.insert(largest);
+                self.admitted.insert(entity);
+                Self::rebuild(world, entity, &self.entities[&entity])
+            }
+            _ => {
+                self.waiting.insert(entity);
+                Ok(())
+            }
+        }
+    }
+
+    /// A live entity ended (or its record is dropped): out of the world, and the smallest waiting
+    /// one takes its place
+    fn end_live(&mut self, world: &mut World, entity: u32) -> Result<()> {
+        if !self.admitted.remove(&entity) {
+            self.waiting.remove(&entity);
+            return Ok(());
+        }
+        world.apply(&Event::new(EventKind::Despawn { entity }))?;
+        if let Some(next) = self.waiting.pop_first() {
+            self.admitted.insert(next);
+            Self::rebuild(world, next, &self.entities[&next])?;
+        }
+        Ok(())
     }
 
     /// Replace `entity` in `world` with what its record says: removed, or its live Spawn followed by

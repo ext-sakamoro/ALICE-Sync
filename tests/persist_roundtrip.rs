@@ -326,9 +326,15 @@ fn a_version_2_world_out_of_id_order_is_refused() {
         refused(&twice),
         "entities are not in strictly ascending id order"
     );
-    // a count above the bodies that follow is truncated, not allocated for
+    // a count above the limit is malformed; one within it but above the bodies that follow is
+    // truncated, not allocated for
     let mut more = bytes.clone();
     more[body..body + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(refused(&more), "more live entities than MAX_LIVE_ENTITIES");
+    let limit = u32::try_from(alice_sync::world::MAX_LIVE_ENTITIES).unwrap();
+    more[body..body + 4].copy_from_slice(&(limit + 1).to_le_bytes());
+    assert_eq!(refused(&more), "more live entities than MAX_LIVE_ENTITIES");
+    more[body..body + 4].copy_from_slice(&limit.to_le_bytes());
     assert!(matches!(
         decode_state::<WorldState>(&more),
         Err(PersistError::Truncated)

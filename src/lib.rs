@@ -221,6 +221,11 @@ pub enum SyncError {
     /// [`Node::apply_event`] was given an event no stream stamped (sequence number 0, see
     /// [`Event::is_stamped`]): it cannot be told apart from another unstamped event
     Unstamped,
+    /// A Spawn of a new entity into a world that already holds [`world::MAX_LIVE_ENTITIES`]
+    TooManyEntities {
+        /// The limit
+        limit: usize,
+    },
     NetworkError(String),
     SerializationError(String),
 }
@@ -243,6 +248,9 @@ impl std::fmt::Display for SyncError {
                 f,
                 "Unstamped event: apply_event takes events a stream stamped (emit), not Event::new"
             ),
+            Self::TooManyEntities { limit } => {
+                write!(f, "Too many entities: the world holds at most {limit}")
+            }
             Self::NetworkError(msg) => write!(f, "Network error: {msg}"),
             Self::SerializationError(msg) => write!(f, "Serialization error: {msg}"),
         }
