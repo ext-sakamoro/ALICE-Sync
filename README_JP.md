@@ -722,8 +722,7 @@ cargo bench                         # Benchmarks
 著作権者との書面での合意が必要 条文は [LICENSE-Proprietary](LICENSE-Proprietary)
 それより前に公開した版は、公開時のライセンスのまま
 
-ライセンスの問い合わせ: <contact@extoria.co.jp>
-
+Enquiries: https://extoria.co.jp/
 ## 作者
 
 Moroya Sakamoto
