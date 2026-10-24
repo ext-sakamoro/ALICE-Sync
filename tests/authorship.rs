@@ -470,6 +470,21 @@ fn an_apply_that_fails_partway_keeps_the_events_before_it_applied_once() {
     assert_eq!(seen, vec![1, 2]);
     // no held checkpoint covers the two applied events yet, so they are not passed on
     assert!(v.since(&BTreeMap::new()).events.is_empty());
+    // the failing event and the ones after it stay held: an empty batch applies them from what is held
+    let mut held = Vec::new();
+    let n = v
+        .receive(&SignedEvents::default(), &pol, |e| {
+            held.push(e.seq.0);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        held,
+        vec![3, 4, 5],
+        "events 3 to 5 apply from what was held"
+    );
+    assert_eq!(n, 3);
+    // the same batch again applies nothing a second time
     let mut again = Vec::new();
     let n = v
         .receive(&batch, &pol, |e| {
@@ -477,12 +492,11 @@ fn an_apply_that_fails_partway_keeps_the_events_before_it_applied_once() {
             Ok(())
         })
         .unwrap();
-    assert_eq!(
-        again,
-        vec![3, 4, 5],
-        "events 1 and 2 are not applied a second time"
+    assert!(
+        again.is_empty(),
+        "no event is applied a second time: {again:?}"
     );
-    assert_eq!(n, 3);
+    assert_eq!(n, 0);
     assert_eq!(v.since(&BTreeMap::new()).events.len(), 5);
 }
 
