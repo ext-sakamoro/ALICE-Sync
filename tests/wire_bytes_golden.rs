@@ -1,6 +1,9 @@
 //! The bytes of `Event::to_bytes` and `Message::to_bytes` for one value of every event kind and every
-//! message variant, pinned by their SHA-256: a change of the encoding shows here as a changed pin
+//! message variant, pinned by their SHA-256 (the alice-serial format, ALICE-Serial format 1): a change
+//! of the encoding shows here as a changed pin; two messages are also written out byte by byte from
+//! the format's rules, and decoding refuses every malformed shape
 
+use alice_serial::Value;
 use alice_sync::authorship::Checkpoint;
 use alice_sync::event::{Event, EventId, EventKind, Origin, SeqNum};
 use alice_sync::protocol::Message;
@@ -136,80 +139,80 @@ fn messages() -> Vec<(&'static str, Message)> {
 const EVENT_PINS: &[(&str, usize, &str)] = &[
     (
         "motion",
-        54,
-        "adc13e8991e0e1a35e3f0eb06de4c30aa2415be615ab33b4b57c3c5a33a1212c",
+        82,
+        "3d24ec17a70c6598a52c75a1ea50cf0f48d6077cfb3bb7c903f1a4d93f2698c3",
     ),
     (
         "spawn",
-        56,
-        "df2ff9728675e8aa9c1c12b91a82e3a8c387bc3187e488b0d6f0679eca31acaa",
+        91,
+        "1b2241262b387f144067d74035c600c26c47cbc88e5c46a608ac6abbc6b84ed8",
     ),
     (
         "despawn",
-        48,
-        "8492824a159bd3caed7c750e8c22ddc27295a4cd83974477c3a485d8a7f0a825",
+        50,
+        "3d720861815b27f2c39e69f158d5557c1bcbabb7b46be213d5a714014b9b62e6",
     ),
     (
         "property",
-        54,
-        "629c1f5aa41c8a4699fa0b1db2de5c76b731788c2f13b94ac4a8de6dce1bda57",
+        60,
+        "7c63d244ff8e0b20d6c738f878f3f53860576877ec81ccc596a207c222260f3f",
     ),
     (
         "input",
-        50,
-        "7eb6a4258587b53b87454723816f8f64058fe19e5babdc3843071895f60b2517",
+        59,
+        "d2a3233020eeac636be263112f634760fb0f19dc4e57d192dc8a060368c06810",
     ),
     (
         "tick",
-        52,
-        "35bf2b6ea22ee3bde9a55cd3bb0863b72c61f0c0566a985e43234039d9e2f12e",
+        58,
+        "f67d3c8458d32cb8079333847e1ea71c26929d54a61b5164c2029a68c6c13619",
     ),
     (
         "custom",
-        62,
-        "0e5321fdca7f06e030ed8b4b8b6f306963ecc4b455e3f563402cd28f79841b8f",
+        71,
+        "b9bd5bd8f8bb879b2040edf4196bb4154f23d0b2bb8536871008039812366c6f",
     ),
 ];
 const MESSAGE_PINS: &[(&str, usize, &str)] = &[
     (
         "hello",
         60,
-        "fd8c3e27ffd35e1119685a9f3d194ecc09c8114febe8cbe8e1b58867cde393c6",
+        "ddfa1fc44bbd4968159434ab83bdb087e7a2fe33996806a8394a26ea110c6490",
     ),
     (
         "request_sync",
-        12,
-        "4296f021e7ffa298794c1bd4ba40a7c3fe30d696b5f00f64a4a17b52d718a415",
+        13,
+        "7e5cf62f2b394324db6d01aec3b122c835bc74db0dabfa33ee693b427aa8a265",
     ),
     (
         "events",
-        540,
-        "b56f1172bed2f5850339638614287d20c48ad157489ef3bf8cee34e18a4f66d0",
+        600,
+        "6f7478cdaf42d279cafbb37f83eaae36c24274d65019d64c494d640383987bc7",
     ),
     (
         "events_empty",
-        20,
-        "c75eeff218c4e3c7142fc8c157817d0bdf537b3446164e4fc26453bc42c4c62d",
+        22,
+        "44c6429a8d84e5ea02e94e44266d7602281f038ab3092f6292ce639639aff122",
     ),
     (
         "hash_check",
-        20,
-        "925e6538cc48c35ca66cec04d5d88e4e00c284aab5803465f34afa26215f2445",
+        14,
+        "b94e6331fe71b5b6a13fcd76afe3372be1b048d3646d209227a90fae166d4ed6",
     ),
     (
         "diverged",
-        20,
-        "d3038999170269d0a4b2b060754f6dbd9ed2433cd55fad4f18ff6190ef714d12",
+        22,
+        "a10b009783bbf63e50f588f41f639ceb2481a24fa98707e1d076f7817d4ade64",
     ),
     (
         "ack",
-        12,
-        "65536c129f290987890b4c6c880d43bdecac47e954651457a53a49b362da8969",
+        13,
+        "9ae5ea48f3ba13d41c63589111ab5219057dcf36825102fc597168d2fe32ca40",
     ),
     (
         "bye",
-        4,
-        "7aa8ca4a02506da9133d8f889678b76f716ce45d02e22fdb7b70a15e56a0eff8",
+        12,
+        "e4a1ed1366efb00408c077b58273986040ad67b269d53204f25b7b77576ffa36",
     ),
 ];
 
@@ -230,7 +233,7 @@ fn check(kind: &str, got: Vec<(&'static str, Vec<u8>)>, pins: &[(&str, usize, &s
 fn event_bytes_are_pinned() {
     let got = events()
         .into_iter()
-        .map(|(n, e)| (n, e.to_bytes()))
+        .map(|(n, e)| (n, e.to_bytes().unwrap()))
         .collect();
     check("event", got, EVENT_PINS);
 }
@@ -239,7 +242,7 @@ fn event_bytes_are_pinned() {
 fn message_bytes_are_pinned() {
     let got = messages()
         .into_iter()
-        .map(|(n, m)| (n, m.to_bytes()))
+        .map(|(n, m)| (n, m.to_bytes().unwrap()))
         .collect();
     check("message", got, MESSAGE_PINS);
 }
@@ -271,4 +274,155 @@ fn every_event_kind_and_message_variant_is_covered() {
     }
     assert_eq!(events().len(), 7);
     assert_eq!(messages().len(), 8);
+}
+
+#[test]
+fn two_messages_have_the_bytes_the_format_rules_give() {
+    // header "ALSR" + format 1 (u16 LE), then an array (dd, u32 BE count) of the variant number as a
+    // positive fixint and the fields
+    let header = [b'A', b'L', b'S', b'R', 1, 0];
+    let mut bye = header.to_vec();
+    bye.extend_from_slice(&[0xdd, 0, 0, 0, 1, 6]);
+    assert_eq!(Message::Bye.to_bytes().unwrap(), bye);
+    let mut ack = header.to_vec();
+    ack.extend_from_slice(&[0xdd, 0, 0, 0, 2, 5, 0xcf, 0, 0, 0, 0, 0, 0, 1, 0]);
+    assert_eq!(Message::Ack { seq: 256 }.to_bytes().unwrap(), ack);
+}
+
+#[test]
+fn every_sample_decodes_to_itself() {
+    for (n, e) in events() {
+        let b = e.to_bytes().unwrap();
+        assert_eq!(Event::from_bytes(&b), Some(e), "{n}");
+    }
+    for (n, m) in messages() {
+        let b = m.to_bytes().unwrap();
+        let back = Message::from_bytes(&b).unwrap_or_else(|| panic!("{n}"));
+        assert_eq!(back.to_bytes().unwrap(), b, "{n}");
+    }
+}
+
+fn enc(v: Value) -> Vec<u8> {
+    alice_serial::encode(&v).unwrap()
+}
+
+fn event_fields(kind: Value) -> Vec<Value> {
+    vec![
+        Value::U64(1),
+        Value::U64(2),
+        Value::Bytes(vec![7; 16]),
+        Value::U64(3),
+        kind,
+    ]
+}
+
+#[test]
+fn decoding_refuses_every_malformed_shape() {
+    let tick = |frame: Value| Value::Array(vec![Value::U64(5), frame]);
+    let good = enc(Value::Array(event_fields(tick(Value::U64(9)))));
+    assert!(
+        Event::from_bytes(&good).is_some(),
+        "the reference shape decodes"
+    );
+    let mut trailing = good.clone();
+    trailing.push(0);
+    let mut short = event_fields(tick(Value::U64(9)));
+    short.pop();
+    let mut long = event_fields(tick(Value::U64(9)));
+    long.push(Value::U64(0));
+    let mut origin_15 = event_fields(tick(Value::U64(9)));
+    origin_15[2] = Value::Bytes(vec![7; 15]);
+    let spawn = |entity: Value, x: Value| {
+        Value::Array(vec![
+            Value::U64(1),
+            entity,
+            Value::U64(1),
+            Value::Array(vec![x, Value::I64(0), Value::I64(0)]),
+        ])
+    };
+    assert!(Event::from_bytes(&enc(Value::Array(event_fields(spawn(
+        Value::U64(1),
+        Value::I64(-1)
+    )))))
+    .is_some());
+    for (why, bytes) in [
+        ("trailing byte", trailing),
+        ("a field short", enc(Value::Array(short))),
+        ("a field too many", enc(Value::Array(long))),
+        ("origin of 15 bytes", enc(Value::Array(origin_15))),
+        (
+            "unknown kind",
+            enc(Value::Array(event_fields(Value::Array(vec![Value::U64(
+                7,
+            )])))),
+        ),
+        (
+            "kind with a field too many",
+            enc(Value::Array(event_fields(Value::Array(vec![
+                Value::U64(5),
+                Value::U64(1),
+                Value::U64(2),
+            ])))),
+        ),
+        (
+            "signed where unsigned",
+            enc(Value::Array(event_fields(tick(Value::I64(9))))),
+        ),
+        (
+            "entity past u32",
+            enc(Value::Array(event_fields(spawn(
+                Value::U64(1 << 32),
+                Value::I64(0),
+            )))),
+        ),
+        (
+            "delta past i16",
+            enc(Value::Array(event_fields(spawn(
+                Value::U64(1),
+                Value::I64(40_000),
+            )))),
+        ),
+        (
+            "unsigned where signed",
+            enc(Value::Array(event_fields(spawn(
+                Value::U64(1),
+                Value::U64(1),
+            )))),
+        ),
+    ] {
+        assert_eq!(Event::from_bytes(&bytes), None, "{why}");
+    }
+    for (why, v) in [
+        ("unknown variant", Value::Array(vec![Value::U64(7)])),
+        (
+            "Bye with a field",
+            Value::Array(vec![Value::U64(6), Value::U64(0)]),
+        ),
+        (
+            "Hello with a 31-byte id",
+            Value::Array(vec![
+                Value::U64(0),
+                Value::U64(1),
+                Value::U64(2),
+                Value::U64(3),
+                Value::Bytes(vec![0; 31]),
+            ]),
+        ),
+        (
+            "Events with a bad checkpoint",
+            Value::Array(vec![
+                Value::U64(2),
+                Value::Array(vec![]),
+                Value::Array(vec![Value::Array(vec![
+                    Value::Bytes(vec![0; 16]),
+                    Value::U64(1),
+                    Value::Bytes(vec![0; 31]),
+                    Value::Bytes(vec![]),
+                ])]),
+            ]),
+        ),
+        ("not an array", Value::U64(6)),
+    ] {
+        assert!(Message::from_bytes(&enc(v)).is_none(), "{why}");
+    }
 }

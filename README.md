@@ -294,8 +294,8 @@ Coalesce Effect (same entity x1000):
   Speedup: 5.5x
 
 Serialization:
-  bincode:             46 bytes
-  bitcode:             18 bytes (61% smaller)
+  alice-serial:        74 bytes  <- Event::to_bytes
+  bitcode:             19 bytes (75% smaller)  <- Event::to_compact_bytes, the wire
 
 Single Event Apply:
   Motion event:        30 ns
