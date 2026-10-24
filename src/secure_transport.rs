@@ -7,9 +7,14 @@
 //! - a connection becomes a peer only after the handshake: the peer proved a device key certified by a
 //!   master key the [`PeerPolicy`] knows, and (on the dialling side) the accepting side confirmed it on
 //!   the new keys
-//! - [`SyncTransport::send_to`] dials an address it has no connection to, so a node can reply to a peer
-//!   it has never accepted from; [`SecureTransport::dialer`] makes a transport that only dials and
-//!   opens no listener
+//! - the handshake is Noise IK: the dialling side must hold the certificate of the device it dials, and
+//!   takes that device's Noise static key from it. The transport keeps a book of certificates by address
+//!   ([`SecureTransport::add_peer_cert`], or [`SecureTransport::connect`] with the certificate); every dial
+//!   checks the book's certificate against the policy as it stands, and an address without a certificate is
+//!   never dialled ([`TransportError::NoPeerCert`])
+//! - [`SyncTransport::send_to`] dials an address in the book it has no connection to, so a node can reply
+//!   to a peer it has never accepted from; [`SecureTransport::dialer`] makes a transport that only dials
+//!   and opens no listener
 //! - a message of any size up to [`MAX_MESSAGE`] is sent as one or more channel messages; the first
 //!   carries the kind (1 byte: [`KIND_MESSAGE`] for a Sync message, [`KIND_BYTES`] for application
 //!   bytes) and the total length (4 bytes, little-endian), and the rest follow in order on the same
@@ -96,6 +101,8 @@ pub struct SecureTransport<P> {
     policy: Arc<P>,
     handshake_timeout: Duration,
     peers: Arc<Peers>,
+    /// The certificate to dial each address with
+    book: Mutex<BTreeMap<SocketAddr, DeviceCert>>,
     /// Held while dialling, so that two sends to a new address open one connection
     dialling: Mutex<()>,
     next_conn: AtomicU64,
@@ -178,6 +185,7 @@ impl<P: PeerPolicy + Send + Sync + 'static> SecureTransport<P> {
             policy: Arc::new(policy),
             handshake_timeout,
             peers: Arc::new(Mutex::new(BTreeMap::new())),
+            book: Mutex::new(BTreeMap::new()),
             dialling: Mutex::new(()),
             next_conn: AtomicU64::new(0),
             refused: AtomicU64::new(0),
@@ -237,22 +245,42 @@ impl<P: PeerPolicy + Send + Sync + 'static> SecureTransport<P> {
         })
     }
 
-    /// Dial a peer and complete the handshake; a connection already open to `addr` is replaced
+    /// Put `cert` in the book as the certificate to dial `addr` with, replacing the one held for it; an open
+    /// connection to `addr` is kept
+    pub async fn add_peer_cert(&self, addr: SocketAddr, cert: DeviceCert) {
+        self.book.lock().await.insert(addr, cert);
+    }
+
+    /// The certificate the book holds for `addr`
+    pub async fn book_cert(&self, addr: SocketAddr) -> Option<DeviceCert> {
+        self.book.lock().await.get(&addr).cloned()
+    }
+
+    /// Put `cert` in the book for `addr` (as [`Self::add_peer_cert`]), dial it and complete the handshake;
+    /// a connection already open to `addr` is replaced
     ///
     /// # Errors
-    /// As [`Self::accept`]
-    pub async fn connect(&self, addr: SocketAddr) -> TransportResult<()> {
+    /// As [`Self::accept`]; [`TransportError::Codec`] when the policy refuses `cert` (nothing is written)
+    pub async fn connect(&self, addr: SocketAddr, cert: DeviceCert) -> TransportResult<()> {
+        self.add_peer_cert(addr, cert).await;
         let _dialling = self.dialling.lock().await;
         self.dial(addr).await
     }
 
     async fn dial(&self, addr: SocketAddr) -> TransportResult<()> {
+        let cert = self
+            .book_cert(addr)
+            .await
+            .ok_or(TransportError::NoPeerCert(addr))?;
+        // checked before the TCP connection: a refused certificate reaches nothing on the other side
+        alice_channel::check_cert(&cert, &*self.policy).map_err(channel_error)?;
         let opened = tokio::time::timeout(self.handshake_timeout, async {
             let stream = TcpStream::connect(addr).await.map_err(TransportError::Io)?;
             AsyncSecureChannel::connect_with_timeout(
                 stream,
                 &self.cred,
                 &*self.policy,
+                &cert,
                 self.handshake_timeout,
             )
             .await

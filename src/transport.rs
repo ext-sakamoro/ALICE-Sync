@@ -34,6 +34,9 @@ pub enum TransportError {
     Closed,
     /// A received message refused by the session's handshake (ALICE-Law G7)
     Handshake(crate::protocol::HandshakeRefused),
+    /// No certificate is held for the address, so it cannot be dialled (the secure transport dials only a
+    /// device whose certificate it holds)
+    NoPeerCert(std::net::SocketAddr),
 }
 
 impl From<std::io::Error> for TransportError {
@@ -49,6 +52,7 @@ impl std::fmt::Display for TransportError {
             Self::Codec(s) => write!(f, "transport codec: {s}"),
             Self::Closed => write!(f, "transport closed"),
             Self::Handshake(r) => write!(f, "handshake refused: {r}"),
+            Self::NoPeerCert(a) => write!(f, "no peer certificate for {a}"),
         }
     }
 }
