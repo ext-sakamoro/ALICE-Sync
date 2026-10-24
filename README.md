@@ -33,31 +33,52 @@ alice-sync = { version = "0.7", features = ["async"] }
 ## Quick Start
 
 ```rust
-use alice_sync::{Node, NodeId, Event, EventKind};
+use alice_identity::artifact::Revocation;
+use alice_identity::device_cert::DeviceCert;
+use alice_identity::did::Did;
+use alice_sign::{KeyPair, PublicKey};
+use alice_sync::authorship::{Author, TrustPolicy};
+use alice_sync::{Event, EventKind, Node, NodeId};
+use std::collections::BTreeMap;
+
+// Each node's events are signed by its device key, certified by its owner's master key
+fn author(seed: u8, name: &str) -> (Author, PublicKey) {
+    let master = KeyPair::from_seed([seed; 32]);
+    let device = KeyPair::from_seed([seed + 100; 32]);
+    let did = Did::parse(&format!("did:alice:{name}")).unwrap();
+    let cert = DeviceCert::issue(&master, &did, device.public().0, [0; 32], 0, u64::MAX, [seed; 16])
+        .unwrap();
+    (Author::new(device, cert).unwrap(), master.public())
+}
+
+// Node B accepts the events of the subject whose master key it knows
+struct Trust(PublicKey);
+impl TrustPolicy for Trust {
+    fn master_of(&self, subject: &Did) -> Option<PublicKey> {
+        (subject.to_string() == "did:alice:a").then_some(self.0)
+    }
+    fn revocation(&self) -> Revocation<'_> {
+        Revocation::NoListAvailable
+    }
+    fn now(&self) -> u64 {
+        1
+    }
+}
 
 fn main() {
-    // Create two nodes with the same seed
-    let mut node_a = Node::new(NodeId(1));
-    let mut node_b = Node::new(NodeId(2));
+    let (a, master_a) = author(1, "a");
+    let (b, _) = author(2, "b");
+    let mut node_a = Node::with_author(NodeId(1), a);
+    let mut node_b = Node::with_author(NodeId(2), b);
 
-    // Node A: Spawn an entity (emit stamps it with A's id, sequence and Lamport time)
-    node_a.emit(Event::new(EventKind::Spawn {
-        entity: 1,
-        kind: 0,
-        pos: [0, 0, 0],  // i16 fixed-point coordinates
-    })).unwrap();
+    // Node A: Spawn an entity, then move it (emit stamps each with A's origin, sequence and Lamport time)
+    node_a.emit(Event::new(EventKind::Spawn { entity: 1, kind: 0, pos: [0, 0, 0] })).unwrap();
+    node_a.emit(Event::new(EventKind::Motion { entity: 1, delta: [100, 0, 0] })).unwrap();
 
-    // Node A: Move the entity
-    node_a.emit(Event::new(EventKind::Motion {
-        entity: 1,
-        delta: [100, 0, 0],  // Move right
-    })).unwrap();
-
-    // Sync: Send events to Node B (not world data!)
-    // Any arrival order, or a duplicate, gives the same world
-    for e in node_a.events().all() {
-        node_b.apply_event(e).unwrap();
-    }
+    // Sync: send A's events with its signed checkpoint (not world data!); B applies them once it
+    // verifies the checkpoint. Any arrival order or grouping, or a duplicate, gives the same world
+    let batch = node_a.signed_events_since(&BTreeMap::new()).unwrap();
+    assert_eq!(node_b.receive(&batch, &Trust(master_a)).unwrap(), 2);
 
     // Verify: Both nodes have identical world state
     assert_eq!(node_a.world_hash(), node_b.world_hash());
@@ -452,9 +473,9 @@ match rollback.add_remote_input(confirmed_input) {
 
 ## C-ABI FFI (Unity / UE5)
 
-79 `extern "C"` functions covering all core types. Enable with `--features ffi`.
+85 `extern "C"` functions covering all core types. Enable with `--features ffi`.
 
-To sync two nodes, emit on the sender (`as_sync_node_emit`) and give the receiver the sender's stamped events (`as_sync_node_event_at`, 0 to `as_sync_node_events_count` - 1) through `as_sync_node_apply_event`: any arrival order, or a duplicate, gives the same world. An event made with `as_sync_event_new_*` and never emitted has no origin or sequence number and is refused (-2). Node ids must be unique: two nodes with the same id stamp different events with the same key; every receiver still converges to one world (the colliding events are ordered by their content), but not to what either node meant.
+To sync two nodes, make each with `as_sync_node_with_author` (its device key seed and certificate), emit on the sender (`as_sync_node_emit`), hand the sender's `as_sync_node_signed_events` bytes to the receiver's `as_sync_node_receive` with a trust store (`as_sync_trust_new` / `as_sync_trust_add`, the master key of each subject it accepts) and the time: an author's events apply once its signed checkpoint verifies, and any arrival order or grouping, or a duplicate, gives the same world. Events without a covering checkpoint (-2), a refused checkpoint (-3), events that do not match it (-4), a second history of one author (-5) and an author's held events past the bound (-6) are refused.
 
 ### Coverage
 
@@ -462,9 +483,11 @@ To sync two nodes, emit on the sender (`as_sync_node_emit`) and give the receive
 |--------|-----------|-------------|
 | World (AoS) | 8 | new, free, hash, entity_count, frame, apply_event, get_position, recalculate_hash |
 | WorldSoA | 5 | new, free, hash, entity_count, apply_event |
-| Node | 12 | new, with_seed, free, hash, state, emit, apply (events from another node, any order), event_at, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
-| Event | 11 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes, origin, seq, timestamp |
-| EventStream | 7 | new, free, push, len, is_empty, current_seq, total_bytes |
+| Node | 14 | new, with_seed, with_author, free, hash, state, emit, signed_events (with the author's checkpoint), receive (signed events from other nodes, any order), event_at, add_peer (checks the peer's `SYNC_SEMANTICS_ID`), entity_count, events_count, events_bytes |
+| Trust | 3 | new, add (a subject's master key), free |
+| Bytes | 1 | free (the bytes of signed_events) |
+| Event | 11 | new_motion, new_spawn, new_despawn, new_property, new_input, new_tick, free, size_bytes, origin (16 bytes), seq, timestamp |
+| EventStream | 7 | new, free, push (with a 16-byte origin), len, is_empty, current_seq, total_bytes |
 | InputFrame | 10 | new, free, set/get movement, set/get actions, set/get aim, get_frame, get_player_id |
 | InputFrameArray | 3 | free, len, get |
 | Lockstep | 5 | new (takes the peers' `SYNC_SEMANTICS_ID`), free, add_local/remote_input, ready, advance, confirmed_frame, record_checksum |

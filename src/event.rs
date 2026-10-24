@@ -20,6 +20,38 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct EventId(pub u64);
 
+/// The author of an event: 16 bytes derived from the author's device certificate
+/// ([`crate::authorship::origin_of`]), or from a node id for a node without an author
+/// ([`Origin::of_node`]). Ordered by its bytes.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    Encode,
+    Decode,
+)]
+pub struct Origin(pub [u8; 16]);
+
+impl Origin {
+    /// The origin of a node without an author: eight zero bytes then the node id, big-endian. Its events
+    /// carry no author's signature, so other nodes do not accept them ([`crate::authorship`])
+    #[must_use]
+    pub const fn of_node(id: u64) -> Self {
+        let b = id.to_be_bytes();
+        Self([
+            0, 0, 0, 0, 0, 0, 0, 0, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        ])
+    }
+}
+
 /// Sequence number for causal ordering
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Encode, Decode,
@@ -107,8 +139,8 @@ pub struct Event {
     pub id: EventId,
     /// Sequence number for ordering
     pub seq: SeqNum,
-    /// Origin node
-    pub origin: u64,
+    /// The event's author
+    pub origin: Origin,
     /// Timestamp (logical clock)
     pub timestamp: u64,
     /// The actual event data
@@ -131,7 +163,7 @@ impl Event {
         Self {
             id: EventId(0),
             seq: SeqNum(0),
-            origin: 0,
+            origin: Origin([0; 16]),
             timestamp: 0,
             kind,
         }
@@ -164,7 +196,7 @@ impl Event {
     /// Get approximate size in bytes (compact format)
     #[must_use]
     pub const fn size_bytes(&self) -> usize {
-        // Header: id(8) + seq(8) + origin(8) + timestamp(8) = 32
+        // Header: id(8) + seq(8) + origin(16) + timestamp(8) = 40
         // But with varint encoding, typically 8-16 bytes
         let header = 12; // Estimated compressed header
         let payload = match &self.kind {
@@ -260,7 +292,7 @@ pub enum EventType {
 #[repr(C)]
 pub struct EventMeta {
     pub seq: u64,
-    pub origin: u64,
+    pub origin: Origin,
     pub event_type: EventType,
     pub index: u32, // Index into the type-specific array
 }
@@ -310,7 +342,7 @@ impl EventStream {
     /// Push a new event, assigning ID, a sequence number (1 for the first event) and a Lamport
     /// timestamp: the sequence number, or more when [`EventStream::observe`] saw a later timestamp
     /// from another node
-    pub fn push(&mut self, mut event: Event, origin: u64) -> EventId {
+    pub fn push(&mut self, mut event: Event, origin: Origin) -> EventId {
         let seq = self.next_seq + 1;
         event.id = EventId(self.next_id);
         event.seq = SeqNum(seq);
@@ -687,8 +719,8 @@ mod tests {
         let mut stream = EventStream::new();
         assert!(stream.is_empty());
 
-        let id0 = stream.push(Event::new(EventKind::Tick { frame: 1 }), 1);
-        let id1 = stream.push(Event::new(EventKind::Tick { frame: 2 }), 1);
+        let id0 = stream.push(Event::new(EventKind::Tick { frame: 1 }), Origin::of_node(1));
+        let id1 = stream.push(Event::new(EventKind::Tick { frame: 2 }), Origin::of_node(1));
 
         assert_eq!(stream.len(), 2);
         assert_eq!(id0.0, 0);
@@ -712,7 +744,7 @@ mod tests {
                 entity: 1,
                 delta: [1, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
         stream.push(
             Event::new(EventKind::Spawn {
@@ -720,31 +752,34 @@ mod tests {
                 kind: 0,
                 pos: [0, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
-        stream.push(Event::new(EventKind::Despawn { entity: 3 }), 0);
+        stream.push(
+            Event::new(EventKind::Despawn { entity: 3 }),
+            Origin::of_node(0),
+        );
         stream.push(
             Event::new(EventKind::Property {
                 entity: 4,
                 prop: 1,
                 value: 7,
             }),
-            0,
+            Origin::of_node(0),
         );
         stream.push(
             Event::new(EventKind::Input {
                 player: 0,
                 code: 99,
             }),
-            0,
+            Origin::of_node(0),
         );
-        stream.push(Event::new(EventKind::Tick { frame: 5 }), 0);
+        stream.push(Event::new(EventKind::Tick { frame: 5 }), Origin::of_node(0));
         stream.push(
             Event::new(EventKind::Custom {
                 type_id: 2,
                 payload: [0u8; 16],
             }),
-            0,
+            Origin::of_node(0),
         );
 
         let stats = stream.soa_stats();
@@ -765,14 +800,14 @@ mod tests {
                 entity: 10,
                 delta: [5, -3, 2],
             }),
-            0,
+            Origin::of_node(0),
         );
         stream.push(
             Event::new(EventKind::Motion {
                 entity: 20,
                 delta: [0, 0, 1],
             }),
-            0,
+            Origin::of_node(0),
         );
 
         let motions = stream.all_motions();
@@ -792,7 +827,7 @@ mod tests {
                 kind: 3,
                 pos: [1, 2, 3],
             }),
-            0,
+            Origin::of_node(0),
         );
 
         let spawns = stream.all_spawns();
@@ -810,7 +845,7 @@ mod tests {
                 Event::new(EventKind::Tick {
                     frame: u64::from(i),
                 }),
-                0,
+                Origin::of_node(0),
             );
         }
 
@@ -822,8 +857,8 @@ mod tests {
     #[test]
     fn test_event_stream_since_zero_returns_all() {
         let mut stream = EventStream::new();
-        stream.push(Event::new(EventKind::Tick { frame: 0 }), 0);
-        stream.push(Event::new(EventKind::Tick { frame: 1 }), 0);
+        stream.push(Event::new(EventKind::Tick { frame: 0 }), Origin::of_node(0));
+        stream.push(Event::new(EventKind::Tick { frame: 1 }), Origin::of_node(0));
 
         assert_eq!(stream.since(SeqNum(0)).len(), 2);
     }
@@ -836,7 +871,7 @@ mod tests {
                 entity: 1,
                 delta: [1, 0, 0],
             }),
-            42,
+            Origin::of_node(42),
         );
         stream.push(
             Event::new(EventKind::Spawn {
@@ -844,13 +879,13 @@ mod tests {
                 kind: 0,
                 pos: [0, 0, 0],
             }),
-            42,
+            Origin::of_node(42),
         );
 
         let meta = stream.metadata();
         assert_eq!(meta.len(), 2);
         assert_eq!(meta[0].event_type, EventType::Motion);
-        assert_eq!(meta[0].origin, 42);
+        assert_eq!(meta[0].origin, Origin::of_node(42));
         assert_eq!(meta[0].index, 0);
         assert_eq!(meta[1].event_type, EventType::Spawn);
         assert_eq!(meta[1].index, 0);
@@ -866,7 +901,7 @@ mod tests {
                 entity: 1,
                 delta: [0, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
         let after_one = stream.total_bytes();
         assert!(after_one > 0);
@@ -877,7 +912,7 @@ mod tests {
                 kind: 0,
                 pos: [0, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
         assert!(stream.total_bytes() > after_one);
     }
@@ -890,7 +925,7 @@ mod tests {
                 entity: 1,
                 delta: [10, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
 
         let bytes = stream.to_compact_bytes();

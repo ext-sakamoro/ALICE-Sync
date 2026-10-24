@@ -61,8 +61,12 @@ pub enum Message {
     /// Request events since sequence number
     RequestSync { since_seq: u64 },
 
-    /// Batch of events (compact encoded)
-    Events { events: Vec<Event> },
+    /// Batch of events with their authors' checkpoints that cover them (compact encoded); a receiver
+    /// applies an event only under a verified checkpoint ([`crate::authorship`])
+    Events {
+        events: Vec<Event>,
+        checkpoints: Vec<crate::authorship::Checkpoint>,
+    },
 
     /// Periodic hash check
     HashCheck { seq: u64, world_hash: WorldHash },
@@ -148,10 +152,13 @@ impl Protocol {
         Message::RequestSync { since_seq }
     }
 
-    /// Create events message
+    /// Create events message from signed events ([`crate::Node::signed_events_since`])
     #[must_use]
-    pub const fn events(&self, events: Vec<Event>) -> Message {
-        Message::Events { events }
+    pub fn events(&self, batch: crate::authorship::SignedEvents) -> Message {
+        Message::Events {
+            events: batch.events,
+            checkpoints: batch.checkpoints,
+        }
     }
 
     /// Check if hash check is due
@@ -248,7 +255,10 @@ mod tests {
             }),
         ];
 
-        let msg = Message::Events { events };
+        let msg = Message::Events {
+            events,
+            checkpoints: Vec::new(),
+        };
         let compact = msg.to_compact_bytes();
         let bincode_size = msg.to_bytes().len();
 

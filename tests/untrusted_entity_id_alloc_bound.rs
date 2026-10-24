@@ -10,9 +10,30 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+/// The sink a node applies the events it accepts through (`Converge` over a `World`)
+struct Sink {
+    world: alice_sync::World,
+    converge: alice_sync::converge::Converge,
+}
+
+impl Sink {
+    fn new() -> Self {
+        Self {
+            world: alice_sync::World::new(0),
+            converge: alice_sync::converge::Converge::new(),
+        }
+    }
+    fn apply_event(&mut self, e: &alice_sync::Event) -> alice_sync::Result<()> {
+        self.converge.apply(&mut self.world, e)
+    }
+    const fn world(&self) -> &alice_sync::World {
+        &self.world
+    }
+}
+
 use alice_sync::event::{Event, EventId, EventKind, SeqNum};
 use alice_sync::persist::{decode_state, encode_state, PersistError};
-use alice_sync::{Node, NodeId, WorldState};
+use alice_sync::WorldState;
 
 /// Largest single request the code under test may make in this binary
 const CAP: usize = 16 * 1024 * 1024;
@@ -85,7 +106,7 @@ fn remote_spawn(entity: u32) -> Event {
     Event {
         id: EventId(1),
         seq: SeqNum(1),
-        origin: 1,
+        origin: alice_sync::event::Origin::of_node(1),
         timestamp: 1,
         kind: EventKind::Spawn {
             entity,
@@ -100,7 +121,7 @@ fn a_remote_spawn_of_the_largest_entity_id_costs_one_entity() {
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut node = Node::new(NodeId(9));
+    let mut node = Sink::new();
     let event = remote_spawn(u32::MAX);
     let (applied, peak) = peak_during(|| node.apply_event(&event));
     applied.unwrap();
@@ -113,7 +134,7 @@ fn spawns_spread_over_the_id_range_cost_their_count_not_their_ids() {
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut node = Node::new(NodeId(9));
+    let mut node = Sink::new();
     let ids = [0u32, 1 << 20, 1 << 28, u32::MAX - 1];
     let (_, peak) = peak_during(|| {
         for (i, id) in ids.iter().enumerate() {
@@ -147,7 +168,7 @@ fn a_small_stored_world_naming_the_largest_id_decodes_within_its_own_size() {
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut node = Node::new(NodeId(9));
+    let mut node = Sink::new();
     node.apply_event(&remote_spawn(u32::MAX)).unwrap();
     let bytes = encode_state(node.world().state());
     // header 39, count 4, one entity body 84, frame and seed 16
@@ -183,7 +204,7 @@ fn a_spawn_at_the_top_of_the_dense_range_costs_at_most_the_dense_table() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let bound = 4 * alice_sync::world::MAX_LIVE_ENTITIES;
     let table = bound * std::mem::size_of::<Option<alice_sync::arena::Handle>>();
-    let mut node = Node::new(NodeId(9));
+    let mut node = Sink::new();
     let event = remote_spawn(u32::try_from(bound - 1).unwrap());
     let (applied, peak) = peak_during(|| node.apply_event(&event));
     applied.unwrap();

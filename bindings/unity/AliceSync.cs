@@ -97,6 +97,30 @@ namespace Alice.Sync
     // Node
     // ========================================================================
 
+    /// <summary>The master keys of the subjects whose events a node accepts.</summary>
+    public sealed class Trust : IDisposable
+    {
+        internal IntPtr Ptr;
+
+        public Trust() { Ptr = NativeMethods.as_sync_trust_new(); }
+
+        /// <summary>Trusts master (32 bytes) for subject (did:method:id); 0, or -1.</summary>
+        public int Add(string subject, byte[] master)
+        {
+            var s = System.Text.Encoding.UTF8.GetBytes(subject);
+            return NativeMethods.as_sync_trust_add(Ptr, s, (uint)s.Length, master);
+        }
+
+        public void Dispose()
+        {
+            if (Ptr != IntPtr.Zero)
+            {
+                NativeMethods.as_sync_trust_free(Ptr);
+                Ptr = IntPtr.Zero;
+            }
+        }
+    }
+
     public sealed class Node : IDisposable
     {
         internal IntPtr Ptr;
@@ -112,15 +136,34 @@ namespace Alice.Sync
         public uint EventsBytes => NativeMethods.as_sync_node_events_bytes(Ptr);
 
         public int Emit(Event evt) => NativeMethods.as_sync_node_emit(Ptr, evt.Ptr);
-        /// <summary>Applies an event received from another node: the world is the same for every
-        /// arrival order and for duplicates. Pass events taken from the emitting node with EventAt
-        /// (node ids must be unique: two nodes with one id stamp different events alike, which still
-        /// converge by content but not to what either meant);
-        /// 0 applied, -1 null, -2 an event that was never emitted (see LastError).</summary>
-        public int ApplyEvent(Event evt) => NativeMethods.as_sync_node_apply_event(Ptr, evt.Ptr);
+        /// <summary>A node whose events are signed by the device key made from deviceSeed (32 bytes),
+        /// certified by cert (an encoded device certificate naming that key).</summary>
+        public Node(ulong nodeId, byte[] deviceSeed, byte[] cert)
+        {
+            Ptr = NativeMethods.as_sync_node_with_author(nodeId, deviceSeed, cert, (uint)cert.Length);
+        }
+
+        /// <summary>This node's signed events (its own with a checkpoint at the last, and those it
+        /// accepted), encoded for another node's Receive; null without an author.</summary>
+        public byte[] SignedEvents()
+        {
+            IntPtr p = NativeMethods.as_sync_node_signed_events(Ptr, out uint len);
+            if (p == IntPtr.Zero) return null;
+            var bytes = new byte[len];
+            Marshal.Copy(p, bytes, 0, (int)len);
+            NativeMethods.as_sync_bytes_free(p, len);
+            return bytes;
+        }
+
+        /// <summary>Takes signed events from another node, trusting trust at time now: an author's
+        /// events apply once its checkpoint verifies, for every arrival order and grouping. Returns how
+        /// many applied, or -1 null / undecodable, -2 an event no checkpoint covers, -3 a refused
+        /// checkpoint, -4 events that do not match it, -5 a second history of one author, -6 the
+        /// author's held events full, -7 other (see LastError).</summary>
+        public long Receive(byte[] signedEvents, Trust trust, ulong now)
+            => NativeMethods.as_sync_node_receive(Ptr, signedEvents, (uint)signedEvents.Length, trust.Ptr, now);
         /// <summary>A copy of this node's index-th emitted event (0 .. EventsCount - 1), stamped with
-        /// its origin, sequence number and Lamport time, for another node's ApplyEvent; null when out
-        /// of range.</summary>
+        /// its origin, sequence number and Lamport time; null when out of range.</summary>
         public Event EventAt(uint index)
         {
             IntPtr p = NativeMethods.as_sync_node_event_at(Ptr, index);
@@ -172,8 +215,16 @@ namespace Alice.Sync
             => new Event(NativeMethods.as_sync_event_new_tick(frame));
 
         public uint SizeBytes => NativeMethods.as_sync_event_size_bytes(Ptr);
-        /// <summary>The emitting node (0 until a node emits the event).</summary>
-        public ulong Origin => NativeMethods.as_sync_event_origin(Ptr);
+        /// <summary>The event's 16-byte origin (its author's; zero until a node emits the event).</summary>
+        public byte[] Origin
+        {
+            get
+            {
+                var o = new byte[16];
+                NativeMethods.as_sync_event_origin(Ptr, o);
+                return o;
+            }
+        }
         /// <summary>The sequence number in the origin's log, from 1 (0 until emitted).</summary>
         public ulong Seq => NativeMethods.as_sync_event_seq(Ptr);
         /// <summary>The Lamport time (0 until emitted).</summary>
@@ -210,7 +261,8 @@ namespace Alice.Sync
         public ulong CurrentSeq => NativeMethods.as_sync_event_stream_current_seq(Ptr);
         public uint TotalBytes => NativeMethods.as_sync_event_stream_total_bytes(Ptr);
 
-        public ulong Push(Event evt, ulong origin)
+        /// <summary>origin: 16 bytes.</summary>
+        public ulong Push(Event evt, byte[] origin)
             => NativeMethods.as_sync_event_stream_push(Ptr, evt.Ptr, origin);
 
         public void Dispose()
@@ -437,7 +489,13 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern ulong as_sync_node_world_hash(IntPtr ptr);
         [DllImport(Lib)] internal static extern byte as_sync_node_state(IntPtr ptr);
         [DllImport(Lib)] internal static extern int as_sync_node_emit(IntPtr ptr, IntPtr evt);
-        [DllImport(Lib)] internal static extern int as_sync_node_apply_event(IntPtr ptr, IntPtr evt);
+        [DllImport(Lib)] internal static extern IntPtr as_sync_node_with_author(ulong nodeId, byte[] deviceSeed, byte[] cert, uint certLen);
+        [DllImport(Lib)] internal static extern IntPtr as_sync_node_signed_events(IntPtr ptr, out uint outLen);
+        [DllImport(Lib)] internal static extern void as_sync_bytes_free(IntPtr bytes, uint len);
+        [DllImport(Lib)] internal static extern long as_sync_node_receive(IntPtr ptr, byte[] bytes, uint len, IntPtr trust, ulong now);
+        [DllImport(Lib)] internal static extern IntPtr as_sync_trust_new();
+        [DllImport(Lib)] internal static extern int as_sync_trust_add(IntPtr ptr, byte[] subject, uint subjectLen, byte[] master);
+        [DllImport(Lib)] internal static extern void as_sync_trust_free(IntPtr ptr);
         [DllImport(Lib)] internal static extern IntPtr as_sync_node_event_at(IntPtr ptr, uint index);
         [DllImport(Lib)] internal static extern int as_sync_node_add_peer(IntPtr ptr, ulong peerId, byte[] peerSemanticsId);
         [DllImport(Lib)] internal static extern uint as_sync_node_entity_count(IntPtr ptr);
@@ -453,14 +511,14 @@ namespace Alice.Sync
         [DllImport(Lib)] internal static extern IntPtr as_sync_event_new_tick(ulong frame);
         [DllImport(Lib)] internal static extern void as_sync_event_free(IntPtr ptr);
         [DllImport(Lib)] internal static extern uint as_sync_event_size_bytes(IntPtr ptr);
-        [DllImport(Lib)] internal static extern ulong as_sync_event_origin(IntPtr ptr);
+        [DllImport(Lib)] internal static extern int as_sync_event_origin(IntPtr ptr, byte[] out16);
         [DllImport(Lib)] internal static extern ulong as_sync_event_seq(IntPtr ptr);
         [DllImport(Lib)] internal static extern ulong as_sync_event_timestamp(IntPtr ptr);
 
         // EventStream
         [DllImport(Lib)] internal static extern IntPtr as_sync_event_stream_new();
         [DllImport(Lib)] internal static extern void as_sync_event_stream_free(IntPtr ptr);
-        [DllImport(Lib)] internal static extern ulong as_sync_event_stream_push(IntPtr ptr, IntPtr evt, ulong origin);
+        [DllImport(Lib)] internal static extern ulong as_sync_event_stream_push(IntPtr ptr, IntPtr evt, byte[] origin);
         [DllImport(Lib)] internal static extern uint as_sync_event_stream_len(IntPtr ptr);
         [DllImport(Lib)] internal static extern int as_sync_event_stream_is_empty(IntPtr ptr);
         [DllImport(Lib)] internal static extern ulong as_sync_event_stream_current_seq(IntPtr ptr);

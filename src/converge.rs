@@ -53,6 +53,7 @@
 //! Any peer can choose ids, so one that floods small ids takes the room of others: a bound per
 //! author needs events whose author is authenticated, which they do not carry yet.
 
+use crate::event::Origin;
 use crate::world::MAX_LIVE_ENTITIES;
 use crate::{Event, EventKind, Result, World};
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,8 +63,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Key {
     /// Lamport timestamp of the event
     pub timestamp: u64,
-    /// Node that originated the event
-    pub origin: u64,
+    /// The event's author
+    pub origin: Origin,
     /// The origin's sequence number
     pub seq: u64,
 }
@@ -340,7 +341,7 @@ mod tests {
     fn stamped(kind: EventKind, timestamp: u64, origin: u64, seq: u64) -> Event {
         let mut e = Event::new(kind);
         e.timestamp = timestamp;
-        e.origin = origin;
+        e.origin = Origin::of_node(origin);
         e.seq = SeqNum(seq);
         e
     }

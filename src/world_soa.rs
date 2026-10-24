@@ -340,7 +340,7 @@ impl WorldStorage {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn add_positions_8(&mut self, start: usize, dx: i32x8, dy: i32x8, dz: i32x8) {
         let px = self.load_pos_x_8(start);
@@ -483,7 +483,7 @@ impl WorldSoA {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply(&mut self, event: &Event) -> Result<()> {
         match &event.kind {
@@ -591,7 +591,7 @@ impl WorldSoA {
     /// [`crate::SyncError::TooManyEntities`] when `state` holds more than [`MAX_LIVE_ENTITIES`]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn from_state(state: &WorldState) -> Result<Self> {
         if state.live_count() > MAX_LIVE_ENTITIES {
@@ -639,7 +639,7 @@ impl WorldSoA {
     /// id map (the same as [`WorldSoA::apply`] with a Spawn, without the i16 coordinate shift)
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn spawn_raw(&mut self, entity: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
         let slot = self.storage.spawn(entity, kind, x, y, z);
@@ -652,7 +652,7 @@ impl WorldSoA {
     /// no live entity
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn despawn_slot(&mut self, slot: u32) -> bool {
         if !self.storage.is_alive(slot) {
@@ -706,7 +706,7 @@ impl WorldSoA {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_motions_vertical_8(&mut self, start_slot: usize, dx: i32x8, dy: i32x8, dz: i32x8) {
         // Compute old hashes for 8 entities
@@ -731,7 +731,7 @@ impl WorldSoA {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_motions_batch(&mut self, motions: &[MotionData]) {
         for m in motions {
@@ -767,7 +767,7 @@ impl WorldSoA {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_motions_sorted(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
@@ -908,7 +908,7 @@ impl WorldSoA {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_motions_presorted(&mut self, motions: &[MotionData]) {
         // Resolve entity_id -> slot mapping (already sorted)
@@ -952,7 +952,7 @@ impl WorldSoA {
     #[inline(always)]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_motions_demon(&mut self, mut motions: Vec<MotionData>) {
         if motions.is_empty() {
@@ -1089,7 +1089,7 @@ impl WorldSoA {
     /// Process 8 entities per iteration.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_uniform_motion_vertical(
         &mut self,

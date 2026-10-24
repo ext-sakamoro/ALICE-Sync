@@ -32,19 +32,49 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use alice_sync::{Node, NodeId, Event, EventKind};
+//! use alice_identity::artifact::Revocation;
+//! use alice_identity::device_cert::DeviceCert;
+//! use alice_identity::did::Did;
+//! use alice_sign::{KeyPair, PublicKey};
+//! use alice_sync::authorship::{Author, TrustPolicy};
+//! use alice_sync::{Event, EventKind, Node, NodeId};
+//! use std::collections::BTreeMap;
 //!
-//! // node_a emits events; node_b applies them as received → identical world hash
-//! let mut node_a = Node::new(NodeId(1));
-//! let mut node_b = Node::new(NodeId(2));
+//! // each node's events are signed by its device key, certified by its owner's master key
+//! fn author(seed: u8, name: &str) -> (Author, PublicKey) {
+//!     let master = KeyPair::from_seed([seed; 32]);
+//!     let device = KeyPair::from_seed([seed + 100; 32]);
+//!     let did = Did::parse(&format!("did:alice:{name}")).unwrap();
+//!     let cert = DeviceCert::issue(&master, &did, device.public().0, [0; 32], 0, u64::MAX, [seed; 16])
+//!         .unwrap();
+//!     (Author::new(device, cert).unwrap(), master.public())
+//! }
+//!
+//! // node_b accepts the events of the subject whose master key it knows
+//! struct Trust(PublicKey);
+//! impl TrustPolicy for Trust {
+//!     fn master_of(&self, subject: &Did) -> Option<PublicKey> {
+//!         (subject.to_string() == "did:alice:a").then_some(self.0)
+//!     }
+//!     fn revocation(&self) -> Revocation<'_> {
+//!         Revocation::NoListAvailable
+//!     }
+//!     fn now(&self) -> u64 {
+//!         1
+//!     }
+//! }
+//!
+//! let (a, master_a) = author(1, "a");
+//! let (b, _) = author(2, "b");
+//! let mut node_a = Node::with_author(NodeId(1), a);
+//! let mut node_b = Node::with_author(NodeId(2), b);
 //!
 //! node_a.emit(Event::new(EventKind::Spawn { entity: 1, kind: 0, pos: [0, 0, 0] })).unwrap();
 //! node_a.emit(Event::new(EventKind::Motion { entity: 1, delta: [100, 0, 0] })).unwrap();
 //!
-//! // any arrival order gives the same world: here the motion arrives before its spawn
-//! for e in node_a.events().all().iter().rev() {
-//!     node_b.apply_event(e).unwrap();
-//! }
+//! // the events travel with the author's signed checkpoint; node_b applies them once it verifies it
+//! let batch = node_a.signed_events_since(&BTreeMap::new()).unwrap();
+//! assert_eq!(node_b.receive(&batch, &Trust(master_a)).unwrap(), 2);
 //!
 //! assert_eq!(node_a.world_hash(), node_b.world_hash());
 //! ```
@@ -118,6 +148,7 @@ pub mod analytics_bridge;
 pub mod arena;
 #[cfg(feature = "auth")]
 pub mod auth_bridge;
+pub mod authorship;
 #[cfg(feature = "cache")]
 pub mod cache_bridge;
 #[cfg(feature = "cloud")]
@@ -219,9 +250,11 @@ pub enum SyncError {
         remote: WorldHash,
     },
     UnknownNode(NodeId),
-    /// [`Node::apply_event`] was given an event no stream stamped (sequence number 0, see
-    /// [`Event::is_stamped`]): it cannot be told apart from another unstamped event
+    /// An event no stream stamped (sequence number 0, see [`Event::is_stamped`]): it cannot be told
+    /// apart from another unstamped event
     Unstamped,
+    /// Signed events (or this node's author) refused, see [`authorship`]
+    Authorship(authorship::AuthorshipError),
     /// A Spawn of a new entity into a world that already holds [`world::MAX_LIVE_ENTITIES`]
     TooManyEntities {
         /// The limit
@@ -245,9 +278,10 @@ impl std::fmt::Display for SyncError {
                 )
             }
             Self::UnknownNode(id) => write!(f, "Unknown node: {id:?}"),
+            Self::Authorship(e) => write!(f, "Authorship: {e}"),
             Self::Unstamped => write!(
                 f,
-                "Unstamped event: apply_event takes events a stream stamped (emit), not Event::new"
+                "Unstamped event: only events a stream stamped (emit) are taken, not Event::new"
             ),
             Self::TooManyEntities { limit } => {
                 write!(f, "Too many entities: the world holds at most {limit}")
@@ -266,8 +300,8 @@ mod tests {
 
     #[test]
     fn test_deterministic_sync() {
-        let mut node_a = Node::new(NodeId(1));
-        let mut node_b = Node::new(NodeId(2));
+        let mut node_a = Node::with_author(NodeId(1), authorship::testing::author(1));
+        let mut node_b = Node::with_author(NodeId(2), authorship::testing::author(2));
 
         node_a
             .emit(Event::new(EventKind::Spawn {
@@ -283,9 +317,12 @@ mod tests {
             }))
             .unwrap();
 
-        for e in node_a.events().all() {
-            node_b.apply_event(e).unwrap();
-        }
+        let batch = node_a
+            .signed_events_since(&std::collections::BTreeMap::new())
+            .unwrap();
+        node_b
+            .receive(&batch, &authorship::testing::trusting(&[1]))
+            .unwrap();
 
         assert_eq!(node_a.world_hash(), node_b.world_hash());
         let moved = node_b.world().get_entity(1).unwrap().position;

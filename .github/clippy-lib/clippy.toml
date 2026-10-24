@@ -3,7 +3,7 @@
 #
 # The library code (`cargo clippy --lib`, CLIPPY_CONF_DIR=.github/clippy-lib)
 # also may not change a World, WorldSoA or WorldStorage directly (ALICE-Law G13): events
-# from peers go through Node::apply_event, whose src/converge.rs makes the world
+# from peers go through Node::receive, whose src/converge.rs makes the world
 # independent of their arrival order. The world types' own modules and the sink
 # allow these calls at each site with a reason; tests, examples and benches use
 # the repository-root clippy.toml configuration
@@ -20,30 +20,30 @@
 # monotonic clock in one place (src/clock.rs, one scoped allow); scripts/entropy_guard.py is the
 # second layer over src/ and pins that count.
 disallowed-methods = [
-    { path = "alice_sync::world::World::apply", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world::World::get_entity_mut", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world::World::apply_motions_batch", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world::World::apply_spawns_batch", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world::World::apply_stream_batched", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::spawn", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::despawn", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::set_position", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::set_property", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_motions_vertical_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_motions_batch", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_motions_sorted", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_motions_presorted", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_motions_demon", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_motions_nosort", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::apply_uniform_motion_vertical", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::add_position", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::store_pos_x_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::store_pos_y_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::store_pos_z_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldStorage::add_positions_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::spawn_raw", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
-    { path = "alice_sync::world_soa::WorldSoA::despawn_slot", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)" },
+    { path = "alice_sync::world::World::apply", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world::World::get_entity_mut", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world::World::apply_motions_batch", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world::World::apply_spawns_batch", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world::World::apply_stream_batched", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::spawn", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::despawn", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::set_position", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::set_property", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_motions_vertical_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_motions_batch", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_motions_sorted", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_motions_presorted", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_motions_demon", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_motions_nosort", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::apply_uniform_motion_vertical", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::add_position", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::store_pos_x_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::store_pos_y_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::store_pos_z_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldStorage::add_positions_8", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::spawn_raw", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
+    { path = "alice_sync::world_soa::WorldSoA::despawn_slot", reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)" },
     { path = "f32::sin", reason = "platform libm is not cross-platform bit-exact; use alice_det_math" },
     { path = "f32::cos", reason = "platform libm is not cross-platform bit-exact; use alice_det_math" },
     { path = "f32::tan", reason = "platform libm is not cross-platform bit-exact; use alice_det_math" },

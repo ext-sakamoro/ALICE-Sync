@@ -10,7 +10,7 @@
 //! means updating the pin there and the identifier.
 
 use alice_sync::fixed_point::{Fixed, Vec3Fixed};
-use alice_sync::{Event, EventKind, Node, NodeId, World};
+use alice_sync::{Event, EventKind, World};
 use sha2::{Digest, Sha256};
 
 fn hex(bytes: &[u8]) -> String {
@@ -165,49 +165,45 @@ fn golden_world() {
 
 pub const GOLDEN_RECEIVE: &str = "b0f4dd9b848374e314f1d88ae220e926d8a3d05d49d08b3a77d8d9673bb2b242";
 
-/// The world a node builds from events of three peers (ALICE-Law G13): the world scenario split
-/// across three origins that see some of each other's events (so their Lamport times interleave),
-/// with entity 2 re-spawned by another origin, received in reverse and with every third event
-/// delivered twice
+/// The world built from events of three peers (ALICE-Law G13): the world scenario split across three
+/// origins that see some of each other's events (so their Lamport times interleave), with entity 2
+/// re-spawned by another origin, received in reverse and with every third event delivered twice. The
+/// peers are event streams (a node emits through one and moves its clock past what it receives), and the
+/// receiver applies through `Converge`, the sink a node applies accepted events through.
 #[test]
 fn golden_receive() {
-    let mut peers = [
-        Node::new(NodeId(1)),
-        Node::new(NodeId(2)),
-        Node::new(NodeId(3)),
-    ];
+    use alice_sync::converge::Converge;
+    use alice_sync::event::{EventStream, Origin};
+    let mut peers = [EventStream::new(), EventStream::new(), EventStream::new()];
     for (i, kind) in scenario().into_iter().enumerate() {
-        peers[i % 3]
-            .emit(Event::new(kind))
-            .expect("emit is infallible");
+        peers[i % 3].push(Event::new(kind), Origin::of_node(i as u64 % 3 + 1));
         if i % 10 == 9 {
-            let seen: Vec<Event> = peers[i % 3].events().all().to_vec();
-            for e in &seen {
-                peers[(i + 1) % 3]
-                    .apply_event(e)
-                    .expect("apply is infallible");
+            let seen: Vec<u64> = peers[i % 3].all().iter().map(|e| e.timestamp).collect();
+            for t in seen {
+                peers[(i + 1) % 3].observe(t);
             }
         }
     }
-    peers[1]
-        .emit(Event::new(EventKind::Spawn {
+    peers[1].push(
+        Event::new(EventKind::Spawn {
             entity: 2,
             kind: 11,
             pos: [-5, 5, -5],
-        }))
-        .expect("emit is infallible");
+        }),
+        Origin::of_node(2),
+    );
     let mut all: Vec<Event> = Vec::new();
     for p in &peers {
-        all.extend(p.events().all().iter().cloned());
+        all.extend(p.all().iter().cloned());
     }
-    let mut node = Node::new(NodeId(9));
+    let mut world = World::new(0);
+    let mut converge = Converge::new();
     for (i, e) in all.iter().rev().enumerate() {
-        node.apply_event(e).expect("apply is infallible");
+        converge.apply(&mut world, e).expect("apply is infallible");
         if i % 3 == 0 {
-            node.apply_event(e).expect("apply is infallible");
+            converge.apply(&mut world, e).expect("apply is infallible");
         }
     }
-    let world = node.world();
     let mut out = Vec::new();
     out.extend_from_slice(&world.hash().0.to_le_bytes());
     out.extend_from_slice(&world.frame().to_le_bytes());
