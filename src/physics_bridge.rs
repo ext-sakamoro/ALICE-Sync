@@ -7,8 +7,8 @@
 
 //! Bridge between ALICE-Sync input synchronization and ALICE-Physics netcode.
 //!
-//! Converts between Sync's compact network-oriented [`InputFrame`] (i16 Q8.8,
-//! ~24 bytes via bitcode) and Physics' full-precision [`FrameInput`] (Fix128).
+//! Converts between Sync's [`InputFrame`] and Physics' [`FrameInput`] bit for bit: each movement and
+//! aim component is an [`InputFix`] in Sync and a `Fix128` in Physics, with the same `hi` / `lo` words.
 //!
 //! Also bridges checksum types and provides [`PhysicsRollbackSession`] that
 //! combines rollback input sync with deterministic physics simulation.
@@ -16,89 +16,72 @@
 //! # Architecture
 //!
 //! ```text
-//! Network ──► InputFrame (i16, 24B) ──► FrameInput (Fix128) ──► PhysicsWorld
+//! Network ──► InputFrame (InputFix) ──► FrameInput (Fix128) ──► PhysicsWorld
 //!                  ALICE-Sync                ALICE-Physics
 //!
 //! PhysicsWorld ──► SimulationChecksum ──► WorldHash ──► Desync Verification
 //!                    ALICE-Physics           ALICE-Sync
 //! ```
 
-use crate::input_sync::{InputFrame, RollbackAction, RollbackSession, SyncResult};
+use crate::input_sync::{InputFix, InputFrame, RollbackAction, RollbackSession, SyncResult};
 use crate::semantics::{check_semantics_against, SemanticsMismatch};
 use crate::world::WorldHash;
 use alice_physics::{
-    DeterministicSimulation, FrameInput, InputApplicator, NetcodeConfig, SimulationChecksum,
-    Vec3Fix,
+    DeterministicSimulation, Fix128, FrameInput, InputApplicator, NetcodeConfig,
+    SimulationChecksum, Vec3Fix,
 };
 
 // ============================================================================
 // Input Conversion
 // ============================================================================
 
-/// Convert a Sync [`InputFrame`] to a Physics [`FrameInput`].
-///
-/// Movement and aim are stored as i16 in `InputFrame` (compact for network)
-/// and expanded to `Vec3Fix` (Fix128-based) for physics simulation.
-///
-/// The conversion is: `i16 → i64 → Fix128::from_int()` which places the
-/// i16 value in the integer part of the fixed-point number.
-/// i16 Q8.8 (the `InputFrame` wire format) → `Fix128`, exact: n / 256.
-///
-/// History (2026-09-17, oracle `tests/analytic_oracle.rs`): the bridge read
-/// the i16 as a whole integer (`from_int`, 256 ↦ 256.0) while `Fixed::from_i16`
-/// read it as Q6.10 and the docs said Q8.8 — the same input meant three
-/// different displacements depending on the code path.
 #[inline]
 #[must_use]
-fn q8_to_fix(n: i16) -> alice_physics::Fix128 {
-    alice_physics::Fix128::from_int(n as i64).shr_bits(8)
+const fn to_fix(v: InputFix) -> Fix128 {
+    Fix128::from_raw(v.hi, v.lo)
 }
 
 #[inline]
 #[must_use]
-fn q8_to_vec3fix(v: [i16; 3]) -> Vec3Fix {
-    Vec3Fix::new(q8_to_fix(v[0]), q8_to_fix(v[1]), q8_to_fix(v[2]))
-}
-
-/// `Fix128` → i16 Q8.8: ⌊v · 256⌋, saturating at the i16 range.
-#[inline]
-#[must_use]
-fn fix_to_q8(v: alice_physics::Fix128) -> i16 {
-    // v = hi + lo / 2⁶⁴  ⇒  ⌊v · 256⌋ = hi · 256 + ⌊lo / 2⁵⁶⌋ (exact in i128)
-    let q = (v.hi as i128) * 256 + (v.lo >> 56) as i128;
-    q.clamp(i16::MIN as i128, i16::MAX as i128) as i16
+const fn to_vec3fix(v: [InputFix; 3]) -> Vec3Fix {
+    Vec3Fix::new(to_fix(v[0]), to_fix(v[1]), to_fix(v[2]))
 }
 
 #[inline]
 #[must_use]
-fn vec3fix_to_q8(v: Vec3Fix) -> [i16; 3] {
-    [fix_to_q8(v.x), fix_to_q8(v.y), fix_to_q8(v.z)]
+const fn from_fix(v: Fix128) -> InputFix {
+    InputFix::from_raw(v.hi, v.lo)
 }
 
+#[inline]
+#[must_use]
+const fn from_vec3fix(v: Vec3Fix) -> [InputFix; 3] {
+    [from_fix(v.x), from_fix(v.y), from_fix(v.z)]
+}
+
+/// Convert a Sync [`InputFrame`] to a Physics [`FrameInput`], bit for bit (each [`InputFix`]
+/// becomes the `Fix128` with the same `hi` and `lo`).
 #[inline]
 #[must_use]
 pub fn sync_input_to_physics(input: &InputFrame) -> FrameInput {
     // `FrameInput` は non_exhaustive なので struct literal は使えない
-    // `new` + `with_*` は元の literal と同じ 4 field を同じ値で埋める
     FrameInput::new(input.player_id)
-        .with_movement(q8_to_vec3fix(input.movement))
+        .with_movement(to_vec3fix(input.movement))
         .with_actions(input.actions)
-        .with_aim(q8_to_vec3fix(input.aim))
+        .with_aim(to_vec3fix(input.aim))
 }
 
-/// Convert a Physics [`FrameInput`] to a Sync [`InputFrame`].
-///
-/// Truncates Fix128 to i16 by taking the integer part (`hi` field),
-/// matching the serialization format used by `FrameInput::to_bytes()`.
+/// Convert a Physics [`FrameInput`] to a Sync [`InputFrame`] for `frame`, bit for bit, so
+/// [`sync_input_to_physics`] of the result is `input`.
 #[inline]
 #[must_use]
 pub fn physics_input_to_sync(input: &FrameInput, frame: u64) -> InputFrame {
     InputFrame {
         frame,
         player_id: input.player_id,
-        movement: vec3fix_to_q8(input.movement),
+        movement: from_vec3fix(input.movement),
         actions: input.actions,
-        aim: vec3fix_to_q8(input.aim_direction),
+        aim: from_vec3fix(input.aim_direction),
     }
 }
 
@@ -149,7 +132,7 @@ pub fn world_hash_to_physics_checksum(hash: WorldHash) -> SimulationChecksum {
 /// )?;
 ///
 /// // Each frame:
-/// let input = InputFrame::new(frame, 0).with_movement(1, 0, 0);
+/// let input = InputFrame::new(frame, 0).with_movement(InputFix::from_int(1), InputFix::ZERO, InputFix::ZERO);
 /// let checksum = session.advance_frame(input);
 ///
 /// // When remote input arrives:
@@ -359,17 +342,25 @@ mod tests {
     /// (`with_*` を 1 つ落とすと `new` の初期値が silent に残るため)
     #[test]
     fn sync_input_to_physics_fills_the_same_four_fields_as_the_pre_rewrite_literal() {
+        // `with_*` を 1 つ落とすと `new` の初期値が silent に残るため、4 field を固定する
         let sync_input = InputFrame::new(7, 3)
-            .with_movement(256, -128, 1)
+            .with_movement(
+                InputFix::from_raw(1, 0),
+                InputFix::from_raw(-1, 1 << 63),
+                InputFix::from_raw(0, 1),
+            )
             .with_actions(0x0B)
-            .with_aim(-512, 256, 64);
+            .with_aim(
+                InputFix::from_raw(-2, 0),
+                InputFix::from_raw(1, 0),
+                InputFix::from_raw(0, 1 << 62),
+            );
 
         let physics = sync_input_to_physics(&sync_input);
         assert_eq!(physics.player_id, sync_input.player_id);
         assert_eq!(physics.actions, sync_input.actions);
-        assert_eq!(physics.movement, q8_to_vec3fix(sync_input.movement));
-        assert_eq!(physics.aim_direction, q8_to_vec3fix(sync_input.aim));
-        // `new` の初期値 (Vec3Fix::ZERO / 0) が残っていないこと
+        assert_eq!(physics.movement, to_vec3fix(sync_input.movement));
+        assert_eq!(physics.aim_direction, to_vec3fix(sync_input.aim));
         assert_ne!(physics.movement, Vec3Fix::ZERO);
         assert_ne!(physics.aim_direction, Vec3Fix::ZERO);
         assert_ne!(physics.actions, 0);
@@ -377,21 +368,31 @@ mod tests {
 
     #[test]
     fn test_sync_input_to_physics_roundtrip() {
+        // 0.390625 = 100 / 256 and its neighbours: the fractional word is carried as is
         let sync_input = InputFrame::new(42, 1)
-            .with_movement(100, -50, 200)
+            .with_movement(
+                InputFix::from_raw(0, 0x6400_0000_0000_0000),
+                InputFix::from_raw(-1, 1),
+                InputFix::from_int(200),
+            )
             .with_actions(0x05)
-            .with_aim(0, 1000, -500);
+            .with_aim(
+                InputFix::ZERO,
+                InputFix::from_raw(3, u64::MAX),
+                InputFix::from_int(-500),
+            );
 
         let physics = sync_input_to_physics(&sync_input);
         assert_eq!(physics.player_id, 1);
-        // Q8.8 (2026-09-17): the i16 is 1/256 units, not whole units
         assert_eq!(physics.movement.x.to_f64(), 100.0 / 256.0);
-        assert_eq!(physics.movement.y.to_f64(), -50.0 / 256.0);
-        assert_eq!(physics.movement.z.to_f64(), 200.0 / 256.0);
+        assert_eq!((physics.movement.y.hi, physics.movement.y.lo), (-1, 1));
+        assert_eq!(physics.movement.z.to_f64(), 200.0);
         assert_eq!(physics.actions, 0x05);
-        assert_eq!(physics.aim_direction.y.to_f64(), 1000.0 / 256.0);
+        assert_eq!(
+            (physics.aim_direction.y.hi, physics.aim_direction.y.lo),
+            (3, u64::MAX)
+        );
 
-        // Roundtrip
         let back = physics_input_to_sync(&physics, 42);
         assert_eq!(back, sync_input);
     }
@@ -451,7 +452,11 @@ mod tests {
 
         // Advance 3 frames
         for f in 1..=3u64 {
-            let input = InputFrame::new(f, 0).with_movement(1, 0, 0);
+            let input = InputFrame::new(f, 0).with_movement(
+                InputFix::from_int(1),
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+            );
             let checksum = session.advance_frame(input);
             assert_ne!(checksum.0, 0);
         }
@@ -488,12 +493,20 @@ mod tests {
 
         // Advance 3 frames (remote predicted as empty)
         for f in 1..=3u64 {
-            let input = InputFrame::new(f, 0).with_movement(1, 0, 0);
+            let input = InputFrame::new(f, 0).with_movement(
+                InputFix::from_int(1),
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+            );
             session.advance_frame(input);
         }
 
         // Remote sends frame 1 with different data → rollback
-        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(5, 0, -5));
+        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(
+            InputFix::from_int(5),
+            InputFix::from_int(0),
+            InputFix::from_int(-5),
+        ));
         assert_eq!(action, RollbackAction::Rollback { to_frame: 1 });
 
         // Handle the rollback
@@ -505,30 +518,50 @@ mod tests {
     #[test]
     fn test_batch_conversion() {
         let inputs = vec![
-            InputFrame::new(1, 0).with_movement(10, 0, 0),
-            InputFrame::new(1, 1).with_movement(0, 0, -10),
+            InputFrame::new(1, 0).with_movement(
+                InputFix::from_int(10),
+                InputFix::ZERO,
+                InputFix::ZERO,
+            ),
+            InputFrame::new(1, 1).with_movement(
+                InputFix::ZERO,
+                InputFix::ZERO,
+                InputFix::from_int(-10),
+            ),
         ];
 
         let physics = sync_inputs_to_physics(&inputs);
         assert_eq!(physics.len(), 2);
-        assert_eq!(physics[0].movement.x.to_f64(), 10.0 / 256.0);
-        assert_eq!(physics[1].movement.z.to_f64(), -10.0 / 256.0);
+        assert_eq!(physics[0].movement.x.to_f64(), 10.0);
+        assert_eq!(physics[1].movement.z.to_f64(), -10.0);
     }
 
     #[test]
-    fn test_negative_values_preserved() {
+    fn test_extreme_values_preserved() {
         let input = InputFrame::new(1, 0)
-            .with_movement(-32768, 32767, -1)
-            .with_aim(-100, -200, -300);
+            .with_movement(
+                InputFix::from_raw(i64::MIN, 0),
+                InputFix::from_raw(i64::MAX, u64::MAX),
+                InputFix::from_raw(-1, u64::MAX),
+            )
+            .with_aim(
+                InputFix::from_int(-100),
+                InputFix::from_int(40_000),
+                InputFix::from_raw(0, 1),
+            );
 
         let physics = sync_input_to_physics(&input);
-        assert_eq!(physics.movement.x.to_f64(), -32768.0 / 256.0);
-        assert_eq!(physics.movement.y.to_f64(), 32767.0 / 256.0);
-        assert_eq!(physics.movement.z.to_f64(), -1.0 / 256.0);
-        assert_eq!(physics.aim_direction.x.to_f64(), -100.0 / 256.0);
+        assert_eq!(
+            (physics.movement.x.hi, physics.movement.x.lo),
+            (i64::MIN, 0)
+        );
+        assert_eq!(
+            (physics.movement.y.hi, physics.movement.y.lo),
+            (i64::MAX, u64::MAX)
+        );
+        assert_eq!(physics.aim_direction.y.to_f64(), 40_000.0);
 
         let back = physics_input_to_sync(&physics, 1);
-        assert_eq!(back.movement, [-32768, 32767, -1]);
-        assert_eq!(back.aim, [-100, -200, -300]);
+        assert_eq!(back, input);
     }
 }

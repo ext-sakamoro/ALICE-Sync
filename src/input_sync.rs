@@ -27,9 +27,11 @@
 //!
 //! # Bandwidth
 //!
-//! An `InputFrame` is ~24 bytes. At 60 fps with 4 players:
+//! An `InputFrame` (`to_bytes`, bitcode) is 17 bytes when every component is 0, 39 bytes for a
+//! movement of 1/256 on one axis and 115 bytes when every word is at full width. At 60 fps with 4
+//! players and 39-byte inputs:
 //! ```text
-//! 24 bytes × 4 players × 60 fps = 5,760 bytes/sec ≈ 5.6 KB/s
+//! 39 bytes × 4 players × 60 fps = 9,360 bytes/sec ≈ 9.1 KB/s
 //! ```
 //! Compare to state sync: 160 bytes × 100 bodies × 60 fps = 960 KB/s
 
@@ -41,21 +43,70 @@ use std::collections::VecDeque;
 // Input Frame
 // ============================================================================
 
+/// One component of an input: the signed fixed-point value `hi + lo / 2⁶⁴` (64 integer bits, 64
+/// fractional bits), the layout of ALICE-Physics' `Fix128`, so a Physics input passes through Sync
+/// with every bit
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode,
+)]
+pub struct InputFix {
+    /// Integer part (signed)
+    pub hi: i64,
+    /// Fractional part, in units of 2⁻⁶⁴
+    pub lo: u64,
+}
+
+impl InputFix {
+    /// Zero
+    pub const ZERO: Self = Self { hi: 0, lo: 0 };
+
+    /// The value `hi + lo / 2⁶⁴`
+    #[inline]
+    #[must_use]
+    pub const fn from_raw(hi: i64, lo: u64) -> Self {
+        Self { hi, lo }
+    }
+
+    /// The integer `n`
+    #[inline]
+    #[must_use]
+    pub const fn from_int(n: i64) -> Self {
+        Self { hi: n, lo: 0 }
+    }
+
+    /// The value as the signed 128-bit integer `value · 2⁶⁴`
+    #[inline]
+    #[must_use]
+    pub const fn to_bits(self) -> i128 {
+        ((self.hi as i128) << 64) | self.lo as i128
+    }
+
+    /// The value whose `value · 2⁶⁴` is `bits`
+    #[inline]
+    #[must_use]
+    pub const fn from_bits(bits: i128) -> Self {
+        Self {
+            hi: (bits >> 64) as i64,
+            lo: bits as u64,
+        }
+    }
+}
+
 /// A single player's input for a single simulation frame.
 ///
-/// Compact and deterministic. Serialized to ~24 bytes via bitcode.
+/// Deterministic and lossless: movement and aim keep all 128 bits of each component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct InputFrame {
     /// Simulation frame number this input belongs to
     pub frame: u64,
     /// Player identifier
     pub player_id: u8,
-    /// Movement delta as fixed-point i16 (Q8.8 or direct integer)
-    pub movement: [i16; 3],
+    /// Movement delta
+    pub movement: [InputFix; 3],
     /// Action bitfield (jump=0x1, fire=0x2, interact=0x4, etc.)
     pub actions: u32,
-    /// Aim direction as fixed-point i16
-    pub aim: [i16; 3],
+    /// Aim direction
+    pub aim: [InputFix; 3],
 }
 
 impl InputFrame {
@@ -66,16 +117,16 @@ impl InputFrame {
         Self {
             frame,
             player_id,
-            movement: [0, 0, 0],
+            movement: [InputFix::ZERO; 3],
             actions: 0,
-            aim: [0, 0, 0],
+            aim: [InputFix::ZERO; 3],
         }
     }
 
     /// Set movement
     #[inline]
     #[must_use]
-    pub const fn with_movement(mut self, x: i16, y: i16, z: i16) -> Self {
+    pub const fn with_movement(mut self, x: InputFix, y: InputFix, z: InputFix) -> Self {
         self.movement = [x, y, z];
         self
     }
@@ -91,7 +142,7 @@ impl InputFrame {
     /// Set aim direction
     #[inline]
     #[must_use]
-    pub const fn with_aim(mut self, x: i16, y: i16, z: i16) -> Self {
+    pub const fn with_aim(mut self, x: InputFix, y: InputFix, z: InputFix) -> Self {
         self.aim = [x, y, z];
         self
     }
@@ -634,23 +685,45 @@ mod tests {
     #[test]
     fn test_input_frame_serialization() {
         let input = InputFrame::new(42, 1)
-            .with_movement(100, 0, -50)
+            .with_movement(
+                InputFix::from_int(100),
+                InputFix::from_int(0),
+                InputFix::from_int(-50),
+            )
             .with_actions(0x05)
-            .with_aim(0, 1000, 0);
+            .with_aim(
+                InputFix::from_int(0),
+                InputFix::from_int(1000),
+                InputFix::from_int(0),
+            );
 
         let bytes = input.to_bytes();
         let restored = InputFrame::from_bytes(&bytes).unwrap();
 
         assert_eq!(restored.frame, 42);
         assert_eq!(restored.player_id, 1);
-        assert_eq!(restored.movement, [100, 0, -50]);
+        assert_eq!(
+            restored.movement,
+            [
+                InputFix::from_int(100),
+                InputFix::ZERO,
+                InputFix::from_int(-50)
+            ]
+        );
         assert_eq!(restored.actions, 0x05);
-        assert_eq!(restored.aim, [0, 1000, 0]);
+        assert_eq!(
+            restored.aim,
+            [InputFix::ZERO, InputFix::from_int(1000), InputFix::ZERO]
+        );
     }
 
     #[test]
     fn test_input_frame_compact() {
-        let input = InputFrame::new(1, 0).with_movement(1, 0, 0);
+        let input = InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(1),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        );
         let bytes = input.to_bytes();
         // bitcode should produce very compact output
         assert!(
@@ -666,14 +739,22 @@ mod tests {
     fn test_input_buffer_basic() {
         let mut buf = InputBuffer::new(0);
 
-        let input1 = InputFrame::new(1, 0).with_movement(1, 0, 0);
-        let input2 = InputFrame::new(2, 0).with_movement(2, 0, 0);
+        let input1 = InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(1),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        );
+        let input2 = InputFrame::new(2, 0).with_movement(
+            InputFix::from_int(2),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        );
 
         assert!(buf.add_confirmed(input1));
         assert!(buf.add_confirmed(input2));
 
-        assert_eq!(buf.get(1).unwrap().movement[0], 1);
-        assert_eq!(buf.get(2).unwrap().movement[0], 2);
+        assert_eq!(buf.get(1).unwrap().movement[0], InputFix::from_int(1));
+        assert_eq!(buf.get(2).unwrap().movement[0], InputFix::from_int(2));
         assert_eq!(buf.confirmed_frame, 2);
     }
 
@@ -689,13 +770,17 @@ mod tests {
     #[test]
     fn test_input_buffer_predict() {
         let mut buf = InputBuffer::new(0);
-        let input = InputFrame::new(1, 0).with_movement(5, 0, 0);
+        let input = InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(5),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        );
         buf.add_confirmed(input);
 
         // Predict frame 2 → repeats frame 1's input
         let predicted = buf.predict(2);
         assert_eq!(predicted.frame, 2);
-        assert_eq!(predicted.movement[0], 5);
+        assert_eq!(predicted.movement[0], InputFix::from_int(5));
     }
 
     #[test]
@@ -717,18 +802,26 @@ mod tests {
         let mut session = LockstepSession::new(2);
 
         // Frame 1: only player 0 ready
-        session.add_local_input(InputFrame::new(1, 0).with_movement(1, 0, 0));
+        session.add_local_input(InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(1),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        ));
         assert!(!session.ready_to_advance());
 
         // Frame 1: player 1 also ready
-        session.add_remote_input(InputFrame::new(1, 1).with_movement(0, 0, -1));
+        session.add_remote_input(InputFrame::new(1, 1).with_movement(
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+            InputFix::from_int(-1),
+        ));
         assert!(session.ready_to_advance());
 
         // Advance
         let inputs = session.advance().unwrap();
         assert_eq!(inputs.len(), 2);
-        assert_eq!(inputs[0].movement[0], 1);
-        assert_eq!(inputs[1].movement[2], -1);
+        assert_eq!(inputs[0].movement[0], InputFix::from_int(1));
+        assert_eq!(inputs[1].movement[2], InputFix::from_int(-1));
         assert_eq!(session.confirmed_frame(), 1);
     }
 
@@ -767,7 +860,11 @@ mod tests {
         let mut session = RollbackSession::new(2, 0, 8);
 
         // Local input for frame 1
-        let inputs = session.add_local_input(InputFrame::new(1, 0).with_movement(1, 0, 0));
+        let inputs = session.add_local_input(InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(1),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        ));
         assert_eq!(inputs.len(), 2);
 
         // Remote input matches prediction (empty)
@@ -780,13 +877,25 @@ mod tests {
         let mut session = RollbackSession::new(2, 0, 8);
 
         // Frame 1: local input, predict remote as empty
-        session.add_local_input(InputFrame::new(1, 0).with_movement(1, 0, 0));
+        session.add_local_input(InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(1),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        ));
 
         // Frame 2: advance further
-        session.add_local_input(InputFrame::new(2, 0).with_movement(1, 0, 0));
+        session.add_local_input(InputFrame::new(2, 0).with_movement(
+            InputFix::from_int(1),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        ));
 
         // Remote input for frame 1 arrives with different data than predicted
-        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(5, 5, 5));
+        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(
+            InputFix::from_int(5),
+            InputFix::from_int(5),
+            InputFix::from_int(5),
+        ));
         assert_eq!(action, RollbackAction::Rollback { to_frame: 1 });
     }
 
@@ -836,13 +945,21 @@ mod tests {
         let mut session = RollbackSession::new(2, 0, 8);
 
         // Confirmed inputs for both players on frame 1
-        session.buffers[0].add_confirmed(InputFrame::new(1, 0).with_movement(10, 0, 0));
-        session.buffers[1].add_confirmed(InputFrame::new(1, 1).with_movement(0, 0, -10));
+        session.buffers[0].add_confirmed(InputFrame::new(1, 0).with_movement(
+            InputFix::from_int(10),
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+        ));
+        session.buffers[1].add_confirmed(InputFrame::new(1, 1).with_movement(
+            InputFix::from_int(0),
+            InputFix::from_int(0),
+            InputFix::from_int(-10),
+        ));
 
         let inputs = session.inputs_for_frame(1);
         assert_eq!(inputs.len(), 2);
-        assert_eq!(inputs[0].movement[0], 10);
-        assert_eq!(inputs[1].movement[2], -10);
+        assert_eq!(inputs[0].movement[0], InputFix::from_int(10));
+        assert_eq!(inputs[1].movement[2], InputFix::from_int(-10));
     }
 
     #[test]
@@ -855,7 +972,11 @@ mod tests {
         }
 
         // Remote sends frame 1 with different data → needs rollback of 4 frames > max 2
-        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(99, 99, 99));
+        let action = session.add_remote_input(InputFrame::new(1, 1).with_movement(
+            InputFix::from_int(99),
+            InputFix::from_int(99),
+            InputFix::from_int(99),
+        ));
         assert_eq!(action, RollbackAction::Desync { frame: 1 });
     }
 }

@@ -766,18 +766,26 @@ pub unsafe extern "C" fn as_sync_input_frame_free(ptr: *mut AsSyncInputFrame) {
     })
 }
 
+/// Sets movement to the fixed-point values `x_hi + x_lo / 2⁶⁴`, `y_hi + y_lo / 2⁶⁴`, `z_hi + z_lo / 2⁶⁴`
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_set_movement(
     ptr: *mut AsSyncInputFrame,
-    x: i16,
-    y: i16,
-    z: i16,
+    x_hi: i64,
+    x_lo: u64,
+    y_hi: i64,
+    y_lo: u64,
+    z_hi: i64,
+    z_lo: u64,
 ) {
     ffi_guard((), || {
         if ptr.is_null() {
             return;
         }
-        (*ptr).0.movement = [x, y, z];
+        (*ptr).0.movement = [
+            crate::InputFix::from_raw(x_hi, x_lo),
+            crate::InputFix::from_raw(y_hi, y_lo),
+            crate::InputFix::from_raw(z_hi, z_lo),
+        ];
     })
 }
 
@@ -791,18 +799,26 @@ pub unsafe extern "C" fn as_sync_input_frame_set_actions(ptr: *mut AsSyncInputFr
     })
 }
 
+/// Sets aim to the fixed-point values `x_hi + x_lo / 2⁶⁴`, `y_hi + y_lo / 2⁶⁴`, `z_hi + z_lo / 2⁶⁴`
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_set_aim(
     ptr: *mut AsSyncInputFrame,
-    x: i16,
-    y: i16,
-    z: i16,
+    x_hi: i64,
+    x_lo: u64,
+    y_hi: i64,
+    y_lo: u64,
+    z_hi: i64,
+    z_lo: u64,
 ) {
     ffi_guard((), || {
         if ptr.is_null() {
             return;
         }
-        (*ptr).0.aim = [x, y, z];
+        (*ptr).0.aim = [
+            crate::InputFix::from_raw(x_hi, x_lo),
+            crate::InputFix::from_raw(y_hi, y_lo),
+            crate::InputFix::from_raw(z_hi, z_lo),
+        ];
     })
 }
 
@@ -826,20 +842,22 @@ pub unsafe extern "C" fn as_sync_input_frame_get_player_id(ptr: *const AsSyncInp
     })
 }
 
+/// Writes movement as the integer (`*_hi`) and fractional (`*_lo`, units of 2⁻⁶⁴) words of each component
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_get_movement(
     ptr: *const AsSyncInputFrame,
-    out_x: *mut i16,
-    out_y: *mut i16,
-    out_z: *mut i16,
+    out_hi: *mut i64,
+    out_lo: *mut u64,
 ) {
     ffi_guard((), || {
-        if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
+        if ptr.is_null() || out_hi.is_null() || out_lo.is_null() {
             return;
         }
-        *out_x = (*ptr).0.movement[0];
-        *out_y = (*ptr).0.movement[1];
-        *out_z = (*ptr).0.movement[2];
+        // out_hi and out_lo each point to 3 elements (x, y, z)
+        for (i, c) in (*ptr).0.movement.iter().enumerate() {
+            *out_hi.add(i) = c.hi;
+            *out_lo.add(i) = c.lo;
+        }
     })
 }
 
@@ -853,20 +871,22 @@ pub unsafe extern "C" fn as_sync_input_frame_get_actions(ptr: *const AsSyncInput
     })
 }
 
+/// Writes aim as the integer (`*_hi`) and fractional (`*_lo`, units of 2⁻⁶⁴) words of each component
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_input_frame_get_aim(
     ptr: *const AsSyncInputFrame,
-    out_x: *mut i16,
-    out_y: *mut i16,
-    out_z: *mut i16,
+    out_hi: *mut i64,
+    out_lo: *mut u64,
 ) {
     ffi_guard((), || {
-        if ptr.is_null() || out_x.is_null() || out_y.is_null() || out_z.is_null() {
+        if ptr.is_null() || out_hi.is_null() || out_lo.is_null() {
             return;
         }
-        *out_x = (*ptr).0.aim[0];
-        *out_y = (*ptr).0.aim[1];
-        *out_z = (*ptr).0.aim[2];
+        // out_hi and out_lo each point to 3 elements (x, y, z)
+        for (i, c) in (*ptr).0.aim.iter().enumerate() {
+            *out_hi.add(i) = c.hi;
+            *out_lo.add(i) = c.lo;
+        }
     })
 }
 
@@ -1325,19 +1345,18 @@ mod tests {
     fn test_ffi_input_frame() {
         unsafe {
             let frame = as_sync_input_frame_new(42, 1);
-            as_sync_input_frame_set_movement(frame, 100, 0, -50);
+            as_sync_input_frame_set_movement(frame, 100, 0, 0, 1 << 63, -50, 1);
             as_sync_input_frame_set_actions(frame, 0x05);
 
             assert_eq!(as_sync_input_frame_get_frame(frame), 42);
             assert_eq!(as_sync_input_frame_get_player_id(frame), 1);
             assert_eq!(as_sync_input_frame_get_actions(frame), 0x05);
 
-            let mut mx = 0i16;
-            let mut my = 0i16;
-            let mut mz = 0i16;
-            as_sync_input_frame_get_movement(frame, &mut mx, &mut my, &mut mz);
-            assert_eq!(mx, 100);
-            assert_eq!(mz, -50);
+            let mut hi = [0i64; 3];
+            let mut lo = [0u64; 3];
+            as_sync_input_frame_get_movement(frame, hi.as_mut_ptr(), lo.as_mut_ptr());
+            assert_eq!(hi, [100, 0, -50]);
+            assert_eq!(lo, [0, 1 << 63, 1]);
 
             as_sync_input_frame_free(frame);
         }
@@ -1372,7 +1391,7 @@ mod tests {
         unsafe {
             let session = as_sync_rollback_new(2, 0, 8, crate::SYNC_SEMANTICS_ID.as_ptr());
             let input = as_sync_input_frame_new(1, 0);
-            as_sync_input_frame_set_movement(input, 1, 0, 0);
+            as_sync_input_frame_set_movement(input, 1, 0, 0, 0, 0, 0);
 
             let arr = as_sync_rollback_add_local_input(session, input);
             assert_eq!(as_sync_input_frame_array_len(arr), 2);

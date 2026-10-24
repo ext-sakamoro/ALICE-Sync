@@ -66,8 +66,8 @@ impl Fixed {
         self.0 as f32 * Self::RCP_SCALE
     }
 
-    /// From the network format: i16 **Q8.8** (`InputFrame::movement` /
-    /// `EventKind::Motion` deltas), `256 ↦ 1.0`, resolution 1/256.
+    /// From the event format: i16 **Q8.8** (`EventKind::Motion` deltas),
+    /// `256 ↦ 1.0`, resolution 1/256.
     ///
     /// History (2026-09-17, oracle `tests/analytic_oracle.rs`): this shifted by
     /// 6 (i16 read as Q6.10, `256 ↦ 0.25`) while the `InputFrame` doc, the
@@ -80,7 +80,7 @@ impl Fixed {
         Self((n as i32) << 8)
     }
 
-    /// To the network format (i16 Q8.8), truncating the low 8 fractional bits
+    /// To the event format (i16 Q8.8), truncating the low 8 fractional bits
     /// and saturating outside `[-128, 128)`.
     #[inline(always)]
     #[must_use]

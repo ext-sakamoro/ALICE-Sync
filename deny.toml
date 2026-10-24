@@ -104,6 +104,11 @@ allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 name = "alice-physics"
 allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 
+# alice-physics 4.0.0 の本体 (feature physics、git の rev 391971e6)
+[[licenses.exceptions]]
+name = "alice-physics-core"
+allow = ["AGPL-3.0-or-later"]
+
 [[licenses.exceptions]]
 name = "alice-analytics"
 allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]

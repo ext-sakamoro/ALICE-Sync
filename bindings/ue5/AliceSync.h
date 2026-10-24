@@ -106,14 +106,16 @@ extern "C"
     // InputFrame
     AsSyncInputFrame* as_sync_input_frame_new(uint64_t frame, uint8_t playerId);
     void as_sync_input_frame_free(AsSyncInputFrame* ptr);
-    void as_sync_input_frame_set_movement(AsSyncInputFrame* ptr, int16_t x, int16_t y, int16_t z);
+    /* each component is the fixed-point value hi + lo / 2^64 */
+    void as_sync_input_frame_set_movement(AsSyncInputFrame* ptr, int64_t xHi, uint64_t xLo, int64_t yHi, uint64_t yLo, int64_t zHi, uint64_t zLo);
     void as_sync_input_frame_set_actions(AsSyncInputFrame* ptr, uint32_t actions);
-    void as_sync_input_frame_set_aim(AsSyncInputFrame* ptr, int16_t x, int16_t y, int16_t z);
+    void as_sync_input_frame_set_aim(AsSyncInputFrame* ptr, int64_t xHi, uint64_t xLo, int64_t yHi, uint64_t yLo, int64_t zHi, uint64_t zLo);
     uint64_t as_sync_input_frame_get_frame(const AsSyncInputFrame* ptr);
     uint8_t as_sync_input_frame_get_player_id(const AsSyncInputFrame* ptr);
-    void as_sync_input_frame_get_movement(const AsSyncInputFrame* ptr, int16_t* outX, int16_t* outY, int16_t* outZ);
+    /* outHi and outLo each point to 3 elements (x, y, z) */
+    void as_sync_input_frame_get_movement(const AsSyncInputFrame* ptr, int64_t* outHi, uint64_t* outLo);
     uint32_t as_sync_input_frame_get_actions(const AsSyncInputFrame* ptr);
-    void as_sync_input_frame_get_aim(const AsSyncInputFrame* ptr, int16_t* outX, int16_t* outY, int16_t* outZ);
+    void as_sync_input_frame_get_aim(const AsSyncInputFrame* ptr, int64_t* outHi, uint64_t* outLo);
 
     // InputFrameArray
     void as_sync_input_frame_array_free(AsSyncInputFrameArray* ptr);

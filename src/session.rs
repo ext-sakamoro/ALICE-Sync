@@ -880,6 +880,7 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input_sync::InputFix;
     use crate::transport::ChannelTransport;
 
     #[tokio::test]
@@ -1242,21 +1243,29 @@ mod tests {
 
         // Player 0 input
         session
-            .lockstep_add_input(InputFrame::new(1, 0).with_movement(1, 0, 0))
+            .lockstep_add_input(InputFrame::new(1, 0).with_movement(
+                InputFix::from_int(1),
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+            ))
             .await;
         assert!(!session.lockstep_ready().await);
 
         // Player 1 input
         session
-            .lockstep_add_remote(InputFrame::new(1, 1).with_movement(0, 0, -1))
+            .lockstep_add_remote(InputFrame::new(1, 1).with_movement(
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+                InputFix::from_int(-1),
+            ))
             .await;
         assert!(session.lockstep_ready().await);
 
         // Advance
         let inputs = session.lockstep_advance().await.unwrap();
         assert_eq!(inputs.len(), 2);
-        assert_eq!(inputs[0].movement[0], 1);
-        assert_eq!(inputs[1].movement[2], -1);
+        assert_eq!(inputs[0].movement[0], InputFix::from_int(1));
+        assert_eq!(inputs[1].movement[2], InputFix::from_int(-1));
         assert_eq!(session.lockstep_confirmed_frame().await, 1);
     }
 
@@ -1299,7 +1308,11 @@ mod tests {
 
         // Local input for frame 1
         let inputs = session
-            .rollback_add_local(InputFrame::new(1, 0).with_movement(1, 0, 0))
+            .rollback_add_local(InputFrame::new(1, 0).with_movement(
+                InputFix::from_int(1),
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+            ))
             .await;
         assert_eq!(inputs.len(), 2);
 
@@ -1320,15 +1333,27 @@ mod tests {
 
         // Advance 2 frames
         session
-            .rollback_add_local(InputFrame::new(1, 0).with_movement(1, 0, 0))
+            .rollback_add_local(InputFrame::new(1, 0).with_movement(
+                InputFix::from_int(1),
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+            ))
             .await;
         session
-            .rollback_add_local(InputFrame::new(2, 0).with_movement(1, 0, 0))
+            .rollback_add_local(InputFrame::new(2, 0).with_movement(
+                InputFix::from_int(1),
+                InputFix::from_int(0),
+                InputFix::from_int(0),
+            ))
             .await;
 
         // Remote for frame 1 differs from prediction → rollback
         let action = session
-            .rollback_add_remote(InputFrame::new(1, 1).with_movement(5, 5, 5))
+            .rollback_add_remote(InputFrame::new(1, 1).with_movement(
+                InputFix::from_int(5),
+                InputFix::from_int(5),
+                InputFix::from_int(5),
+            ))
             .await;
         assert_eq!(action, RollbackAction::Rollback { to_frame: 1 });
     }

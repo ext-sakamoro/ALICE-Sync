@@ -407,18 +407,18 @@ let c = a + b;  // Always exactly the same bits
 
 ## Input Synchronization
 
-Deterministic input sync for multiplayer games — **~20 bytes/player/frame**.
+Deterministic input sync for multiplayer games — **17–115 bytes/player/frame** (`InputFrame::to_bytes`; 39 bytes for a movement of 1/256 on one axis), every bit of each fixed-point component kept.
 
 ### Usage
 
 ```rust
-use alice_sync::{InputFrame, LockstepSession, RollbackSession};
+use alice_sync::{InputFix, InputFrame, LockstepSession, RollbackSession};
 
 // --- Lockstep (RTS / turn-based) ---
 let mut session = LockstepSession::new(2);  // 2 players
 
 let input = InputFrame::new(0, 0)  // frame 0, player 0
-    .with_movement(100, 0, 0)
+    .with_movement(InputFix::from_int(100), InputFix::ZERO, InputFix::ZERO)
     .with_actions(0x01);
 
 session.add_local_input(input);
@@ -564,7 +564,7 @@ alice-sync = { path = "../ALICE-Sync", features = ["physics"] }
 ### Architecture
 
 ```
-Network --> InputFrame (i16, 24B) --> FrameInput (Fix128) --> PhysicsWorld
+Network --> InputFrame (InputFix) --> FrameInput (Fix128) --> PhysicsWorld
                  ALICE-Sync                ALICE-Physics
 
 PhysicsWorld --> SimulationChecksum --> WorldHash --> Desync Verification
@@ -577,7 +577,7 @@ Combined rollback input sync + deterministic physics in one struct:
 
 ```rust
 use alice_sync::physics_bridge::PhysicsRollbackSession;
-use alice_sync::InputFrame;
+use alice_sync::{InputFix, InputFrame};
 use alice_physics::{NetcodeConfig, RigidBody, Vec3Fix, Fix128};
 
 // the peer's alice_physics::PHYSICS_SEMANTICS_ID, received in the handshake;
@@ -590,7 +590,7 @@ let idx = session.sim.add_body(body);
 session.sim.assign_player_body(0, idx);
 
 // Game loop: advance with local input
-let input = InputFrame::new(1, 0).with_movement(1, 0, 0);
+let input = InputFrame::new(1, 0).with_movement(InputFix::from_int(1), InputFix::ZERO, InputFix::ZERO);
 let checksum = session.advance_frame(input);
 
 // When remote input arrives:
@@ -607,8 +607,8 @@ match session.add_remote_input(remote_input) {
 
 | Function | Description |
 |----------|-------------|
-| `sync_input_to_physics()` | InputFrame (i16 Q8.8) -> FrameInput (Fix128) |
-| `physics_input_to_sync()` | FrameInput (Fix128) -> InputFrame (i16, truncate) |
+| `sync_input_to_physics()` | InputFrame (InputFix) -> FrameInput (Fix128), bit for bit |
+| `physics_input_to_sync()` | FrameInput (Fix128) -> InputFrame (InputFix), bit for bit |
 | `sync_inputs_to_physics()` | Batch conversion |
 | `physics_checksum_to_world_hash()` | SimulationChecksum(u64) -> WorldHash(u64) |
 | `world_hash_to_physics_checksum()` | WorldHash(u64) -> SimulationChecksum(u64) |
