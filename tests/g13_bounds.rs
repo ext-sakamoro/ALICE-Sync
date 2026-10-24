@@ -243,3 +243,63 @@ fn the_world_refuses_a_new_entity_past_the_limit() {
     w.apply(&spawn(limit)).unwrap();
     assert_eq!(w.iter_entities().count(), MAX_LIVE_ENTITIES);
 }
+
+#[test]
+fn the_column_world_refuses_a_new_entity_past_the_limit() {
+    // the same bound as World's (the_world_refuses_a_new_entity_past_the_limit), for WorldSoA
+    use alice_sync::world::MAX_LIVE_ENTITIES;
+    use alice_sync::WorldSoA;
+    let spawn = |entity| {
+        Event::new(EventKind::Spawn {
+            entity,
+            kind: 0,
+            pos: [0, 0, 0],
+        })
+    };
+    let mut w = WorldSoA::new(0);
+    let limit = u32::try_from(MAX_LIVE_ENTITIES).unwrap();
+    for id in 0..limit {
+        w.apply(&spawn(id)).unwrap();
+    }
+    let before = w.hash();
+    assert!(matches!(
+        w.apply(&spawn(limit)),
+        Err(alice_sync::SyncError::TooManyEntities { limit: l }) if l == MAX_LIVE_ENTITIES
+    ));
+    assert_eq!(w.entity_count(), MAX_LIVE_ENTITIES);
+    assert_eq!(w.hash(), before, "the refused spawn changed nothing");
+    // a live id may spawn again, and a freed place takes a new id
+    w.apply(&spawn(0)).unwrap();
+    w.apply(&Event::new(EventKind::Despawn { entity: 7 }))
+        .unwrap();
+    w.apply(&spawn(limit)).unwrap();
+    assert_eq!(w.entity_count(), MAX_LIVE_ENTITIES);
+}
+
+#[test]
+fn a_state_with_more_live_entities_than_the_limit_is_refused_by_the_column_world() {
+    // a WorldState built field by field (no World holds more than the limit): the limit itself converts,
+    // one more is refused
+    use alice_sync::world::MAX_LIVE_ENTITIES;
+    use alice_sync::{Entity, EntityProps, Vec3Fixed, WorldSoA, WorldState};
+    let state_of = |n: u32| {
+        let mut state = WorldState::default();
+        for id in 0..n {
+            let h = state.entities.insert(Entity {
+                id,
+                kind: 0,
+                position: Vec3Fixed::ZERO,
+                properties: EntityProps::default(),
+            });
+            state.set_handle(id, h);
+        }
+        state
+    };
+    let limit = u32::try_from(MAX_LIVE_ENTITIES).unwrap();
+    let at = WorldSoA::from_state(&state_of(limit)).unwrap();
+    assert_eq!(at.entity_count(), MAX_LIVE_ENTITIES);
+    assert!(matches!(
+        WorldSoA::from_state(&state_of(limit + 1)),
+        Err(alice_sync::SyncError::TooManyEntities { limit: l }) if l == MAX_LIVE_ENTITIES
+    ));
+}
