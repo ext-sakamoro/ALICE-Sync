@@ -404,6 +404,22 @@ async fn a_head_longer_than_the_announced_length_loses_the_connection() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_message_kind_that_is_not_a_sync_message_closes_the_connection() {
+    // a verified peer sends a well framed message of the message kind whose body does not decode: the
+    // connection is closed and counted, nothing is received, and the peer finds the channel gone
+    let (ta, mut raw) = with_raw_peer().await;
+    let mut first = head(KIND_MESSAGE, 3);
+    first.extend_from_slice(&[0xff, 0xff, 0xff]);
+    raw.send(&first).await.unwrap();
+    wait_no_peers(&ta).await;
+    assert_eq!(ta.malformed_count(), 1);
+    assert!(timeout(Duration::from_millis(200), ta.recv_verified())
+        .await
+        .is_err());
+    assert!(timeout(WAIT, raw.recv()).await.unwrap().is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_well_framed_message_from_a_raw_peer_is_received() {
     // the framing the transport writes, written by hand: the reference the refusals above are measured against
     let a = device(1, "alice");
