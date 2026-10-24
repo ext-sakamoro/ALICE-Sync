@@ -1,6 +1,6 @@
 // ALICE-Sync UE5 C++ Bindings — 71 extern "C" declarations + RAII handles
 // Auto-generated from src/ffi.rs
-// Copyright (C) 2026 Moroya Sakamoto — AGPL-3.0
+// Copyright (C) 2026 Moroya Sakamoto — LicenseRef-Proprietary
 
 #pragma once
 

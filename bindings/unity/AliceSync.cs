@@ -1,6 +1,6 @@
 // ALICE-Sync Unity C# Bindings — 71 DllImport + RAII wrappers
 // Auto-generated from src/ffi.rs
-// Copyright (C) 2026 Moroya Sakamoto — AGPL-3.0
+// Copyright (C) 2026 Moroya Sakamoto — LicenseRef-Proprietary
 
 using System;
 using System.Runtime.InteropServices;

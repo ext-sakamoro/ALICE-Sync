@@ -83,4 +83,4 @@ Bridge Modules (feature-gated):
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under AGPL-3.0.
+By contributing, you agree that your contributions will be licensed under the licence of this repository, LicenseRef-Proprietary (see [LICENSE-Proprietary](LICENSE-Proprietary)).

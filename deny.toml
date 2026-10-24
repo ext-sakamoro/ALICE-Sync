@@ -3,7 +3,7 @@
 #
 # ALICE-SDF v1.7.7 (commit 52d26f9) の deny.toml を ALICE-Codec 経由で ALICE-Sync 用に調整
 #
-# ALICE-Sync 自体は AGPL-3.0-or-later (target-side self exception 必須)
+# ALICE-Sync 自体は LicenseRef-Proprietary (publish = false なので [licenses.private] で除外)
 # sibling stubs (alice-ml/alice-db/alice-crypto/alice-cache) は alice-stubs action で
 # "MIT OR Apache-2.0" で生成される
 
@@ -66,6 +66,11 @@ allow = [
     "NCSA",
 ]
 
+# this crate is publish = false and LicenseRef-Proprietary: unpublished
+# workspace crates are not checked against the allow list
+[licenses.private]
+ignore = true
+
 [[licenses.clarify]]
 name = "ring"
 version = "*"
@@ -77,12 +82,6 @@ name = "webpki"
 version = "*"
 expression = "ISC"
 license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
-
-# ALICE-Sync 自身 (target crate) が AGPL-3.0-or-later だが cargo-deny は target も
-# license check 対象にするため exception で自己許可
-[[licenses.exceptions]]
-name = "alice-sync"
-allow = ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
 
 # AGPL bridge dep (crates.io、optional feature): canonical AGPL sibling exception
 [[licenses.exceptions]]

@@ -5,7 +5,7 @@ name: Security & Hygiene
 #
 # 目的:
 # - RustSec advisory (CVE) の週次検知
-# - dep license 逸脱 (AGPL 自己許可) の block
+# - dep license 逸脱の block
 # - 未使用依存の炙り出し (bloat 予防)
 # - 仮実装 (panic!(STUB) / dbg!) の CI gate (todo!/unimplemented! は informational)
 #

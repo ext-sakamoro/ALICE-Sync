@@ -718,19 +718,12 @@ cargo bench                         # Benchmarks
 
 ## License
 
-`AGPL-3.0-or-later OR LicenseRef-Commercial` — dual-licensed. Pick either.
+`LicenseRef-Proprietary` from this version: the source is published for reading only, and
+using, copying, modifying or distributing it needs a written agreement with
+the copyright holder. The text is [LICENSE-Proprietary](LICENSE-Proprietary). Versions
+published before keep the licence they were published under.
 
-| Option | Terms | Use it when |
-|--------|-------|-------------|
-| **AGPL-3.0-or-later** | [LICENSE-AGPL](LICENSE-AGPL) — free, no reporting obligation | Your project is itself AGPL-compatible open source, or you are only using it internally |
-| **Commercial License** | [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) — paid, removes the copyleft | Closed-source product, proprietary SaaS, edge / firmware distribution, plugin redistribution, or a platform NDA that forbids source disclosure |
-
-AGPL is a strong copyleft: a product, firmware image, or service that links
-`alice-sync` and is distributed or served to users must be released under the AGPL
-as well. That is intentional for the open ecosystem, and the Commercial
-License exists for the cases where it is not something you are able to do.
-
-Commercial licence enquiries: <contact@extoria.co.jp>
+Licence enquiries: <contact@extoria.co.jp>
 
 ## Author
 

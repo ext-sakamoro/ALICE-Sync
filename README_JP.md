@@ -718,18 +718,11 @@ cargo bench                         # Benchmarks
 
 ## ライセンス
 
-`AGPL-3.0-or-later OR LicenseRef-Commercial` — デュアルライセンス どちらかを選べる
+この版から `LicenseRef-Proprietary`: ソースは閲覧用に公開しており、利用・複製・改変・配布には
+著作権者との書面での合意が必要 条文は [LICENSE-Proprietary](LICENSE-Proprietary)
+それより前に公開した版は、公開時のライセンスのまま
 
-| 選択肢 | 条件 | 向いている場合 |
-|--------|-------|-------------|
-| **AGPL-3.0-or-later** | [LICENSE-AGPL](LICENSE-AGPL) — 無償、報告義務なし | プロジェクト自体が AGPL 互換のオープンソースである、または社内でのみ利用する |
-| **商用ライセンス** | [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) — 有償、コピーレフトを外す | クローズドソースの製品、独自仕様の SaaS、エッジやファームウェアでの配布、plugin の再配布、ソース開示を禁じるプラットフォームの NDA がある場合 |
-
-AGPL は強いコピーレフト `alice-sync` をリンクし、ユーザーに配布または提供する製品、
-ファームウェアイメージ、サービスは、同じく AGPL で公開しなければならない これはオープンな
-エコシステムのための意図的な仕様で、商用ライセンスは、それができない場合のためにある
-
-商用ライセンスの問い合わせ: <contact@extoria.co.jp>
+ライセンスの問い合わせ: <contact@extoria.co.jp>
 
 ## 作者
 
