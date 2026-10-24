@@ -718,11 +718,9 @@ cargo bench                         # Benchmarks
 
 ## ライセンス
 
-この版から `LicenseRef-Proprietary`: ソースは閲覧用に公開しており、利用・複製・改変・配布には
-著作権者との書面での合意が必要 条文は [LICENSE-Proprietary](LICENSE-Proprietary)
-それより前に公開した版は、公開時のライセンスのまま
+`LicenseRef-Proprietary` 条文は [LICENSE-Proprietary](LICENSE-Proprietary)
 
-ライセンスの問い合わせ: <contact@extoria.co.jp>
+Enquiries: https://extoria.co.jp/
 
 ## 作者
 
