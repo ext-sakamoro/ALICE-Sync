@@ -238,6 +238,10 @@ impl Converge {
 
     /// Whether `entity` has (or now gets) a record: when the table is full, a larger id than every
     /// kept one is not recorded, and a smaller one drops the largest kept record
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the order-independent sink of ALICE-Law G13: drives the world from the keyed records"
+    )]
     fn make_room_for(&mut self, world: &mut World, entity: u32) -> Result<bool> {
         if self.entities.len() < self.max_records || self.entities.contains_key(&entity) {
             return Ok(true);
@@ -257,6 +261,10 @@ impl Converge {
 
     /// A live entity enters the world if it is among the smallest live ids, pushing the largest
     /// admitted one out to wait; otherwise it waits
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the order-independent sink of ALICE-Law G13: drives the world from the keyed records"
+    )]
     fn admit_or_wait(&mut self, world: &mut World, entity: u32) -> Result<()> {
         if self.admitted.len() < self.max_live {
             self.admitted.insert(entity);
@@ -279,6 +287,10 @@ impl Converge {
 
     /// A live entity ended (or its record is dropped): out of the world, and the smallest waiting
     /// one takes its place
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the order-independent sink of ALICE-Law G13: drives the world from the keyed records"
+    )]
     fn end_live(&mut self, world: &mut World, entity: u32) -> Result<()> {
         if !self.admitted.remove(&entity) {
             self.waiting.remove(&entity);
