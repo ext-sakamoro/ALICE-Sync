@@ -12,22 +12,6 @@ on:
     # diff from GitHub's filter and the run is skipped; the changes job below compares
     # with merge-base(origin/main) instead (patterns: .github/paths/g3-ir.txt)
     branches: [main, 'ci/**']
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - 'tools/no-outer-fneg-of-fma/**'
-      - 'tools/fneg-fma-ir-probes/**'
-      - 'scripts/fneg_fma_ir_check.py'
-      - 'scripts/test_fneg_fma_ir_check.py'
-      - 'scripts/no-outer-fneg-of-fma-allowlist.toml'
-      - 'scripts/changed_paths.py'
-      - '.github/workflows/g3-ir.yml'
-      - '.github/paths/g3-ir.txt'
   schedule:
     - cron: '13 6 * * 1'
   workflow_dispatch:

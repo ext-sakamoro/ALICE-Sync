@@ -9,8 +9,6 @@ name: CI
 on:
   push:
     branches: [main, 'ci/**']
-  pull_request:
-    branches: [main]
 
 # on main each commit has a group of its own and a run there is never
 # cancelled; a newer run on the same branch cancels an older one only off main
