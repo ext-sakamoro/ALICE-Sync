@@ -28,8 +28,14 @@ alice-auth = { version = "0.5.1", optional = true, default-features = false, fea
 alice-codec = { version = "0.1.3", optional = true, default-features = false, features = ["std"] }
 alice-analytics = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 mdns-sd = { version = "0.11", optional = true }
+# the secure transport: the channel and the device certificates (feature secure-transport), taken by
+# git at a full commit of their public repositories
+alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", rev = "3381ba62807d298d7006c2f3858d7037c3fa688d", features = ["async"], optional = true }
+alice-identity = { version = "1.2.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", rev = "c32a873238a11c7dc0d878aa9cfb7db871ab4c0b", optional = true }
 
 [dev-dependencies]
+# device keys for the secure transport tests
+alice-sign = { version = "0.1", git = "https://github.com/ext-sakamoro/ALICE-Sign", rev = "8a1b00d800082187a8693732a9ffb806c98814e7" }
 criterion = "0.5"
 # tests/determinism_golden.rs: SHA-256 of the golden scenarios (the pins of SYNC_SEMANTICS_ID)
 sha2 = "0.10"
@@ -53,6 +59,7 @@ analytics = ["dep:alice-analytics", "std"]  # ALICE-Analytics sync telemetry
 serde-raw = []
 ffi = ["std"]     # C-ABI FFI for Unity/UE5
 cloud = ["std"]  # Cloud-side multi-device spatial synchronization
+secure-transport = ["async", "dep:alice-channel", "dep:alice-identity"]  # SyncTransport over the authenticated, encrypted channel
 mdns = ["dep:mdns-sd", "async"]  # mDNS LAN auto-discovery
 all-bridges = ["physics", "telemetry", "cache", "auth", "codec", "analytics"]  # All integration bridges
 

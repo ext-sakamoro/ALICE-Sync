@@ -23,7 +23,7 @@ env:
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: short
   # python を除く全 native feature (security-audit.yml と同じ定義)
-  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"
+  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"
 
 jobs:
   fmt:
@@ -131,7 +131,7 @@ jobs:
         run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test
       - name: Test (all native features)
         shell: bash
-        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test --features "$NATIVE_FEATURES"
+        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,secure_transport=13 -- cargo test --features "$NATIVE_FEATURES"
       # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
       # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)

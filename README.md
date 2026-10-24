@@ -79,6 +79,7 @@ Enable with `--features async` to get a complete, self-contained P2P stack.
 | `channel` | Topic-based pub/sub with per-topic filtering |
 | `discovery` | mDNS LAN auto-discovery + manual peer registration + GC |
 | `session` | High-level session driver: builder pattern, tick loop, 5 sync modes |
+| `secure_transport` | `SyncTransport` over an authenticated, encrypted channel: peers are certified devices, messages are sealed (feature `secure-transport`) |
 
 ### Sync Modes
 
@@ -448,6 +449,7 @@ match rollback.add_remote_input(confirmed_input) {
 | `analytics` | No | DDSketch/HLL/CMS probabilistic telemetry via ALICE-Analytics |
 | `ffi` | No | C-ABI FFI for Unity/UE5 (79 functions) |
 | `cloud` | No | Cloud-side multi-device spatial synchronization hub |
+| `secure-transport` | No | `SecureTransport`: TCP transport whose peers prove a certified device key in a Noise handshake (ALICE-Channel, ALICE-Identity) and whose messages are sealed |
 | `all-bridges` | No | Enable all integration bridges (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
 
 ## C-ABI FFI (Unity / UE5)
