@@ -372,6 +372,8 @@ async fn breaks_framing(frames: Vec<Vec<u8>>) {
         }
     }
     wait_no_peers(&ta).await;
+    // a framing refusal, not a body that failed to decode (that close is counted as malformed)
+    assert_eq!(ta.malformed_count(), 0);
     assert!(timeout(Duration::from_millis(200), ta.recv())
         .await
         .is_err());
@@ -574,9 +576,11 @@ async fn a_peer_announcing_bytes_over_the_limit_loses_its_connection() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_kind_other_than_message_or_bytes_loses_the_connection() {
+    // the body is a valid message, so read as the message kind it would be received
+    let msg = bytes(&Message::Bye);
     for kind in [2, 0x7f, u8::MAX] {
-        let mut first = head(kind, 3);
-        first.extend_from_slice(&[1, 2, 3]);
+        let mut first = head(kind, msg.len());
+        first.extend_from_slice(&msg);
         breaks_framing(vec![first]).await;
     }
 }
