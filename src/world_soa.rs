@@ -420,6 +420,8 @@ impl Slot {
 // WorldSoA - Complete SoA World Implementation
 // ============================================================================
 
+use std::collections::BTreeMap;
+
 use crate::world::WorldHash;
 use crate::{Event, EventKind, MotionData, Result};
 
@@ -434,8 +436,9 @@ use crate::{Event, EventKind, MotionData, Result};
 pub struct WorldSoA {
     storage: WorldStorage,
     current_hash: WorldHash,
-    /// `entity_id` -> slot mapping
-    id_to_slot: Vec<u32>,
+    /// `entity_id` -> slot of each live entity, in id order (its memory follows the number of
+    /// entities, not the value of their ids)
+    id_to_slot: BTreeMap<u32, u32>,
 }
 
 impl Default for WorldSoA {
@@ -454,16 +457,7 @@ impl WorldSoA {
         Self {
             storage,
             current_hash: WorldHash::zero(),
-            id_to_slot: Vec::new(),
-        }
-    }
-
-    /// Ensure `id_to_slot` can hold `entity_id`
-    #[inline(always)]
-    fn ensure_id_capacity(&mut self, entity_id: u32) {
-        let required = entity_id as usize + 1;
-        if self.id_to_slot.len() < required {
-            self.id_to_slot.resize(required, u32::MAX);
+            id_to_slot: BTreeMap::new(),
         }
     }
 
@@ -471,9 +465,9 @@ impl WorldSoA {
     #[inline(always)]
     fn get_slot(&self, entity_id: u32) -> Option<u32> {
         self.id_to_slot
-            .get(entity_id as usize)
+            .get(&entity_id)
             .copied()
-            .filter(|&s| s != u32::MAX && self.storage.is_alive(s))
+            .filter(|&s| self.storage.is_alive(s))
     }
 
     /// Apply event to `SoA` world.
@@ -518,8 +512,7 @@ impl WorldSoA {
                 self.current_hash = self.current_hash.xor(entity_hash);
 
                 // Map entity_id -> slot
-                self.ensure_id_capacity(*entity);
-                self.id_to_slot[*entity as usize] = slot;
+                self.id_to_slot.insert(*entity, slot);
             }
 
             EventKind::Despawn { entity } => {
@@ -529,7 +522,7 @@ impl WorldSoA {
                     self.current_hash = self.current_hash.xor(entity_hash);
 
                     self.storage.despawn(slot);
-                    self.id_to_slot[*entity as usize] = u32::MAX;
+                    self.id_to_slot.remove(entity);
                 }
             }
 
@@ -585,8 +578,7 @@ impl WorldSoA {
     pub fn spawn_raw(&mut self, entity: u32, kind: u16, x: i32, y: i32, z: i32) -> u32 {
         let slot = self.storage.spawn(entity, kind, x, y, z);
         self.current_hash = self.current_hash.xor(self.storage.compute_hash(slot));
-        self.ensure_id_capacity(entity);
-        self.id_to_slot[entity as usize] = slot;
+        self.id_to_slot.insert(entity, slot);
         slot
     }
 
@@ -602,8 +594,8 @@ impl WorldSoA {
         }
         let entity = self.storage.ids[slot as usize];
         self.current_hash = self.current_hash.xor(self.storage.compute_hash(slot));
-        if self.id_to_slot.get(entity as usize) == Some(&slot) {
-            self.id_to_slot[entity as usize] = u32::MAX;
+        if self.id_to_slot.get(&entity) == Some(&slot) {
+            self.id_to_slot.remove(&entity);
         }
         self.storage.despawn(slot)
     }

@@ -8,11 +8,16 @@
 
 use alice_sync::fixed_point::{Fixed, Vec3Fixed};
 use alice_sync::persist::{
-    decode_state, encode_state, IdStatus, Persist, PersistError, FORMAT_VERSION, MAGIC,
+    decode_state, decode_state_strict, encode_state, FormatStatus, IdStatus, Persist, PersistError,
+    FORMAT_VERSION, MAGIC,
 };
 use alice_sync::{Entity, Event, EventKind, World, WorldState, SYNC_SEMANTICS_ID};
 
 const ID: std::ops::Range<usize> = 6..38;
+
+/// `encode_state(world().state())` as format version 1 wrote it (alice-sync a555bd4, the last
+/// release of that format; SHA-256 aded0fa98b4703ac2875f7a5234f04d24acef8547c98d0c3e2b84b0255bef663)
+const WORLD_STATE_V1: &[u8] = include_bytes!("data/persist/world_state_v1.bin");
 
 fn world() -> World {
     let mut w = World::new(7);
@@ -113,7 +118,7 @@ fn entity_round_trips() {
 }
 
 #[test]
-fn world_state_round_trips_with_its_free_list_and_id_map() {
+fn world_state_round_trips_with_its_live_entities_and_id_map() {
     let w = world();
     let back: WorldState = roundtrip(w.state());
     assert_eq!(back.frame, w.state().frame);
@@ -157,10 +162,23 @@ fn header_and_framing_errors() {
     bad[0] = b'X';
     assert_eq!(decode_state::<Fixed>(&bad), Err(PersistError::BadMagic));
     let mut bad = bytes.clone();
-    bad[4] = 2;
+    bad[4] = 3;
     assert_eq!(
         decode_state::<Fixed>(&bad),
-        Err(PersistError::UnsupportedVersion(2))
+        Err(PersistError::UnsupportedVersion(3))
+    );
+    // version 1 is an earlier format: read, marked legacy, and refused by the strict reader
+    let mut v1 = bytes.clone();
+    v1[4] = 1;
+    let d = decode_state::<Fixed>(&v1).unwrap();
+    assert_eq!((d.value, d.format), (Fixed(5), FormatStatus::Legacy(1)));
+    assert_eq!(
+        decode_state_strict::<Fixed>(&v1),
+        Err(PersistError::LegacyFormat(1))
+    );
+    assert_eq!(
+        decode_state_strict::<Fixed>(&bytes).unwrap().format,
+        FormatStatus::Current
     );
     assert_eq!(
         decode_state::<Vec3Fixed>(&bytes),
@@ -182,12 +200,13 @@ fn header_and_framing_errors() {
     assert_eq!(decode_state::<Fixed>(&[]), Err(PersistError::Truncated));
 }
 
-/// A world whose free list or id map would break the unchecked accessors is
-/// refused, not decoded, each with the reason of the check that caught it.
+/// A version 1 world whose free list or id map would break the unchecked
+/// accessors is refused, not decoded, each with the reason of the check that
+/// caught it (the fixture written by the last release of that format).
 #[test]
 fn malformed_world_state_is_refused() {
-    let w = world();
-    let bytes = encode_state(w.state());
+    let bytes = WORLD_STATE_V1.to_vec();
+    assert_eq!(&bytes[4..6], &1u16.to_le_bytes());
     // walk the slots (format table in src/persist.rs) to find the one free
     // slot's next-free field and the free-list head that follows the slots
     let body = 39;
@@ -243,3 +262,78 @@ fn malformed_world_state_is_refused() {
         "an id map handle does not point to an occupied slot of its generation"
     );
 }
+
+/// The version 1 fixture is read as legacy: the same live entities, frame and seed as the world
+/// that wrote it, and re-encoded it gives today's bytes for that world.
+#[test]
+fn a_version_1_world_is_read_as_legacy() {
+    let d = decode_state::<WorldState>(WORLD_STATE_V1).unwrap();
+    assert_eq!(d.format, FormatStatus::Legacy(1));
+    assert_eq!(d.status, IdStatus::Current);
+    let w = world();
+    assert_eq!(
+        (d.value.frame, d.value.seed),
+        (w.state().frame, w.state().seed)
+    );
+    let mut ids = Vec::new();
+    for (id, h) in &d.value.id_map {
+        let e = d.value.entities.get(*h).unwrap();
+        assert_eq!(e.id, *id);
+        let original = w
+            .state()
+            .entities
+            .get(w.state().get_handle(*id).unwrap())
+            .unwrap();
+        assert_eq!(e.compute_hash(), original.compute_hash());
+        ids.extend([*id]);
+    }
+    assert_eq!(ids, [0, 2, 3, 5, 9]);
+    assert_eq!(encode_state(&d.value), encode_state(w.state()));
+    assert!(matches!(
+        decode_state_strict::<WorldState>(WORLD_STATE_V1),
+        Err(PersistError::LegacyFormat(1))
+    ));
+}
+
+/// The current world body: the live count, the entity bodies in strictly ascending id order, the
+/// frame and the seed
+#[test]
+fn a_version_2_world_out_of_id_order_is_refused() {
+    let bytes = encode_state(world().state());
+    let body = 39;
+    let n = u32::from_le_bytes(bytes[body..body + 4].try_into().unwrap()) as usize;
+    assert_eq!(n, 5);
+    assert_eq!(bytes.len(), body + 4 + n * ENTITY_BODY + 8 + 8);
+    let entity = |i: usize| body + 4 + i * ENTITY_BODY;
+    let refused = |bad: &[u8]| match decode_state::<WorldState>(bad) {
+        Err(PersistError::Malformed(why)) => why,
+        other => panic!("expected Malformed, got {other:?}"),
+    };
+    // swap the first two entity bodies: ids 2 then 0
+    let mut swapped = bytes.clone();
+    let (a, b) = (entity(0), entity(1));
+    let first = swapped[a..a + ENTITY_BODY].to_vec();
+    swapped.copy_within(b..b + ENTITY_BODY, a);
+    swapped[b..b + ENTITY_BODY].copy_from_slice(&first);
+    assert_eq!(
+        refused(&swapped),
+        "entities are not in strictly ascending id order"
+    );
+    // the same id twice
+    let mut twice = bytes.clone();
+    twice.copy_within(a..a + 4, b);
+    assert_eq!(
+        refused(&twice),
+        "entities are not in strictly ascending id order"
+    );
+    // a count above the bodies that follow is truncated, not allocated for
+    let mut more = bytes.clone();
+    more[body..body + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        decode_state::<WorldState>(&more),
+        Err(PersistError::Truncated)
+    ));
+}
+
+/// id, kind, position, 16 property values and the active mask
+const ENTITY_BODY: usize = 4 + 2 + 12 + 64 + 2;

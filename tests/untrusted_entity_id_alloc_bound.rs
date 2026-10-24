@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use alice_sync::event::{Event, EventId, EventKind, SeqNum};
-use alice_sync::{Node, NodeId};
+use alice_sync::persist::{decode_state, encode_state, PersistError};
+use alice_sync::{Node, NodeId, WorldState};
 
 /// Largest single request the code under test may make in this binary
 const CAP: usize = 16 * 1024 * 1024;
@@ -96,7 +97,9 @@ fn remote_spawn(entity: u32) -> Event {
 
 #[test]
 fn a_remote_spawn_of_the_largest_entity_id_costs_one_entity() {
-    let _serial = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut node = Node::new(NodeId(9));
     let event = remote_spawn(u32::MAX);
     let (applied, peak) = peak_during(|| node.apply_event(&event));
@@ -107,7 +110,9 @@ fn a_remote_spawn_of_the_largest_entity_id_costs_one_entity() {
 
 #[test]
 fn spawns_spread_over_the_id_range_cost_their_count_not_their_ids() {
-    let _serial = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut node = Node::new(NodeId(9));
     let ids = [0u32, 1 << 20, 1 << 28, u32::MAX - 1];
     let (_, peak) = peak_during(|| {
@@ -125,10 +130,40 @@ fn spawns_spread_over_the_id_range_cost_their_count_not_their_ids() {
 
 #[test]
 fn the_column_world_applies_a_spawn_of_the_largest_entity_id_as_one_entity() {
-    let _serial = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut world = alice_sync::WorldSoA::new(0);
     let event = remote_spawn(u32::MAX);
     let (applied, peak) = peak_during(|| world.apply(&event));
     applied.unwrap();
     assert!(peak <= SLACK, "applying one spawn took {peak} bytes");
+}
+
+/// A stored world names the same ids: decoding a small file whose one entity has the largest id, or
+/// whose count claims the largest number of entities, reserves memory by the bytes it holds
+#[test]
+fn a_small_stored_world_naming_the_largest_id_decodes_within_its_own_size() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut node = Node::new(NodeId(9));
+    node.apply_event(&remote_spawn(u32::MAX)).unwrap();
+    let bytes = encode_state(node.world().state());
+    // header 39, count 4, one entity body 84, frame and seed 16
+    assert_eq!(bytes.len(), 39 + 4 + 84 + 16);
+    let (decoded, peak) = peak_during(|| decode_state::<WorldState>(&bytes));
+    let w = decoded.unwrap().value;
+    assert!(w.get_handle(u32::MAX).is_some());
+    assert!(
+        peak <= SLACK,
+        "decoding {} bytes took {peak} bytes",
+        bytes.len()
+    );
+
+    let mut claims_more = bytes.clone();
+    claims_more[39..43].copy_from_slice(&u32::MAX.to_le_bytes());
+    let (decoded, peak) = peak_during(|| decode_state::<WorldState>(&claims_more));
+    assert!(matches!(decoded, Err(PersistError::Truncated)));
+    assert!(peak <= SLACK, "a count of u32::MAX took {peak} bytes");
 }

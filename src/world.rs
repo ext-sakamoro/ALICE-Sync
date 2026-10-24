@@ -15,6 +15,8 @@
 //! 5. Branchless property hash: Zero conditional branches
 //! 6. Bounds check elimination: unsafe `get_unchecked`
 
+use std::collections::BTreeMap;
+
 use crate::arena::{Arena, Handle};
 use crate::fixed_point::{Vec3Fixed, Vec3Simd};
 use crate::{Event, EventKind, Result};
@@ -158,18 +160,20 @@ impl Entity {
 }
 
 // ============================================================================
-// World State - Vec-based direct indexing (no HashMap)
+// World State - entities in an arena, looked up by id through an ordered map
 // ============================================================================
 
-/// World state container with O(1) entity lookup
+/// World state container with O(log n) entity lookup by id
+///
+/// The id map holds one entry per live entity, ordered by id: its memory follows the number of
+/// entities, not the value of their ids (an id is chosen by whichever node spawns the entity).
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldState {
     /// All entities in arena (cache-friendly)
     pub entities: Arena<Entity>,
-    /// Direct ID -> Handle mapping (Vec, not `HashMap`!)
-    /// Index = `entity_id`, Value = Handle (or `Handle::INVALID`)
-    pub id_map: Vec<Handle>,
+    /// `entity_id` -> handle of each live entity, in id order
+    pub id_map: BTreeMap<u32, Handle>,
     /// Current simulation frame
     pub frame: u64,
     /// Random seed (for deterministic procedural generation)
@@ -177,43 +181,32 @@ pub struct WorldState {
 }
 
 impl WorldState {
-    /// Ensure `id_map` can hold the given `entity_id`
-    #[inline]
-    fn ensure_capacity(&mut self, entity_id: u32) {
-        let required = entity_id as usize + 1;
-        if self.id_map.len() < required {
-            self.id_map.resize(required, Handle::INVALID);
-        }
-    }
-
-    /// Get handle for `entity_id` (O(1) array access)
+    /// Get handle for `entity_id`
     #[inline(always)]
     #[must_use]
     pub fn get_handle(&self, entity_id: u32) -> Option<Handle> {
         self.id_map
-            .get(entity_id as usize)
+            .get(&entity_id)
             .copied()
             .filter(super::arena::Handle::is_valid)
     }
 
-    /// Set handle for `entity_id`
+    /// Set handle for `entity_id` (an invalid handle removes the entry)
     #[inline(always)]
     pub fn set_handle(&mut self, entity_id: u32, handle: Handle) {
-        self.ensure_capacity(entity_id);
-        self.id_map[entity_id as usize] = handle;
+        if handle.is_valid() {
+            self.id_map.insert(entity_id, handle);
+        } else {
+            self.id_map.remove(&entity_id);
+        }
     }
 
     /// Remove handle for `entity_id`
     #[inline(always)]
     pub fn remove_handle(&mut self, entity_id: u32) -> Option<Handle> {
-        if let Some(slot) = self.id_map.get_mut(entity_id as usize) {
-            let old = *slot;
-            if old.is_valid() {
-                *slot = Handle::INVALID;
-                return Some(old);
-            }
-        }
-        None
+        self.id_map
+            .remove(&entity_id)
+            .filter(super::arena::Handle::is_valid)
     }
 }
 
@@ -421,7 +414,7 @@ impl World {
     pub fn iter_entities(&self) -> impl Iterator<Item = &Entity> {
         self.state
             .id_map
-            .iter()
+            .values()
             .filter(|h| h.is_valid())
             .filter_map(|&h| self.state.entities.get(h))
     }
@@ -976,13 +969,16 @@ mod tests {
     }
 
     #[test]
-    fn test_world_state_id_map_capacity() {
+    fn test_world_state_id_map_holds_one_entry_per_live_id() {
         let mut state = WorldState::default();
-        state.ensure_capacity(100);
-        assert!(state.id_map.len() >= 101);
-        // ensure_capacity は冪等
-        state.ensure_capacity(50);
-        assert!(state.id_map.len() >= 101);
+        let h = state.entities.insert(Entity::default());
+        state.set_handle(u32::MAX, h);
+        state.set_handle(100, h);
+        assert_eq!(state.id_map.len(), 2);
+        assert_eq!(state.remove_handle(u32::MAX), Some(h));
+        assert_eq!(state.id_map.len(), 1);
+        state.set_handle(100, Handle::INVALID);
+        assert!(state.id_map.is_empty());
     }
 
     #[test]

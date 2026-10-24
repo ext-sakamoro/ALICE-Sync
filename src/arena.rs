@@ -225,25 +225,8 @@ impl<T> Arena<T> {
         }
     }
 
-    /// The slots as [`SlotPart`]s (`next_free` is
-    /// `u32::MAX` for an occupied slot) and the free-list head, for
-    /// `persist`.
-    pub(crate) fn parts(&self) -> (Vec<SlotPart<&T>>, u32) {
-        let slots = self
-            .slots
-            .iter()
-            .map(|s| match s {
-                Slot::Occupied { data, generation } => (Some(data), u32::MAX, *generation),
-                Slot::Free {
-                    next_free,
-                    generation,
-                } => (None, *next_free, *generation),
-            })
-            .collect();
-        (slots, self.free_head)
-    }
-
-    /// Rebuilds an arena from [`Arena::parts`], checking that the free list
+    /// Rebuilds an arena from its slots as [`SlotPart`]s (`next_free` is `u32::MAX` for an occupied
+    /// slot) and the free-list head, as format version 1 of `persist` stored them, checking that the free list
     /// starting at `free_head` visits every free slot exactly once and only
     /// free slots (the invariant `insert` relies on).
     pub(crate) fn from_parts(

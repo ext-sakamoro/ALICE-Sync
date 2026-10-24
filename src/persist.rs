@@ -20,26 +20,37 @@
 //! assert_eq!(decoded.status, IdStatus::Current);
 //! ```
 //!
-//! # Format (version 1)
+//! # Format (version 2)
 //!
 //! All integers little-endian.
 //!
 //! | bytes | content |
 //! |---|---|
 //! | 4 | magic `ASYN` |
-//! | 2 | format version, `1` |
+//! | 2 | format version, `2` |
 //! | 32 | the writer's `SYNC_SEMANTICS_ID` |
 //! | 1 | type tag (`1` Fixed, `2` Vec3Fixed, `3` Entity, `4` WorldState, `5` LwwRegister) |
 //! | rest | the value's body |
 //!
 //! Bodies: `Fixed` is its raw `i32`; `Vec3Fixed` is `x`, `y`, `z`; `Entity` is
 //! `id: u32`, `kind: u16`, the position, the 16 property values (`i32`) and the
-//! active mask (`u16`); `WorldState` is the slot count (`u32`), per slot a
-//! state byte (`1` occupied, `0` free), the generation (`u32`) and either the
-//! entity body or the next free index (`u32`), then the free-list head
-//! (`u32`), the id map (count `u32`, then `index: u32`, `generation: u32` per
-//! entry), `frame: u64` and `seed: u64`; `LwwRegister<V>` is `timestamp: u64`,
-//! `replica_id: u64`, then the tag and body of `V`.
+//! active mask (`u16`); `WorldState` is the number of live entities (`u32`),
+//! their bodies in ascending id order, `frame: u64` and `seed: u64`;
+//! `LwwRegister<V>` is `timestamp: u64`, `replica_id: u64`, then the tag and
+//! body of `V`.
+//!
+//! A world is stored as its logical content only: which entities live with
+//! which values, the frame and the seed. Where the entities sit in memory (arena
+//! slots, generations, the free list) depends on the order in which they were
+//! spawned and removed, so two nodes holding the same world after receiving the
+//! same events in different orders would otherwise write different bytes.
+//! Decoding rebuilds the world with the entities placed in id order, so handles
+//! ([`crate::arena::Handle`]) are meaningful only inside the process that made
+//! them and are not kept across an encode and decode.
+//!
+//! Version 1 stored the arena layout (slots, generations, free list, a dense id
+//! map). It is still read, as [`FormatStatus::Legacy`]; [`decode_state_strict`]
+//! refuses it.
 //!
 //! # Reading
 //!
@@ -48,8 +59,13 @@
 //! [`PREVIOUS_SYNC_SEMANTICS_IDS`](crate::PREVIOUS_SYNC_SEMANTICS_IDS) gives
 //! [`IdStatus::VerifiedPrevious`], and any other identifier is
 //! [`PersistError::Semantics`] naming both. A decoded `WorldState` is checked
-//! for the arena and id-map invariants the world's unchecked accessors rely
-//! on, so a malformed file is an error rather than undefined behaviour.
+//! for the invariants the world's unchecked accessors rely on (ids strictly
+//! ascending in version 2; the arena and id map in version 1), so a malformed
+//! file is an error rather than undefined behaviour. The memory a decode
+//! reserves follows the length of the bytes, never a count or an id read from
+//! them.
+
+use std::collections::BTreeMap;
 
 use crate::arena::{Arena, Handle};
 #[cfg(feature = "async")]
@@ -62,8 +78,11 @@ use crate::world::{Entity, EntityProps, WorldState, MAX_PROPS};
 /// The first four bytes of every encoded value.
 pub const MAGIC: [u8; 4] = *b"ASYN";
 
-/// The format version this release writes and reads.
-pub const FORMAT_VERSION: u16 = 1;
+/// The format version this release writes.
+pub const FORMAT_VERSION: u16 = 2;
+
+/// Earlier format versions this release still reads, as [`FormatStatus::Legacy`].
+pub const LEGACY_FORMAT_VERSIONS: [u16; 1] = [1];
 
 const HEADER_LEN: usize = 4 + 2 + 32;
 
@@ -74,6 +93,8 @@ pub enum PersistError {
     BadMagic,
     /// A format version this release does not read.
     UnsupportedVersion(u16),
+    /// An earlier format version, refused by [`decode_state_strict`].
+    LegacyFormat(u16),
     /// The stored semantics identifier is neither this build's nor a verified
     /// earlier one.
     Semantics(SemanticsMismatch),
@@ -97,6 +118,10 @@ impl core::fmt::Display for PersistError {
         match self {
             Self::BadMagic => write!(f, "not an ALICE-Sync state (bad magic)"),
             Self::UnsupportedVersion(v) => write!(f, "unsupported state format version {v}"),
+            Self::LegacyFormat(v) => write!(
+                f,
+                "state format version {v} is an earlier format (current {FORMAT_VERSION})"
+            ),
             Self::Semantics(m) => write!(f, "{m}"),
             Self::WrongType { stored, expected } => {
                 write!(f, "state holds type tag {stored}, expected {expected}")
@@ -116,6 +141,15 @@ impl From<SemanticsMismatch> for PersistError {
     }
 }
 
+/// Which format version the bytes were written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatStatus {
+    /// [`FORMAT_VERSION`].
+    Current,
+    /// One of [`LEGACY_FORMAT_VERSIONS`].
+    Legacy(u16),
+}
+
 /// A decoded value with the relation of its stored identifier to this build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decoded<T> {
@@ -124,6 +158,8 @@ pub struct Decoded<T> {
     /// Whether it was written under this build's identifier or a verified
     /// earlier one.
     pub status: IdStatus,
+    /// Whether it was written in the current format or an earlier one.
+    pub format: FormatStatus,
 }
 
 mod sealed {
@@ -139,6 +175,12 @@ pub trait Persist: sealed::Sealed + Sized {
     fn write_body(&self, out: &mut Vec<u8>);
     #[doc(hidden)]
     fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError>;
+    /// The body as format version 1 laid it out (the same as the current body
+    /// for every type but the world)
+    #[doc(hidden)]
+    fn read_body_v1(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        Self::read_body(r)
+    }
 }
 
 /// Encodes `value` with the header and this build's `SYNC_SEMANTICS_ID`.
@@ -168,6 +210,20 @@ pub fn decode_state<T: Persist>(bytes: &[u8]) -> Result<Decoded<T>, PersistError
     decode_with(bytes, check_semantics)
 }
 
+/// Decodes a value written in the current format only.
+///
+/// # Errors
+///
+/// As [`decode_state`], and [`PersistError::LegacyFormat`] for bytes in an
+/// earlier format.
+pub fn decode_state_strict<T: Persist>(bytes: &[u8]) -> Result<Decoded<T>, PersistError> {
+    let decoded = decode_state(bytes)?;
+    match decoded.format {
+        FormatStatus::Current => Ok(decoded),
+        FormatStatus::Legacy(v) => Err(PersistError::LegacyFormat(v)),
+    }
+}
+
 pub(crate) fn decode_with<T: Persist>(
     bytes: &[u8],
     check: impl FnOnce(&[u8; 32]) -> Result<IdStatus, SemanticsMismatch>,
@@ -177,22 +233,30 @@ pub(crate) fn decode_with<T: Persist>(
         return Err(PersistError::BadMagic);
     }
     let version = r.u16()?;
-    if version != FORMAT_VERSION {
+    let format = if version == FORMAT_VERSION {
+        FormatStatus::Current
+    } else if LEGACY_FORMAT_VERSIONS.contains(&version) {
+        FormatStatus::Legacy(version)
+    } else {
         return Err(PersistError::UnsupportedVersion(version));
-    }
+    };
     let id: [u8; 32] = r
         .take(32)?
         .try_into()
         .map_err(|_| PersistError::Truncated)?;
     let status = check(&id)?;
-    let value = read_tagged::<T>(&mut r)?;
+    let value = read_tagged::<T>(&mut r, format)?;
     if !r.bytes.is_empty() {
         return Err(PersistError::TrailingBytes(r.bytes.len()));
     }
-    Ok(Decoded { value, status })
+    Ok(Decoded {
+        value,
+        status,
+        format,
+    })
 }
 
-fn read_tagged<T: Persist>(r: &mut Reader<'_>) -> Result<T, PersistError> {
+fn read_tagged<T: Persist>(r: &mut Reader<'_>, format: FormatStatus) -> Result<T, PersistError> {
     let tag = r.u8()?;
     if tag != T::TAG {
         return Err(PersistError::WrongType {
@@ -200,7 +264,10 @@ fn read_tagged<T: Persist>(r: &mut Reader<'_>) -> Result<T, PersistError> {
             expected: T::TAG,
         });
     }
-    T::read_body(r)
+    match format {
+        FormatStatus::Current => T::read_body(r),
+        FormatStatus::Legacy(_) => T::read_body_v1(r),
+    }
 }
 
 /// A cursor over the bytes being decoded.
@@ -302,57 +369,75 @@ impl sealed::Sealed for WorldState {}
 impl Persist for WorldState {
     const TAG: u8 = 4;
     fn write_body(&self, out: &mut Vec<u8>) {
-        let (slots, free_head) = self.entities.parts();
-        out.extend_from_slice(&len_u32(slots.len()).to_le_bytes());
-        for (data, next_free, generation) in slots {
-            match data {
-                Some(e) => {
-                    out.push(1);
-                    out.extend_from_slice(&generation.to_le_bytes());
-                    e.write_body(out);
-                }
-                None => {
-                    out.push(0);
-                    out.extend_from_slice(&generation.to_le_bytes());
-                    out.extend_from_slice(&next_free.to_le_bytes());
-                }
-            }
-        }
-        out.extend_from_slice(&free_head.to_le_bytes());
-        out.extend_from_slice(&len_u32(self.id_map.len()).to_le_bytes());
-        for h in &self.id_map {
-            out.extend_from_slice(&h.index.to_le_bytes());
-            out.extend_from_slice(&h.generation.to_le_bytes());
+        // the live entities in id order: the id map holds exactly them, ordered by id
+        let live: Vec<&Entity> = self
+            .id_map
+            .values()
+            .filter(|h| h.is_valid())
+            .filter_map(|&h| self.entities.get(h))
+            .collect();
+        out.extend_from_slice(&len_u32(live.len()).to_le_bytes());
+        for e in live {
+            e.write_body(out);
         }
         out.extend_from_slice(&self.frame.to_le_bytes());
         out.extend_from_slice(&self.seed.to_le_bytes());
     }
     fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
         let n = r.u32()? as usize;
+        // no more entities can follow than the bytes hold bodies for
+        let mut entities = Arena::with_capacity(n.min(r.bytes.len() / ENTITY_BODY_LEN));
+        let mut id_map = BTreeMap::new();
+        let mut previous: Option<u32> = None;
+        for _ in 0..n {
+            let e = Entity::read_body(r)?;
+            if previous.is_some_and(|p| e.id <= p) {
+                return Err(PersistError::Malformed(
+                    "entities are not in strictly ascending id order",
+                ));
+            }
+            previous = Some(e.id);
+            let id = e.id;
+            id_map.insert(id, entities.insert(e));
+        }
+        let frame = r.u64()?;
+        let seed = r.u64()?;
+        Ok(Self {
+            entities,
+            id_map,
+            frame,
+            seed,
+        })
+    }
+    fn read_body_v1(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        let n = r.u32()? as usize;
         let mut slots = Vec::with_capacity(n.min(r.bytes.len()));
         for _ in 0..n {
             let state = r.u8()?;
             let generation = r.u32()?;
-            match state {
-                1 => slots.push((Some(Entity::read_body(r)?), u32::MAX, generation)),
-                0 => slots.push((None, r.u32()?, generation)),
+            let slot = match state {
+                1 => (Some(Entity::read_body(r)?), u32::MAX, generation),
+                0 => (None, r.u32()?, generation),
                 _ => return Err(PersistError::Malformed("slot state is neither 0 nor 1")),
-            }
+            };
+            slots.extend([slot]);
         }
         let free_head = r.u32()?;
         let entities = Arena::from_parts(slots, free_head).map_err(PersistError::Malformed)?;
-        let m = r.u32()? as usize;
-        let mut id_map = Vec::with_capacity(m.min(r.bytes.len()));
-        for _ in 0..m {
+        // version 1 stored the id map densely: entry i is the handle of entity id i, or invalid
+        let m = r.u32()?;
+        let mut id_map = BTreeMap::new();
+        for id in 0..m {
             let index = r.u32()?;
             let generation = r.u32()?;
-            id_map.push(Handle { index, generation });
-        }
-        for h in &id_map {
-            if h.is_valid() && entities.get(*h).is_none() {
-                return Err(PersistError::Malformed(
-                    "an id map handle does not point to an occupied slot of its generation",
-                ));
+            let h = Handle { index, generation };
+            if h.is_valid() {
+                if entities.get(h).is_none() {
+                    return Err(PersistError::Malformed(
+                        "an id map handle does not point to an occupied slot of its generation",
+                    ));
+                }
+                id_map.insert(id, h);
             }
         }
         let frame = r.u64()?;
@@ -365,6 +450,9 @@ impl Persist for WorldState {
         })
     }
 }
+
+/// The bytes of one entity body: id, kind, position, the property values and the active mask
+const ENTITY_BODY_LEN: usize = 4 + 2 + 3 * 4 + MAX_PROPS * 4 + 2;
 
 #[cfg(feature = "async")]
 impl<V: Persist + Clone> sealed::Sealed for LwwRegister<V> {}
@@ -380,7 +468,7 @@ impl<V: Persist + Clone> Persist for LwwRegister<V> {
     fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
         let timestamp = r.u64()?;
         let replica_id = r.u64()?;
-        let value = read_tagged::<V>(r)?;
+        let value = read_tagged::<V>(r, FormatStatus::Current)?;
         Ok(Self {
             value,
             timestamp,
