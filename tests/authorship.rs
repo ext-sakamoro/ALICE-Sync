@@ -14,7 +14,7 @@ use alice_identity::device_cert::DeviceCert;
 use alice_identity::did::Did;
 use alice_sign::{KeyPair, PublicKey};
 use alice_sync::authorship::{
-    Author, AuthorshipError, Origin, SignedEvents, TrustPolicy, CHECKPOINT_CONTEXT,
+    Author, AuthorshipError, Origin, SignedEvents, TrustPolicy, Verifier, CHECKPOINT_CONTEXT,
     CHECKPOINT_INTERVAL, MAX_PENDING_PER_AUTHOR, ORIGIN_CONTEXT,
 };
 use alice_sync::{Event, EventKind, Node, NodeId};
@@ -443,4 +443,153 @@ fn an_unstamped_event_under_the_authors_origin_is_refused() {
         Err(AuthorshipError::Uncovered { seq: 0, .. })
     ));
     assert_eq!(nb.world().entity_count(), 0);
+}
+
+#[test]
+fn an_apply_that_fails_partway_keeps_the_events_before_it_applied_once() {
+    // five covered events; applying the third fails: the first two stay applied and are not applied
+    // again when the same batch comes back, the third and the rest apply then
+    let a = party(1, "alice");
+    let pol = trusting(&[&a]);
+    let mut na = node(1, &a);
+    for i in 0..5 {
+        na.emit(motion(i, 1)).unwrap();
+    }
+    let batch = na.signed_events_since(&BTreeMap::new()).unwrap();
+    assert_eq!(batch.events.len(), 5);
+    let mut v = Verifier::new();
+    let mut seen = Vec::new();
+    let r = v.receive(&batch, &pol, |e| {
+        if e.seq.0 == 3 {
+            return Err("refused by the world".to_owned());
+        }
+        seen.push(e.seq.0);
+        Ok(())
+    });
+    assert!(matches!(r, Err(AuthorshipError::Apply(_))), "{r:?}");
+    assert_eq!(seen, vec![1, 2]);
+    // no held checkpoint covers the two applied events yet, so they are not passed on
+    assert!(v.since(&BTreeMap::new()).events.is_empty());
+    let mut again = Vec::new();
+    let n = v
+        .receive(&batch, &pol, |e| {
+            again.push(e.seq.0);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        again,
+        vec![3, 4, 5],
+        "events 1 and 2 are not applied a second time"
+    );
+    assert_eq!(n, 3);
+    assert_eq!(v.since(&BTreeMap::new()).events.len(), 5);
+}
+
+#[test]
+fn since_past_what_was_applied_gives_nothing() {
+    // a peer that names a later sequence number than this receiver applied gets nothing (and no panic)
+    let a = party(1, "alice");
+    let pol = trusting(&[&a]);
+    let mut na = node(1, &a);
+    for i in 0..3 {
+        na.emit(motion(i, 1)).unwrap();
+    }
+    let batch = na.signed_events_since(&BTreeMap::new()).unwrap();
+    let mut v = Verifier::new();
+    assert_eq!(v.receive(&batch, &pol, |_| Ok(())).unwrap(), 3);
+    let origin = Origin::of(&a.cert);
+    for from in [3, 4, 10, u64::MAX] {
+        let out = v.since(&BTreeMap::from([(origin, from)]));
+        assert!(
+            out.events.is_empty() && out.checkpoints.is_empty(),
+            "from {from}"
+        );
+    }
+    let out = v.since(&BTreeMap::from([(origin, 1)]));
+    assert_eq!(out.events.len(), 2);
+    assert_eq!(out.checkpoints.len(), 1);
+}
+
+#[test]
+fn since_returns_batches_a_fresh_receiver_accepts_for_any_from_and_state() {
+    // `since` takes its sequence numbers from a peer: for every state of the receiver (nothing held,
+    // checkpoints only, partly applied, all applied) and every `from` around its bounds it returns, and
+    // the batch it returns is accepted by a receiver that has nothing yet
+    let a = party(1, "alice");
+    let pol = trusting(&[&a]);
+    let origin = Origin::of(&a.cert);
+    let mut na = node(1, &a);
+    let n = 2 * CHECKPOINT_INTERVAL + 3;
+    for i in 0..n as u32 {
+        na.emit(motion(i, 1)).unwrap();
+    }
+    let all = na.signed_events_since(&BTreeMap::new()).unwrap();
+    assert!(all.checkpoints.len() >= 3);
+    let last_cp = all.checkpoints.iter().map(|c| c.seq).max().unwrap();
+
+    let nothing = Verifier::new();
+    let mut checkpoints_only = Verifier::new();
+    let gap = SignedEvents {
+        events: all.events[1..].to_vec(),
+        checkpoints: all.checkpoints.clone(),
+    };
+    assert_eq!(checkpoints_only.receive(&gap, &pol, |_| Ok(())).unwrap(), 0);
+    let mut partly = Verifier::new();
+    let stop = CHECKPOINT_INTERVAL + 10;
+    assert!(partly
+        .receive(&all, &pol, |e| if e.seq.0 == stop {
+            Err("refused".to_owned())
+        } else {
+            Ok(())
+        })
+        .is_err());
+    let mut whole = Verifier::new();
+    assert_eq!(
+        whole.receive(&all, &pol, |_| Ok(())).unwrap(),
+        all.events.len()
+    );
+
+    for (name, v, applied) in [
+        ("nothing held", &nothing, 0),
+        ("checkpoints only", &checkpoints_only, 0),
+        ("partly applied", &partly, stop - 1),
+        ("all applied", &whole, all.events.len() as u64),
+    ] {
+        for from in [0, 1, applied, applied + 1, last_cp, u64::MAX] {
+            let out = v.since(&BTreeMap::from([(origin, from)]));
+            assert!(
+                out.events
+                    .iter()
+                    .all(|e| e.seq.0 > from && e.seq.0 <= applied),
+                "{name} {from}"
+            );
+            if let Some(last) = out.events.iter().map(|e| e.seq.0).max() {
+                assert!(
+                    out.checkpoints.iter().any(|c| c.seq == last),
+                    "{name} {from}: ends at a checkpoint"
+                );
+            }
+            let mut fresh = Verifier::new();
+            let r = fresh.receive(&out, &pol, |_| Ok(()));
+            assert!(r.is_ok(), "{name} {from}: {r:?}");
+        }
+    }
+}
+
+#[test]
+fn a_node_asked_past_its_last_event_gives_nothing_of_its_own() {
+    // the peer names the sequence number it has; the largest one must not wrap around to "everything"
+    let a = party(1, "alice");
+    let mut na = node(1, &a);
+    na.emit(motion(1, 1)).unwrap();
+    na.emit(motion(1, 2)).unwrap();
+    let origin = Origin::of(&a.cert);
+    for from in [2, 3, u64::MAX] {
+        let out = na
+            .signed_events_since(&BTreeMap::from([(origin, from)]))
+            .unwrap();
+        assert!(out.checkpoints.is_empty(), "from {from}");
+        assert!(out.events.iter().all(|e| e.seq.0 >= from), "from {from}");
+    }
 }
