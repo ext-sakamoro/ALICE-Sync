@@ -119,6 +119,8 @@ impl EntityProps {
 // ============================================================================
 
 /// Entity in the world (fixed-point, deterministic, Copy)
+///
+/// Raw serde (feature `serde-raw`) carries no Law identifier; persist through the stamped writer, [`crate::persist::encode_state`]
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct Entity {
@@ -172,6 +174,8 @@ pub const MAX_LIVE_ENTITIES: usize = 1 << 16;
 /// memory follows the number of entities, not the value of their ids, and its lookups stay fast for
 /// ids a peer chooses. Ordered views ([`WorldState::ids`], [`World::iter_entities`]) are sorted by
 /// id.
+///
+/// Raw serde (feature `serde-raw`) carries no Law identifier; persist through the stamped writer, [`crate::persist::encode_state`]
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldState {

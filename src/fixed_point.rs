@@ -20,6 +20,8 @@ use wide::i32x4;
 
 /// Q16.16 fixed-point number (32-bit, 16 fractional bits)
 /// Range: -32768.0 to 32767.99998 with precision of 0.0000153
+///
+/// Raw serde (feature `serde-raw`) carries no Law identifier; persist through the stamped writer, `persist::encode_state`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 #[repr(transparent)]
@@ -146,6 +148,8 @@ impl Mul for Fixed {
 }
 
 /// 3D vector with fixed-point components (scalar version)
+///
+/// Raw serde (feature `serde-raw`) carries no Law identifier; persist through the stamped writer, `persist::encode_state`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct Vec3Fixed {

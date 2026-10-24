@@ -33,6 +33,8 @@ const fn q88(v: i16) -> i32 {
 }
 
 /// `SoA` World Storage - Component arrays instead of Entity structs
+///
+/// Raw serde (feature `serde-raw`) carries no Law identifier; persist through the stamped writer, through [`WorldSoA::to_state`] and `persist::encode_state`
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldStorage {
