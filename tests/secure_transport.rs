@@ -16,7 +16,7 @@ use alice_sign::{KeyPair, PublicKey};
 use alice_sync::event::{Event, EventId, EventKind, SeqNum};
 use alice_sync::node::NodeId;
 use alice_sync::protocol::Message;
-use alice_sync::secure_transport::{SecureTransport, MAX_MESSAGE};
+use alice_sync::secure_transport::{Body, SecureTransport, KIND_BYTES, KIND_MESSAGE, MAX_MESSAGE};
 use alice_sync::transport::{SyncTransport, TransportError};
 use alice_sync::world::WorldHash;
 use tokio::net::TcpStream;
@@ -315,6 +315,13 @@ async fn a_silent_connection_times_out_in_the_handshake() {
     assert!(ta.peers().await.is_empty());
 }
 
+/// The head of a first channel message: the kind byte, then the total length (4 bytes, little-endian)
+fn head(kind: u8, total: usize) -> Vec<u8> {
+    let mut h = vec![kind];
+    h.extend_from_slice(&u32::try_from(total).unwrap().to_le_bytes());
+    h
+}
+
 /// A verified peer speaking the channel directly, to break the message framing
 async fn raw_peer(
     d: &Device,
@@ -364,22 +371,18 @@ async fn breaks_framing(frames: Vec<Vec<u8>>) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_announcing_a_message_over_the_limit_loses_its_connection() {
-    let over = u32::try_from(MAX_MESSAGE + 1)
-        .unwrap()
-        .to_le_bytes()
-        .to_vec();
-    breaks_framing(vec![over]).await;
+    breaks_framing(vec![head(KIND_MESSAGE, MAX_MESSAGE + 1)]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_message_without_the_length_loses_the_connection() {
-    breaks_framing(vec![vec![1, 2, 3]]).await;
+    breaks_framing(vec![vec![KIND_MESSAGE, 2, 3, 4]]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_part_overrunning_the_announced_length_loses_the_connection() {
     let msg = bytes(&Message::Bye);
-    let mut first = u32::try_from(msg.len() + 2).unwrap().to_le_bytes().to_vec();
+    let mut first = head(KIND_MESSAGE, msg.len() + 2);
     first.extend_from_slice(&msg);
     breaks_framing(vec![first, vec![0; 5]]).await;
 }
@@ -387,7 +390,7 @@ async fn a_part_overrunning_the_announced_length_loses_the_connection() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_head_longer_than_the_announced_length_loses_the_connection() {
     let msg = bytes(&Message::Bye);
-    let mut first = u32::try_from(msg.len() - 1).unwrap().to_le_bytes().to_vec();
+    let mut first = head(KIND_MESSAGE, msg.len() - 1);
     first.extend_from_slice(&msg);
     breaks_framing(vec![first]).await;
 }
@@ -401,9 +404,9 @@ async fn a_well_framed_message_from_a_raw_peer_is_received() {
     let _serve = ta.clone().serve();
     let mut raw = raw_peer(&b, &[&a], ta.local_addr().unwrap()).await;
     let msg = bytes(&hello(4));
-    let (head, tail) = msg.split_at(msg.len() / 2);
-    let mut first = u32::try_from(msg.len()).unwrap().to_le_bytes().to_vec();
-    first.extend_from_slice(head);
+    let (front, tail) = msg.split_at(msg.len() / 2);
+    let mut first = head(KIND_MESSAGE, msg.len());
+    first.extend_from_slice(front);
     raw.send(&first).await.unwrap();
     raw.send(tail).await.unwrap();
     let env = timeout(WAIT, ta.recv()).await.unwrap().unwrap();
@@ -414,11 +417,8 @@ async fn a_well_framed_message_from_a_raw_peer_is_received() {
         .unwrap();
     let back = raw.recv().await.unwrap();
     let want = bytes(&Message::Ack { seq: 3 });
-    assert_eq!(
-        &back[..4],
-        &u32::try_from(want.len()).unwrap().to_le_bytes()
-    );
-    assert_eq!(&back[4..], &want[..]);
+    assert_eq!(back[..5], head(KIND_MESSAGE, want.len())[..]);
+    assert_eq!(&back[5..], &want[..]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -440,7 +440,7 @@ async fn a_closed_peer_is_dropped_and_dialled_again_on_the_next_send() {
     );
     second.unwrap();
     let mut first = first;
-    let got = Message::from_compact_bytes(&first.recv().await.unwrap()[4..]).unwrap();
+    let got = Message::from_compact_bytes(&first.recv().await.unwrap()[5..]).unwrap();
     assert_eq!(bytes(&got), bytes(&Message::Ack { seq: 1 }));
     drop(first);
     // bob's reader sees the hang-up and drops the peer
@@ -454,6 +454,123 @@ async fn a_closed_peer_is_dropped_and_dialled_again_on_the_next_send() {
     );
     sent.unwrap();
     let mut again = again;
-    let got = Message::from_compact_bytes(&again.recv().await.unwrap()[4..]).unwrap();
+    let got = Message::from_compact_bytes(&again.recv().await.unwrap()[5..]).unwrap();
     assert_eq!(bytes(&got), bytes(&Message::Ack { seq: 2 }));
+}
+
+/// A transport and a raw peer (bob) connected to it, with the peer seen on the transport's side
+async fn with_raw_peer() -> (Arc<SecureTransport<Policy>>, AsyncSecureChannel<TcpStream>) {
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let ta = transport(&a, &[&b]).await;
+    let _serve = ta.clone().serve();
+    let raw = raw_peer(&b, &[&a], ta.local_addr().unwrap()).await;
+    timeout(WAIT, async {
+        while ta.peers().await.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    (ta, raw)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn application_bytes_arrive_as_bytes_with_the_senders_certificate() {
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let ta = transport(&a, &[&b]).await;
+    let _serve = ta.clone().serve();
+    let tb = transport(&b, &[&a]).await;
+    let big: Vec<u8> = (0..3 * alice_channel::MAX_PAYLOAD + 17)
+        .map(|i| (i % 251) as u8)
+        .collect();
+    for sent in [Vec::new(), vec![9, 8, 7], big] {
+        tb.send_bytes_to(&sent, ta.local_addr().unwrap())
+            .await
+            .unwrap();
+        let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+        assert!(matches!(&v.body, Body::Bytes(got) if *got == sent));
+        assert_eq!(v.peer.subject().to_string(), "did:alice:bob");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bytes_that_encode_a_sync_message_never_arrive_as_one() {
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let ta = transport(&a, &[&b]).await;
+    let _serve = ta.clone().serve();
+    let tb = transport(&b, &[&a]).await;
+    let to = ta.local_addr().unwrap();
+    let looks_like = bytes(&Message::Ack { seq: 9 });
+    tb.send_bytes_to(&looks_like, to).await.unwrap();
+    tb.send_to(&Message::Ack { seq: 10 }, to).await.unwrap();
+    let first = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+    assert!(matches!(&first.body, Body::Bytes(got) if *got == looks_like));
+    let second = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+    assert!(matches!(
+        second.body,
+        Body::Message(Message::Ack { seq: 10 })
+    ));
+    // the Sync receive passes the bytes over and counts them
+    tb.send_bytes_to(&looks_like, to).await.unwrap();
+    tb.send_to(&Message::Ack { seq: 11 }, to).await.unwrap();
+    let env = timeout(WAIT, ta.recv()).await.unwrap().unwrap();
+    assert!(matches!(env.message, Message::Ack { seq: 11 }));
+    assert_eq!(ta.skipped_bytes_count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bytes_over_the_limit_are_refused_before_anything_is_sent() {
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let ta = transport(&a, &[&b]).await;
+    let _serve = ta.clone().serve();
+    let tb = transport(&b, &[&a]).await;
+    let to = ta.local_addr().unwrap();
+    assert!(matches!(
+        tb.send_bytes_to(&vec![0; MAX_MESSAGE + 1], to).await,
+        Err(TransportError::Codec(_))
+    ));
+    assert!(tb.peers().await.is_empty(), "nothing was dialled");
+    // the limit itself is sent
+    tb.send_bytes_to(&vec![5; MAX_MESSAGE], to).await.unwrap();
+    let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+    assert!(matches!(&v.body, Body::Bytes(got) if got.len() == MAX_MESSAGE));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_announcing_bytes_over_the_limit_loses_its_connection() {
+    breaks_framing(vec![head(KIND_BYTES, MAX_MESSAGE + 1)]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kind_other_than_message_or_bytes_loses_the_connection() {
+    for kind in [2, 0x7f, u8::MAX] {
+        let mut first = head(kind, 3);
+        first.extend_from_slice(&[1, 2, 3]);
+        breaks_framing(vec![first]).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn both_kinds_written_by_hand_are_received() {
+    // the reference the kind refusals above are measured against
+    let (ta, mut raw) = with_raw_peer().await;
+    let msg = bytes(&Message::Bye);
+    let mut first = head(KIND_MESSAGE, msg.len());
+    first.extend_from_slice(&msg);
+    raw.send(&first).await.unwrap();
+    let mut first = head(KIND_BYTES, msg.len());
+    first.extend_from_slice(&msg);
+    raw.send(&first).await.unwrap();
+    let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+    assert!(matches!(v.body, Body::Message(Message::Bye)));
+    let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+    assert!(matches!(&v.body, Body::Bytes(got) if *got == msg));
+    // and the transport writes bytes with the bytes kind
+    ta.send_bytes_to(&[4, 2], v.from).await.unwrap();
+    let back = raw.recv().await.unwrap();
+    assert_eq!(back, [head(KIND_BYTES, 2), vec![4, 2]].concat());
 }

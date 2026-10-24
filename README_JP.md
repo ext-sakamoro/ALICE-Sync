@@ -79,7 +79,7 @@ fn main() {
 | `channel` | topic 単位のフィルタを持つ topic ベースの pub/sub |
 | `discovery` | mDNS による LAN 自動検出、手動のピア登録、GC |
 | `session` | 高レベルのセッションドライバ: builder パターン、tick ループ、5 つの同期モード |
-| `secure_transport` | 認証・暗号化した channel の上の `SyncTransport`: 相手は証明書を持つ端末、message は封をして送る (feature `secure-transport`) |
+| `secure_transport` | 認証・暗号化した channel の上の `SyncTransport`: 相手は証明書を持つ端末、message は封をして送り受けた接続の証明書を伴う、Sync の message と並んで application の bytes も送る (feature `secure-transport`) |
 
 ### 同期モード
 
