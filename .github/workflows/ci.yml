@@ -131,7 +131,7 @@ jobs:
         run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test
       - name: Test (all native features)
         shell: bash
-        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,secure_transport=21,secure_transport_control=5 -- cargo test --features "$NATIVE_FEATURES"
+        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,secure_transport=22,secure_transport_control=5 -- cargo test --features "$NATIVE_FEATURES"
       # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
       # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)

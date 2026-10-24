@@ -20,6 +20,7 @@
 //!   bytes) and the total length (4 bytes, little-endian), and the rest follow in order on the same
 //!   connection, under the same send lock, so messages to one peer never interleave
 //! - a connection that fails (I/O, a refused or undecodable channel message, a kind other than the two,
+//!   a message of the message kind that is not a Sync message ([`SecureTransport::malformed_count`]),
 //!   a length over the limit, or a send that did not finish) is dropped; the next `send_to` to a
 //!   dialled address dials again
 //!
@@ -108,6 +109,7 @@ pub struct SecureTransport<P> {
     next_conn: AtomicU64,
     refused: AtomicU64,
     skipped_bytes: AtomicU64,
+    malformed: Arc<AtomicU64>,
     rx: Mutex<mpsc::Receiver<VerifiedEnvelope>>,
     tx: mpsc::Sender<VerifiedEnvelope>,
 }
@@ -190,6 +192,7 @@ impl<P: PeerPolicy + Send + Sync + 'static> SecureTransport<P> {
             next_conn: AtomicU64::new(0),
             refused: AtomicU64::new(0),
             skipped_bytes: AtomicU64::new(0),
+            malformed: Arc::new(AtomicU64::new(0)),
             rx: Mutex::new(rx),
             tx,
         }
@@ -318,6 +321,13 @@ impl<P: PeerPolicy + Send + Sync + 'static> SecureTransport<P> {
         self.skipped_bytes.load(Ordering::Relaxed)
     }
 
+    /// How many connections were closed because a verified peer sent a message of the message kind that
+    /// does not decode as a Sync message (a protocol error of an authenticated peer)
+    #[must_use]
+    pub fn malformed_count(&self) -> u64 {
+        self.malformed.load(Ordering::Relaxed)
+    }
+
     /// Close the connection to `addr`, on this side and (as its reader sees the end) on the other;
     /// `false` when no peer is connected there
     pub async fn close(&self, addr: SocketAddr) -> bool {
@@ -385,6 +395,7 @@ impl<P: PeerPolicy + Send + Sync + 'static> SecureTransport<P> {
             cert.clone(),
             self.tx.clone(),
             self.peers.clone(),
+            self.malformed.clone(),
         ))
         .abort_handle();
         peers.insert(
@@ -508,6 +519,7 @@ async fn read_loop(
     cert: Arc<DeviceCert>,
     out: mpsc::Sender<VerifiedEnvelope>,
     peers: Arc<Peers>,
+    malformed: Arc<AtomicU64>,
 ) {
     // any failure ends the connection: a channel out of step or a peer breaking the framing is not read on
     while let Ok((kind, bytes)) = read_message(&mut rx).await {
@@ -516,8 +528,10 @@ async fn read_loop(
         } else if let Some(message) = Message::from_compact_bytes(&bytes) {
             Body::Message(message)
         } else {
-            // as TcpTransport: a sealed message from a verified peer that is not a Sync message is skipped
-            continue;
+            // a verified peer that sends something else under the message kind breaks the protocol: the
+            // connection ends here, counted
+            malformed.fetch_add(1, Ordering::Relaxed);
+            break;
         };
         let envelope = VerifiedEnvelope {
             body,
