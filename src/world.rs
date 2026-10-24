@@ -17,7 +17,7 @@
 
 use crate::arena::{Arena, Handle};
 use crate::fixed_point::{Vec3Fixed, Vec3Simd};
-use crate::keyed::{keyed_map, sorted, KeyedMap};
+use crate::keyed::IdIndex;
 use crate::{Event, EventKind, Result};
 use serde::{Deserialize, Serialize};
 
@@ -172,36 +172,25 @@ pub const MAX_LIVE_ENTITIES: usize = 1 << 16;
 /// memory follows the number of entities, not the value of their ids, and its lookups stay fast for
 /// ids a peer chooses. Ordered views ([`WorldState::ids`], [`World::iter_entities`]) are sorted by
 /// id.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldState {
     /// All entities in arena (cache-friendly)
     pub entities: Arena<Entity>,
     /// `entity_id` -> handle of each live entity
     #[cfg_attr(feature = "serde-raw", serde(with = "crate::keyed::serde_sorted"))]
-    id_map: KeyedMap<u32, Handle>,
+    id_map: IdIndex<Handle>,
     /// Current simulation frame
     pub frame: u64,
     /// Random seed (for deterministic procedural generation)
     pub seed: u64,
 }
 
-impl Default for WorldState {
-    fn default() -> Self {
-        Self {
-            entities: Arena::default(),
-            id_map: keyed_map(),
-            frame: 0,
-            seed: 0,
-        }
-    }
-}
-
 impl WorldState {
     /// The live entity ids with their handles, in ascending id order
     #[must_use]
     pub fn ids(&self) -> Vec<(u32, Handle)> {
-        sorted(&self.id_map)
+        self.id_map.sorted()
     }
 
     /// The number of live entities
@@ -215,8 +204,7 @@ impl WorldState {
     #[must_use]
     pub fn get_handle(&self, entity_id: u32) -> Option<Handle> {
         self.id_map
-            .get(&entity_id)
-            .copied()
+            .get(entity_id)
             .filter(super::arena::Handle::is_valid)
     }
 
@@ -226,7 +214,7 @@ impl WorldState {
         if handle.is_valid() {
             self.id_map.insert(entity_id, handle);
         } else {
-            self.id_map.remove(&entity_id);
+            self.id_map.remove(entity_id);
         }
     }
 
@@ -234,7 +222,7 @@ impl WorldState {
     #[inline(always)]
     pub fn remove_handle(&mut self, entity_id: u32) -> Option<Handle> {
         self.id_map
-            .remove(&entity_id)
+            .remove(entity_id)
             .filter(super::arena::Handle::is_valid)
     }
 }
@@ -1001,6 +989,61 @@ mod tests {
         let incremental = world.hash();
         let recalculated = world.recalculate_hash();
         assert_eq!(incremental, recalculated);
+    }
+
+    /// The same events give bit-identical stored bytes and world hashes whether the ids fall in the
+    /// dense part of the id index, the keyed part, or both: where an id is looked up never shows in
+    /// an output
+    #[test]
+    fn dense_and_keyed_ids_give_the_same_world() {
+        use crate::keyed::IdIndex;
+        use crate::persist::encode_state;
+        let with_bound = |bound: u32| {
+            let mut w = World::new(5);
+            w.state.id_map = IdIndex::with_dense_bound(bound);
+            w
+        };
+        let mut x = 0x2545_f491_4f6c_dd1d_u64;
+        let mut events = Vec::new();
+        for i in 0..3000u32 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let entity = u32::try_from(x % 400).unwrap();
+            events.push(Event::new(match i % 7 {
+                0..=2 => EventKind::Spawn {
+                    entity,
+                    kind: u16::try_from(x % 5).unwrap(),
+                    pos: [i16::try_from(x % 90).unwrap(), 2, 3],
+                },
+                3 => EventKind::Despawn { entity },
+                4 | 5 => EventKind::Motion {
+                    entity,
+                    delta: [1, -1, i16::try_from(x % 3).unwrap()],
+                },
+                _ => EventKind::Property {
+                    entity,
+                    prop: u16::try_from(x % 4).unwrap(),
+                    value: i32::try_from(x % 1000).unwrap(),
+                },
+            }));
+        }
+        let run = |bound: u32| {
+            let mut w = with_bound(bound);
+            for e in &events {
+                w.apply(e).unwrap();
+            }
+            w
+        };
+        // all keyed, all dense, and split at three places inside the id range
+        let worlds: Vec<World> = [0, 400, 1, 133, 399].into_iter().map(run).collect();
+        let bytes = encode_state(worlds[0].state());
+        assert!(worlds[0].state().live_count() > 100);
+        for w in &worlds[1..] {
+            assert_eq!(encode_state(w.state()), bytes);
+            assert_eq!(w.hash(), worlds[0].hash());
+            assert_eq!(w.state().ids(), worlds[0].state().ids());
+        }
     }
 
     #[test]

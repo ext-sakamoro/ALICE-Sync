@@ -43,32 +43,157 @@ pub(crate) fn sorted<K: Ord + Copy, V: Copy>(map: &KeyedMap<K, V>) -> Vec<(K, V)
     entries
 }
 
+/// Ids below this are looked up in a dense table, which grows up to it and never past; larger ids
+/// are looked up in a keyed table
+pub(crate) const DENSE_IDS: u32 = 4 * crate::world::MAX_LIVE_ENTITIES as u32;
+
+/// An index from entity id to `V`: a dense table for ids below its bound, a keyed table above
+#[derive(Debug, Clone)]
+pub(crate) struct IdIndex<V> {
+    bound: u32,
+    dense: Vec<Option<V>>,
+    keyed: KeyedMap<u32, V>,
+    len: usize,
+}
+
+impl<V: Copy> Default for IdIndex<V> {
+    fn default() -> Self {
+        Self::with_dense_bound(DENSE_IDS)
+    }
+}
+
+impl<V: Copy> IdIndex<V> {
+    /// An empty index whose dense table covers ids below `bound` (at most [`DENSE_IDS`])
+    pub(crate) fn with_dense_bound(bound: u32) -> Self {
+        Self {
+            bound: bound.min(DENSE_IDS),
+            dense: Vec::new(),
+            keyed: keyed_map(),
+            len: 0,
+        }
+    }
+
+    pub(crate) fn get(&self, id: u32) -> Option<V> {
+        if id < self.bound {
+            self.dense.get(id as usize).copied().flatten()
+        } else {
+            self.keyed.get(&id).copied()
+        }
+    }
+
+    /// Set the entry of `id`, returning the one it replaces
+    pub(crate) fn insert(&mut self, id: u32, value: V) -> Option<V> {
+        let old = if id < self.bound {
+            let i = id as usize;
+            if i >= self.dense.len() {
+                // grow exactly, at least doubling, never past the bound
+                let want = (i + 1).max(2 * self.dense.len()).min(self.bound as usize);
+                self.dense.reserve_exact(want - self.dense.len());
+                self.dense.resize(want, None);
+            }
+            self.dense[i].replace(value)
+        } else {
+            self.keyed.insert(id, value)
+        };
+        if old.is_none() {
+            self.len += 1;
+        }
+        old
+    }
+
+    pub(crate) fn remove(&mut self, id: u32) -> Option<V> {
+        let old = if id < self.bound {
+            self.dense.get_mut(id as usize).and_then(Option::take)
+        } else {
+            self.keyed.remove(&id)
+        };
+        if old.is_some() {
+            self.len -= 1;
+        }
+        old
+    }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// The entries in ascending id order (every keyed id is above every dense one)
+    pub(crate) fn sorted(&self) -> Vec<(u32, V)> {
+        let mut out = Vec::with_capacity(self.len);
+        out.extend(
+            self.dense
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| v.map(|v| (u32::try_from(i).unwrap_or(u32::MAX), v))),
+        );
+        out.extend(sorted(&self.keyed));
+        out
+    }
+}
+
 #[cfg(feature = "serde-raw")]
 pub(crate) mod serde_sorted {
-    //! `serde-raw` form of a [`KeyedMap`]: the entries as a sequence in ascending key order, so the
-    //! raw bytes do not depend on the table's key
+    //! `serde-raw` form of an [`IdIndex`]: the entries as a sequence in ascending id order, so the
+    //! raw bytes do not depend on the table's key or on where the dense part ends
 
-    use super::{keyed_map, sorted, KeyedMap};
+    use super::IdIndex;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub(crate) fn serialize<K, V, S>(map: &KeyedMap<K, V>, s: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<V, S>(index: &IdIndex<V>, s: S) -> Result<S::Ok, S::Error>
     where
-        K: Ord + Copy + Serialize,
         V: Copy + Serialize,
         S: Serializer,
     {
-        sorted(map).serialize(s)
+        index.sorted().serialize(s)
     }
 
-    pub(crate) fn deserialize<'de, K, V, D>(d: D) -> Result<KeyedMap<K, V>, D::Error>
+    pub(crate) fn deserialize<'de, V, D>(d: D) -> Result<IdIndex<V>, D::Error>
     where
-        K: Eq + std::hash::Hash + Deserialize<'de>,
-        V: Deserialize<'de>,
+        V: Copy + Deserialize<'de>,
         D: Deserializer<'de>,
     {
-        let entries: Vec<(K, V)> = Vec::deserialize(d)?;
-        let mut map = keyed_map();
-        map.extend(entries);
-        Ok(map)
+        let entries: Vec<(u32, V)> = Vec::deserialize(d)?;
+        let mut index = IdIndex::default();
+        for (id, v) in entries {
+            index.insert(id, v);
+        }
+        Ok(index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dense_part_grows_lazily_and_never_past_its_bound() {
+        let mut ix: IdIndex<u32> = IdIndex::with_dense_bound(100);
+        assert_eq!(ix.dense.capacity(), 0);
+        ix.insert(3, 1);
+        assert!(ix.dense.len() >= 4 && ix.dense.len() <= 100);
+        ix.insert(99, 2);
+        assert_eq!(ix.dense.len(), 100);
+        assert!(
+            ix.dense.capacity() <= 100,
+            "capacity {}",
+            ix.dense.capacity()
+        );
+        ix.insert(100, 3);
+        ix.insert(u32::MAX, 4);
+        assert_eq!(ix.dense.len(), 100);
+        assert_eq!(ix.len(), 4);
+        assert_eq!(ix.sorted(), [(3, 1), (99, 2), (100, 3), (u32::MAX, 4)]);
+        assert_eq!(ix.remove(99), Some(2));
+        assert_eq!(ix.remove(99), None);
+        assert_eq!(ix.remove(u32::MAX), Some(4));
+        assert_eq!((ix.len(), ix.get(3), ix.get(100)), (2, Some(1), Some(3)));
+        assert_eq!(ix.insert(3, 9), Some(1));
+        assert_eq!(ix.len(), 2);
+    }
+
+    #[test]
+    fn the_bound_is_capped_by_dense_ids() {
+        let ix: IdIndex<u32> = IdIndex::with_dense_bound(u32::MAX);
+        assert_eq!(ix.bound, DENSE_IDS);
     }
 }

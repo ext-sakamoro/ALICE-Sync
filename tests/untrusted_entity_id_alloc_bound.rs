@@ -173,3 +173,30 @@ fn a_small_stored_world_naming_the_largest_id_decodes_within_its_own_size() {
     assert!(matches!(decoded, Err(PersistError::Truncated)));
     assert!(peak <= SLACK, "a count of {limit} took {peak} bytes");
 }
+
+/// Ids below `4 * MAX_LIVE_ENTITIES` are looked up in a dense table: the largest of them costs at most
+/// that table (one optional handle per id below the bound), allocated once, never more
+#[test]
+fn a_spawn_at_the_top_of_the_dense_range_costs_at_most_the_dense_table() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let bound = 4 * alice_sync::world::MAX_LIVE_ENTITIES;
+    let table = bound * std::mem::size_of::<Option<alice_sync::arena::Handle>>();
+    let mut node = Node::new(NodeId(9));
+    let event = remote_spawn(u32::try_from(bound - 1).unwrap());
+    let (applied, peak) = peak_during(|| node.apply_event(&event));
+    applied.unwrap();
+    assert!(peak <= table + SLACK, "{peak} bytes for a table of {table}");
+    // the next id is past the dense range: no growth of the table
+    let mut next = remote_spawn(u32::try_from(bound).unwrap());
+    next.seq = SeqNum(2);
+    next.id = EventId(2);
+    next.timestamp = 2;
+    let (applied, peak) = peak_during(|| node.apply_event(&next));
+    applied.unwrap();
+    assert!(
+        peak <= SLACK,
+        "an id past the dense range took {peak} bytes"
+    );
+}
