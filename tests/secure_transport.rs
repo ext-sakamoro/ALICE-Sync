@@ -13,7 +13,7 @@ use alice_identity::artifact::Revocation;
 use alice_identity::device_cert::DeviceCert;
 use alice_identity::did::Did;
 use alice_sign::{KeyPair, PublicKey};
-use alice_sync::event::{Event, EventId, EventKind, SeqNum};
+use alice_sync::event::{Event, EventId, EventKind, Origin, SeqNum};
 use alice_sync::node::NodeId;
 use alice_sync::protocol::Message;
 use alice_sync::secure_transport::{Body, SecureTransport, KIND_BYTES, KIND_MESSAGE, MAX_MESSAGE};
@@ -108,7 +108,7 @@ fn events(n: u64, tag: u8) -> Message {
             .map(|i| Event {
                 id: EventId(i),
                 seq: SeqNum(i),
-                origin: u64::from(tag),
+                origin: Origin([tag; 16]),
                 timestamp: i.wrapping_mul(0x9e37_79b9_7f4a_7c15),
                 kind: EventKind::Custom {
                     type_id: u16::from(tag),
@@ -121,6 +121,7 @@ fn events(n: u64, tag: u8) -> Message {
                 },
             })
             .collect(),
+        checkpoints: Vec::new(),
     }
 }
 

@@ -9,16 +9,16 @@
 
 use std::collections::BTreeMap;
 
-use alice_identity::artifact::Revocation;
+use alice_identity::artifact::{sign_artifact, PayloadDigest, Revocation};
 use alice_identity::device_cert::DeviceCert;
 use alice_identity::did::Did;
 use alice_sign::{KeyPair, PublicKey};
-use sha2::{Digest, Sha256};
 use alice_sync::authorship::{
-    Author, AuthorshipError, Origin, SignedEvents, TrustPolicy, MAX_PENDING_PER_AUTHOR,
-    ORIGIN_CONTEXT,
+    Author, AuthorshipError, Origin, SignedEvents, TrustPolicy, CHECKPOINT_CONTEXT,
+    CHECKPOINT_INTERVAL, MAX_PENDING_PER_AUTHOR, ORIGIN_CONTEXT,
 };
 use alice_sync::{Event, EventKind, Node, NodeId};
+use sha2::{Digest, Sha256};
 
 const NOW: u64 = 1_800_000_100;
 
@@ -68,7 +68,10 @@ fn trusting(ps: &[&Party]) -> Policy {
 }
 
 fn node(id: u64, p: &Party) -> Node {
-    Node::with_author(NodeId(id), Author::new(p.key.clone(), p.cert.clone()).unwrap())
+    Node::with_author(
+        NodeId(id),
+        Author::new(p.key.clone(), p.cert.clone()).unwrap(),
+    )
 }
 
 fn spawn(entity: u32) -> Event {
@@ -127,7 +130,11 @@ fn signed_events_apply_at_the_receiver() {
     na.emit(spawn(5)).unwrap();
     na.emit(motion(5, 3)).unwrap();
     let batch = na.signed_events_since(&BTreeMap::new()).unwrap();
-    assert_eq!(batch.checkpoints.len(), 1, "one checkpoint for the one origin");
+    assert_eq!(
+        batch.checkpoints.len(),
+        1,
+        "one checkpoint for the one origin"
+    );
     assert_eq!(nb.receive(&batch, &trusting(&[&a])).unwrap(), 2);
     assert_eq!(nb.world_hash(), na.world_hash());
     // the events carry the author's origin
@@ -254,7 +261,12 @@ fn a_relay_that_splits_and_merges_batches_converges_bit_identically() {
     bob.receive(&from_c, &pol).unwrap();
     let everything = bob.signed_events_since(&BTreeMap::new()).unwrap();
     assert_eq!(everything.events.len(), 120);
-    assert_eq!(everything.checkpoints.len(), 2);
+    // alice's 80 events: checkpoints at every CHECKPOINT_INTERVAL (64) and at her last (80); carol's
+    // 40: at her last
+    let seqs: Vec<u64> = everything.checkpoints.iter().map(|c| c.seq).collect();
+    assert_eq!(CHECKPOINT_INTERVAL, 64);
+    assert_eq!(seqs.len(), 3, "{seqs:?}");
+    assert!(seqs.contains(&64) && seqs.contains(&80) && seqs.contains(&40));
     let mut erin = node(5, &party(5, "erin"));
     erin.receive(&everything, &pol).unwrap();
     let mut dave = node(4, &party(4, "dave"));
@@ -314,7 +326,8 @@ fn pending_events_of_one_author_are_capped_and_the_others_go_on() {
 #[test]
 fn which_pending_events_are_kept_does_not_depend_on_the_arrival_order() {
     // the smallest sequence numbers are kept: two arrival orders of the same events leave the same held
-    // set, so once the gap fills both receivers apply the same events
+    // set, so once the gap fills both receivers apply the same events (the author signs a checkpoint
+    // every CHECKPOINT_INTERVAL events, so a run of held events can apply before the last checkpoint)
     let a = party(1, "alice");
     let pol = trusting(&[&a]);
     let mut na = node(1, &a);
@@ -333,7 +346,101 @@ fn which_pending_events_are_kept_does_not_depend_on_the_arrival_order() {
     }
     let fa = forward.receive(&one(&all.events[0], &all), &pol).unwrap();
     let ba = backward.receive(&one(&all.events[0], &all), &pol).unwrap();
+    // both now hold 1..=MAX_PENDING_PER_AUTHOR + 1 contiguously and apply up to the last checkpoint
+    // inside that run
+    let last_inside =
+        (MAX_PENDING_PER_AUTHOR as u64 + 1) / CHECKPOINT_INTERVAL * CHECKPOINT_INTERVAL;
     assert_eq!(fa, ba);
-    assert_eq!(fa, 1 + MAX_PENDING_PER_AUTHOR);
+    assert_eq!(fa as u64, last_inside);
     assert_eq!(forward.world_hash(), backward.world_hash());
+}
+
+/// The digest a checkpoint's signature covers: SHA-256(origin || sequence number (u64, big-endian) || head)
+fn checkpoint_digest(origin: Origin, seq: u64, head: &[u8; 32]) -> PayloadDigest {
+    let mut m = origin.0.to_vec();
+    m.extend_from_slice(&seq.to_be_bytes());
+    m.extend_from_slice(head);
+    PayloadDigest::sha256(Sha256::digest(&m).into())
+}
+
+#[test]
+fn the_checkpoint_signature_covers_the_documented_digest() {
+    // a checkpoint made here from the rule, with alice's key, is accepted: the rule is the one verified
+    let a = party(1, "alice");
+    let mut na = node(1, &a);
+    na.emit(spawn(5)).unwrap();
+    let mut batch = na.signed_events_since(&BTreeMap::new()).unwrap();
+    let cp = &mut batch.checkpoints[0];
+    assert_eq!(CHECKPOINT_CONTEXT, b"alice-sync/checkpoint/v1");
+    cp.signature = sign_artifact(
+        &a.key,
+        &a.cert,
+        CHECKPOINT_CONTEXT,
+        &checkpoint_digest(cp.origin, cp.seq, &cp.head),
+    )
+    .unwrap()
+    .to_bytes();
+    let mut nb = node(2, &party(2, "bob"));
+    assert_eq!(nb.receive(&batch, &trusting(&[&a])).unwrap(), 1);
+}
+
+#[test]
+fn a_checkpoint_whose_head_was_changed_after_signing_is_refused() {
+    // alice's own signature and certificate, so the origin matches: only the signature check refuses it
+    let a = party(1, "alice");
+    let mut na = node(1, &a);
+    na.emit(spawn(5)).unwrap();
+    let mut batch = na.signed_events_since(&BTreeMap::new()).unwrap();
+    batch.checkpoints[0].head[0] ^= 1;
+    let mut nb = node(2, &party(2, "bob"));
+    assert!(matches!(
+        nb.receive(&batch, &trusting(&[&a])),
+        Err(AuthorshipError::BadCheckpoint { .. })
+    ));
+    assert_eq!(nb.world().entity_count(), 0);
+}
+
+#[test]
+fn a_valid_signature_by_another_device_on_the_origin_is_refused() {
+    // mallory signs, correctly, the digest of a checkpoint naming alice's origin: the signature verifies
+    // under mallory's trusted master, so only the origin-of-the-signer check refuses it
+    let a = party(1, "alice");
+    let m = party(3, "mallory");
+    let mut na = node(1, &a);
+    na.emit(spawn(5)).unwrap();
+    let mut batch = na.signed_events_since(&BTreeMap::new()).unwrap();
+    let cp = &mut batch.checkpoints[0];
+    cp.signature = sign_artifact(
+        &m.key,
+        &m.cert,
+        CHECKPOINT_CONTEXT,
+        &checkpoint_digest(cp.origin, cp.seq, &cp.head),
+    )
+    .unwrap()
+    .to_bytes();
+    let mut nb = node(2, &party(2, "bob"));
+    assert!(matches!(
+        nb.receive(&batch, &trusting(&[&a, &m])),
+        Err(AuthorshipError::BadCheckpoint { .. })
+    ));
+    assert_eq!(nb.world().entity_count(), 0);
+}
+
+#[test]
+fn an_unstamped_event_under_the_authors_origin_is_refused() {
+    // sequence number 0 with alice's origin: a checkpoint at 1 would cover it if only the number counted
+    let a = party(1, "alice");
+    let mut na = node(1, &a);
+    na.emit(spawn(5)).unwrap();
+    let mut batch = na.signed_events_since(&BTreeMap::new()).unwrap();
+    let mut extra = spawn(6);
+    extra.origin = Origin::of(&a.cert);
+    assert!(!extra.is_stamped());
+    batch.events.push(extra);
+    let mut nb = node(2, &party(2, "bob"));
+    assert!(matches!(
+        nb.receive(&batch, &trusting(&[&a])),
+        Err(AuthorshipError::Uncovered { seq: 0, .. })
+    ));
+    assert_eq!(nb.world().entity_count(), 0);
 }

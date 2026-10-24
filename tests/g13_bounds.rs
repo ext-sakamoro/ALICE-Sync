@@ -99,7 +99,7 @@ fn events(rng: &mut Rng, n: usize, ids: u32) -> Vec<Event> {
             Event {
                 id: EventId(i as u64 + 1),
                 seq: SeqNum(i as u64 + 1),
-                origin: 1 + rng.below(3),
+                origin: alice_sync::event::Origin::of_node(1 + rng.below(3)),
                 timestamp: rng.below(12),
                 kind,
             }
@@ -184,7 +184,7 @@ fn a_smaller_id_evicts_the_largest_and_a_despawn_readmits_the_next() {
     let ev = |seq: u64, kind| Event {
         id: EventId(seq),
         seq: SeqNum(seq),
-        origin: 1,
+        origin: alice_sync::event::Origin::of_node(1),
         timestamp: seq,
         kind,
     };

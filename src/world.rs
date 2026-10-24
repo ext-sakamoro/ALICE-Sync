@@ -519,7 +519,7 @@ impl World {
     /// Returns an error if any individual event fails to apply.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+        reason = "the world type composes its own operations; peers' events reach it through Node::receive (signed, ALICE-Law G13)"
     )]
     pub fn apply_stream_batched(&mut self, stream: &crate::EventStream) -> Result<()> {
         let meta = stream.metadata();
@@ -596,6 +596,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::Origin;
 
     #[test]
     fn test_entity_props() {
@@ -963,14 +964,14 @@ mod tests {
                 kind: 0,
                 pos: [0, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
         stream.push(
             Event::new(EventKind::Motion {
                 entity: 1,
                 delta: [5, 0, 0],
             }),
-            0,
+            Origin::of_node(0),
         );
 
         let mut world = World::new(0);

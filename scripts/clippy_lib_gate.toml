@@ -8,12 +8,12 @@ header = """\
 #
 # The library code (`cargo clippy --lib`, CLIPPY_CONF_DIR=.github/clippy-lib)
 # also may not change a World, WorldSoA or WorldStorage directly (ALICE-Law G13): events
-# from peers go through Node::apply_event, whose src/converge.rs makes the world
+# from peers go through Node::receive, whose src/converge.rs makes the world
 # independent of their arrival order. The world types' own modules and the sink
 # allow these calls at each site with a reason; tests, examples and benches use
 # the repository-root clippy.toml configuration
 """
-method-reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::apply_event (src/converge.rs)"
+method-reason = "changes a world directly in the order called (ALICE-Law G13): apply events from peers through Node::receive (src/converge.rs)"
 
 [[method]]
 path = "alice_sync::world::World::apply"

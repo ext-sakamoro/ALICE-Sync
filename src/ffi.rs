@@ -102,7 +102,7 @@ pub unsafe extern "C" fn as_sync_world_frame(ptr: *const AsSyncWorld) -> u64 {
 #[no_mangle]
 #[allow(
     clippy::disallowed_methods,
-    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_apply_event (ALICE-Law G13)"
+    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_receive (signed, ALICE-Law G13)"
 )]
 pub unsafe extern "C" fn as_sync_world_apply_event(
     ptr: *mut AsSyncWorld,
@@ -195,7 +195,7 @@ pub unsafe extern "C" fn as_sync_world_soa_entity_count(ptr: *const AsSyncWorldS
 #[no_mangle]
 #[allow(
     clippy::disallowed_methods,
-    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_apply_event (ALICE-Law G13)"
+    reason = "the C-ABI of the single-writer world, applied in the order called; peers' events go through as_sync_node_receive (signed, ALICE-Law G13)"
 )]
 pub unsafe extern "C" fn as_sync_world_soa_apply_event(
     ptr: *mut AsSyncWorldSoA,
@@ -278,35 +278,200 @@ pub unsafe extern "C" fn as_sync_node_emit(ptr: *mut AsSyncNode, event: *const A
     })
 }
 
-/// Applies an event received from another node (ALICE-Law G13): the node's world is the same for
-/// every arrival order of the same events and unchanged by a duplicate. The event must be one a
-/// node stamped, taken from that node with `as_sync_node_event_at`; an event made by
-/// `as_sync_event_new_*` and never emitted is refused.
-///
-/// Returns 0 on success, -1 for a null pointer, -2 for an unstamped event (with
-/// `as_sync_last_error`).
+/// A trust store for `as_sync_node_receive`: the master key of each subject whose devices' events are
+/// accepted
+pub struct AsSyncTrust(Vec<(String, alice_sign::PublicKey)>);
+
+struct FfiPolicy<'a> {
+    trust: &'a AsSyncTrust,
+    now: u64,
+}
+
+impl crate::authorship::TrustPolicy for FfiPolicy<'_> {
+    fn master_of(&self, subject: &alice_identity::did::Did) -> Option<alice_sign::PublicKey> {
+        let s = subject.to_string();
+        self.trust.0.iter().find(|(k, _)| *k == s).map(|(_, m)| *m)
+    }
+    fn revocation(&self) -> alice_identity::artifact::Revocation<'_> {
+        alice_identity::artifact::Revocation::NoListAvailable
+    }
+    fn now(&self) -> u64 {
+        self.now
+    }
+}
+
+/// An empty trust store. Free it with `as_sync_trust_free`.
 #[no_mangle]
-pub unsafe extern "C" fn as_sync_node_apply_event(
-    ptr: *mut AsSyncNode,
-    event: *const AsSyncEvent,
-) -> i32 {
-    ffi_guard(-1, || {
-        if ptr.is_null() || event.is_null() {
-            return -1;
-        }
-        match (*ptr).0.apply_event(&(*event).0) {
-            Ok(()) => 0,
-            Err(e @ crate::SyncError::Unstamped) => {
-                guard::set_last_error(format!("as_sync_node_apply_event: {e}"));
-                -2
-            }
-            Err(_) => -1,
+pub extern "C" fn as_sync_trust_new() -> *mut AsSyncTrust {
+    ffi_guard(ptr::null_mut(), || {
+        Box::into_raw(Box::new(AsSyncTrust(Vec::new())))
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_trust_free(ptr: *mut AsSyncTrust) {
+    ffi_guard((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
         }
     })
 }
 
-/// A copy of the node's `index`-th emitted event (0 to `as_sync_node_events_count` - 1), stamped, for another node's
-/// `as_sync_node_apply_event`; null for a null pointer or an index out of range. Free it with
+/// Trusts the 32-byte master key `master` for the subject `subject` (`subject_len` bytes of UTF-8,
+/// `did:method:id`). Returns 0, or -1 for a null pointer or a subject that is not UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_trust_add(
+    ptr: *mut AsSyncTrust,
+    subject: *const u8,
+    subject_len: u32,
+    master: *const u8,
+) -> i32 {
+    ffi_guard(-1, || {
+        if ptr.is_null() || subject.is_null() || master.is_null() {
+            return -1;
+        }
+        let bytes = std::slice::from_raw_parts(subject, subject_len as usize);
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return -1;
+        };
+        let mut key = [0u8; 32];
+        key.copy_from_slice(std::slice::from_raw_parts(master, 32));
+        (*ptr).0.push((text.to_owned(), alice_sign::PublicKey(key)));
+        0
+    })
+}
+
+/// A node whose events are signed by the device key made from the 32-byte `device_seed`, certified by
+/// `cert` (`cert_len` bytes of an encoded ALICE-Identity device certificate naming that key). Null (with
+/// `as_sync_last_error`) when the certificate does not decode or does not name the key. Free it with
+/// `as_sync_node_free`.
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_node_with_author(
+    node_id: u64,
+    device_seed: *const u8,
+    cert: *const u8,
+    cert_len: u32,
+) -> *mut AsSyncNode {
+    ffi_guard(ptr::null_mut(), || {
+        if device_seed.is_null() || cert.is_null() {
+            return ptr::null_mut();
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(std::slice::from_raw_parts(device_seed, 32));
+        let made = alice_identity::device_cert::DeviceCert::from_bytes(std::slice::from_raw_parts(
+            cert,
+            cert_len as usize,
+        ))
+        .map_err(|e| e.to_string())
+        .and_then(|c| {
+            crate::authorship::Author::new(alice_sign::KeyPair::from_seed(seed), c)
+                .map_err(|e| e.to_string())
+        });
+        match made {
+            Ok(author) => Box::into_raw(Box::new(AsSyncNode(Node::with_author(
+                NodeId(node_id),
+                author,
+            )))),
+            Err(e) => {
+                guard::set_last_error(format!("as_sync_node_with_author: {e}"));
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// The node's signed events (its own with a checkpoint at the last, and those it accepted from other
+/// authors), encoded; their length is written to `out_len`. Null for a null pointer or a node without an
+/// author. Free the bytes with `as_sync_bytes_free`.
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_node_signed_events(
+    ptr: *mut AsSyncNode,
+    out_len: *mut u32,
+) -> *mut u8 {
+    ffi_guard(ptr::null_mut(), || {
+        if ptr.is_null() || out_len.is_null() {
+            return ptr::null_mut();
+        }
+        match (*ptr)
+            .0
+            .signed_events_since(&std::collections::BTreeMap::new())
+        {
+            Ok(batch) => {
+                let bytes = bitcode::encode(&batch).into_boxed_slice();
+                let Ok(n) = u32::try_from(bytes.len()) else {
+                    return ptr::null_mut();
+                };
+                *out_len = n;
+                Box::into_raw(bytes).cast::<u8>()
+            }
+            Err(e) => {
+                guard::set_last_error(format!("as_sync_node_signed_events: {e}"));
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// Frees bytes returned by `as_sync_node_signed_events` (`len` is the length it wrote).
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_bytes_free(bytes: *mut u8, len: u32) {
+    ffi_guard((), || {
+        if !bytes.is_null() {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                bytes,
+                len as usize,
+            )));
+        }
+    })
+}
+
+/// Takes encoded signed events from another node (`as_sync_node_signed_events`), trusting `trust` at the
+/// time `now`: each author's events apply once its verified checkpoint covers them (ALICE-Law G13: the
+/// world is the same for every arrival order and grouping). Returns how many events applied, or (with
+/// `as_sync_last_error`) -1 for a null pointer or bytes that do not decode, -2 for an event no checkpoint
+/// covers, -3 for a refused checkpoint, -4 for events that do not match the author's checkpoint, -5 for a
+/// second history of one author, -6 when the author's held events are full, -7 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn as_sync_node_receive(
+    ptr: *mut AsSyncNode,
+    bytes: *const u8,
+    len: u32,
+    trust: *const AsSyncTrust,
+    now: u64,
+) -> i64 {
+    use crate::authorship::{AuthorshipError as E, SignedEvents};
+    ffi_guard(-1, || {
+        if ptr.is_null() || bytes.is_null() || trust.is_null() {
+            return -1;
+        }
+        let Ok(batch) =
+            bitcode::decode::<SignedEvents>(std::slice::from_raw_parts(bytes, len as usize))
+        else {
+            guard::set_last_error("as_sync_node_receive: the bytes do not decode".to_owned());
+            return -1;
+        };
+        let policy = FfiPolicy {
+            trust: &*trust,
+            now,
+        };
+        match (*ptr).0.receive(&batch, &policy) {
+            Ok(n) => i64::try_from(n).unwrap_or(i64::MAX),
+            Err(e) => {
+                guard::set_last_error(format!("as_sync_node_receive: {e}"));
+                match e {
+                    E::Uncovered { .. } => -2,
+                    E::BadCheckpoint { .. } => -3,
+                    E::ChainMismatch { .. } => -4,
+                    E::Forked { .. } => -5,
+                    E::PendingFull { .. } => -6,
+                    _ => -7,
+                }
+            }
+        }
+    })
+}
+
+/// A copy of the node's `index`-th emitted event (0 to `as_sync_node_events_count` - 1), stamped; null for a null pointer or an index out of range. Free it with
 /// `as_sync_event_free`.
 #[no_mangle]
 pub unsafe extern "C" fn as_sync_node_event_at(
@@ -468,10 +633,17 @@ pub unsafe extern "C" fn as_sync_event_free(ptr: *mut AsSyncEvent) {
     })
 }
 
-/// The node that originated the event (0 for an unstamped event or null).
+/// Writes the event's 16-byte origin (its author's, zero for an unstamped event) to `out`. Returns 0, or -1
+/// for a null pointer.
 #[no_mangle]
-pub unsafe extern "C" fn as_sync_event_origin(ptr: *const AsSyncEvent) -> u64 {
-    ffi_guard(0, || if ptr.is_null() { 0 } else { (*ptr).0.origin })
+pub unsafe extern "C" fn as_sync_event_origin(ptr: *const AsSyncEvent, out: *mut u8) -> i32 {
+    ffi_guard(-1, || {
+        if ptr.is_null() || out.is_null() {
+            return -1;
+        }
+        std::ptr::copy_nonoverlapping((*ptr).0.origin.0.as_ptr(), out, 16);
+        0
+    })
 }
 
 /// The event's sequence number in its origin's log, from 1 (0 for an unstamped event or null).
@@ -520,13 +692,15 @@ pub unsafe extern "C" fn as_sync_event_stream_free(ptr: *mut AsSyncEventStream) 
 pub unsafe extern "C" fn as_sync_event_stream_push(
     ptr: *mut AsSyncEventStream,
     event: *const AsSyncEvent,
-    origin: u64,
+    origin: *const u8,
 ) -> u64 {
     ffi_guard(0, || {
-        if ptr.is_null() || event.is_null() {
+        if ptr.is_null() || event.is_null() || origin.is_null() {
             return 0;
         }
-        (*ptr).0.push((*event).0.clone(), origin).0
+        let mut o = [0u8; 16];
+        o.copy_from_slice(std::slice::from_raw_parts(origin, 16));
+        (*ptr).0.push((*event).0.clone(), crate::event::Origin(o)).0
     })
 }
 
@@ -1035,13 +1209,51 @@ mod tests {
         }
     }
 
+    /// A device certificate (layout version 2) and the seed of the device key it names
+    fn ffi_party(seed: u8, name: &str) -> (alice_sign::KeyPair, Vec<u8>, [u8; 32]) {
+        let master = alice_sign::KeyPair::from_seed([seed; 32]);
+        let device_seed = [seed.wrapping_add(100); 32];
+        let device = alice_sign::KeyPair::from_seed(device_seed);
+        let cert = alice_identity::device_cert::DeviceCert::issue(
+            &master,
+            &alice_identity::did::Did::parse(&format!("did:alice:{name}")).unwrap(),
+            device.public().0,
+            [0x4e; 32],
+            1_800_000_000,
+            1_800_086_400,
+            [seed; 16],
+        )
+        .unwrap();
+        (master, cert.to_bytes(), device_seed)
+    }
+
     #[test]
     fn test_ffi_node_sync() {
         unsafe {
-            let node_a = as_sync_node_new(1);
-            let node_b = as_sync_node_new(2);
+            let (master_a, cert_a, seed_a) = ffi_party(1, "alice");
+            let (_, cert_b, seed_b) = ffi_party(2, "bob");
+            let node_a = as_sync_node_with_author(
+                1,
+                seed_a.as_ptr(),
+                cert_a.as_ptr(),
+                u32::try_from(cert_a.len()).unwrap(),
+            );
+            let node_b = as_sync_node_with_author(
+                2,
+                seed_b.as_ptr(),
+                cert_b.as_ptr(),
+                u32::try_from(cert_b.len()).unwrap(),
+            );
+            assert!(!node_a.is_null() && !node_b.is_null());
+            // a certificate that does not name the key is refused
+            let wrong = as_sync_node_with_author(
+                3,
+                seed_b.as_ptr(),
+                cert_a.as_ptr(),
+                u32::try_from(cert_a.len()).unwrap(),
+            );
+            assert!(wrong.is_null());
 
-            // node_a emits a spawn and three motions; node_b receives them in reverse order
             let made = [
                 as_sync_event_new_spawn(1, 0, 0, 0, 0),
                 as_sync_event_new_motion(1, 10, 0, 0),
@@ -1054,37 +1266,56 @@ mod tests {
             }
             assert_eq!(as_sync_node_events_count(node_a), 4);
             assert!(as_sync_node_event_at(node_a, 4).is_null());
-            for i in (0..4).rev() {
-                let e = as_sync_node_event_at(node_a, i);
-                assert_eq!(as_sync_event_origin(e), 1);
-                assert_eq!(as_sync_event_seq(e), u64::from(i) + 1);
-                assert_eq!(as_sync_node_apply_event(node_b, e), 0);
-                assert_eq!(
-                    as_sync_node_apply_event(node_b, e),
-                    0,
-                    "a duplicate changes nothing"
-                );
-                as_sync_event_free(e);
-            }
+            let first = as_sync_node_event_at(node_a, 0);
+            let mut origin = [0u8; 16];
+            assert_eq!(as_sync_event_origin(first, origin.as_mut_ptr()), 0);
+            assert_ne!(origin, [0u8; 16]);
+            assert_eq!(as_sync_event_seq(first), 1);
+            as_sync_event_free(first);
+
+            let mut len = 0u32;
+            let bytes = as_sync_node_signed_events(node_a, &raw mut len);
+            assert!(!bytes.is_null() && len > 0);
+            let trust = as_sync_trust_new();
+            let subject = b"did:alice:alice";
+            // not trusted yet: the checkpoint is refused and nothing applies
+            let before = as_sync_node_world_hash(node_b);
+            assert_eq!(
+                as_sync_node_receive(node_b, bytes, len, trust, 1_800_000_100),
+                -3
+            );
+            assert_eq!(as_sync_node_world_hash(node_b), before);
+            assert_eq!(
+                as_sync_trust_add(trust, subject.as_ptr(), 15, master_a.public().0.as_ptr()),
+                0
+            );
+            assert_eq!(
+                as_sync_node_receive(node_b, bytes, len, trust, 1_800_000_100),
+                4
+            );
+            assert_eq!(
+                as_sync_node_receive(node_b, bytes, len, trust, 1_800_000_100),
+                0,
+                "a duplicate changes nothing"
+            );
             assert_eq!(
                 as_sync_node_world_hash(node_a),
                 as_sync_node_world_hash(node_b)
             );
             assert_eq!(as_sync_node_entity_count(node_b), 1);
+            // bytes that do not decode are refused
+            assert_eq!(
+                as_sync_node_receive(node_b, bytes, 3, trust, 1_800_000_100),
+                -1
+            );
+            as_sync_bytes_free(bytes, len);
 
-            // an event that was never emitted is refused, not dropped as a duplicate
-            let unstamped = as_sync_event_new_motion(1, 5, 5, 5);
-            assert_eq!(as_sync_event_seq(unstamped), 0);
-            let before = as_sync_node_world_hash(node_b);
-            assert_eq!(as_sync_node_apply_event(node_b, unstamped), -2);
-            assert_eq!(as_sync_node_world_hash(node_b), before);
-            let msg = as_sync_last_error();
-            assert!(!msg.is_null());
-            let text = std::ffi::CStr::from_ptr(msg).to_string_lossy().into_owned();
-            as_sync_free_error_string(msg);
-            assert!(text.contains("Unstamped"), "{text}");
-            as_sync_event_free(unstamped);
+            // a node without an author has no signed events
+            let plain = as_sync_node_new(9);
+            assert!(as_sync_node_signed_events(plain, &raw mut len).is_null());
+            as_sync_node_free(plain);
 
+            as_sync_trust_free(trust);
             as_sync_node_free(node_a);
             as_sync_node_free(node_b);
         }
@@ -1178,7 +1409,8 @@ mod tests {
             assert_eq!(as_sync_event_stream_is_empty(stream), 1);
 
             let event = as_sync_event_new_motion(1, 10, 20, 30);
-            as_sync_event_stream_push(stream, event, 42);
+            let origin = [42u8; 16];
+            as_sync_event_stream_push(stream, event, origin.as_ptr());
             assert_eq!(as_sync_event_stream_len(stream), 1);
             assert_eq!(as_sync_event_stream_is_empty(stream), 0);
 

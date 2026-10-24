@@ -6,11 +6,35 @@
 use alice_sync::persist::encode_state;
 use alice_sync::{Event, EventKind, Node, NodeId};
 
+/// The sink a node applies the events it accepts through (`Converge` over a `World`)
+struct Sink {
+    world: alice_sync::World,
+    converge: alice_sync::converge::Converge,
+}
+
+impl Sink {
+    fn new() -> Self {
+        Self {
+            world: alice_sync::World::new(0),
+            converge: alice_sync::converge::Converge::new(),
+        }
+    }
+    fn apply_event(&mut self, e: &alice_sync::Event) -> alice_sync::Result<()> {
+        self.converge.apply(&mut self.world, e)
+    }
+    const fn world(&self) -> &alice_sync::World {
+        &self.world
+    }
+    fn world_hash(&self) -> alice_sync::WorldHash {
+        self.world.hash()
+    }
+}
+
 fn spawn(entity: u32, kind: u16, pos: [i16; 3]) -> Event {
     Event::new(EventKind::Spawn { entity, kind, pos })
 }
 
-/// Events emitted by one node, as a peer would receive them
+/// Events emitted by one node, as a peer would accept them
 fn emitted(kinds: Vec<Event>) -> Vec<Event> {
     let mut a = Node::new(NodeId(1));
     for e in kinds {
@@ -20,7 +44,7 @@ fn emitted(kinds: Vec<Event>) -> Vec<Event> {
 }
 
 fn persisted(events: &[Event]) -> Vec<u8> {
-    let mut n = Node::new(NodeId(9));
+    let mut n = Sink::new();
     for e in events {
         n.apply_event(e).unwrap();
     }
@@ -46,12 +70,12 @@ fn a_despawn_and_respawn_persist_the_same_bytes_as_a_world_that_only_spawned() {
         Event::new(EventKind::Despawn { entity: 1 }),
         spawn(1, 7, [10, 0, 0]),
     ]);
-    let mut b = Node::new(NodeId(2));
+    let mut b = Sink::new();
     for e in &churned {
         b.apply_event(e).unwrap();
     }
     let direct = emitted(vec![spawn(2, 3, [0, 5, 0]), spawn(1, 7, [10, 0, 0])]);
-    let mut c = Node::new(NodeId(3));
+    let mut c = Sink::new();
     for e in &direct {
         c.apply_event(e).unwrap();
     }

@@ -1009,7 +1009,10 @@ mod tests {
     async fn events_before_an_accepted_hello_are_refused() {
         let (a, b, addr_a, addr_b) = pair_sessions();
         for msg in [
-            Message::Events { events: Vec::new() },
+            Message::Events {
+                events: Vec::new(),
+                checkpoints: Vec::new(),
+            },
             Message::HashCheck {
                 seq: 1,
                 world_hash: WorldHash(9),
@@ -1049,7 +1052,13 @@ mod tests {
             other => panic!("expected SemanticsMismatch, got {other:?}"),
         }
         a.transport()
-            .send_to(&Message::Events { events: Vec::new() }, addr_b)
+            .send_to(
+                &Message::Events {
+                    events: Vec::new(),
+                    checkpoints: Vec::new(),
+                },
+                addr_b,
+            )
             .await
             .unwrap();
         assert!(matches!(
@@ -1074,7 +1083,13 @@ mod tests {
         ));
         assert_eq!(b.peer_status(addr_a).await, Some(IdStatus::Current));
         a.transport()
-            .send_to(&Message::Events { events: Vec::new() }, addr_b)
+            .send_to(
+                &Message::Events {
+                    events: Vec::new(),
+                    checkpoints: Vec::new(),
+                },
+                addr_b,
+            )
             .await
             .unwrap();
         assert!(matches!(
@@ -1112,7 +1127,13 @@ mod tests {
         let mut events = b.subscribe_events();
         b.start().await;
         a.transport()
-            .send_to(&Message::Events { events: Vec::new() }, addr_b)
+            .send_to(
+                &Message::Events {
+                    events: Vec::new(),
+                    checkpoints: Vec::new(),
+                },
+                addr_b,
+            )
             .await
             .unwrap();
         loop {

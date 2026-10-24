@@ -9,7 +9,9 @@
 //!
 //! v0.3: Zero-copy event access via slice references
 
+use crate::authorship::{Author, AuthorshipError, SignedEvents, TrustPolicy, Verifier};
 use crate::converge::Converge;
+use crate::event::Origin;
 use crate::{Event, EventStream, Result, SyncError, World, WorldHash};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -53,6 +55,12 @@ pub struct Peer {
 #[derive(Debug)]
 pub struct Node {
     pub id: NodeId,
+    /// the origin this node's events carry: its author's, or [`Origin::of_node`] without one
+    origin: Origin,
+    /// the signing side of this node's events; without one, other nodes do not accept them
+    author: Option<Author>,
+    /// the authors' checkpoints and events received from other nodes
+    verifier: Verifier,
     world: World,
     /// the keyed records the world is derived from (ALICE-Law G13: the same world for every
     /// arrival order of the same events)
@@ -68,6 +76,9 @@ impl Node {
     pub fn new(id: NodeId) -> Self {
         Self {
             id,
+            origin: Origin::of_node(id.0),
+            author: None,
+            verifier: Verifier::new(),
             world: World::new(0),
             converge: Converge::new(),
             events: EventStream::new(),
@@ -81,12 +92,31 @@ impl Node {
     pub fn with_seed(id: NodeId, seed: u64) -> Self {
         Self {
             id,
+            origin: Origin::of_node(id.0),
+            author: None,
+            verifier: Verifier::new(),
             world: World::new(seed),
             converge: Converge::new(),
             events: EventStream::new(),
             peers: BTreeMap::new(),
             state: NodeState::Disconnected,
         }
+    }
+
+    /// A node whose events `author` signs: they carry the author's origin, and other nodes accept them
+    /// under the author's checkpoints ([`crate::authorship`])
+    #[must_use]
+    pub fn with_author(id: NodeId, author: Author) -> Self {
+        let mut node = Self::new(id);
+        node.origin = author.origin();
+        node.author = Some(author);
+        node
+    }
+
+    /// The origin this node's events carry
+    #[must_use]
+    pub const fn origin(&self) -> Origin {
+        self.origin
     }
 
     /// Get current world hash (O(1))
@@ -113,36 +143,74 @@ impl Node {
     ///
     /// Panics if the event stream is empty after pushing (should never happen).
     pub fn emit(&mut self, event: Event) -> Result<()> {
-        self.events.push(event, self.id.0);
+        self.events.push(event, self.origin);
         let event_with_id = self.events.all().last().unwrap();
+        if let Some(author) = &mut self.author {
+            author
+                .extend(event_with_id)
+                .map_err(SyncError::Authorship)?;
+        }
         self.converge.apply(&mut self.world, event_with_id)
     }
 
-    /// Apply an event received from another node, under the key it was stamped with (its
-    /// timestamp, origin and sequence number); events this node originates go through
-    /// [`Node::emit`].
-    ///
-    /// The world is a function of the set of events applied, not of their order: applying the same
-    /// events in any order, or one of them twice, gives the same world and the same hash (see
-    /// [`crate::converge`]). The node's Lamport clock moves past the event's timestamp, so the
-    /// events it emits afterwards are ordered after it.
-    ///
-    /// Node ids must be unique: two nodes with the same id stamp different events with the same key;
-    /// every receiver still converges to one world (the colliding events are ordered by their
-    /// content), but not to what either node meant.
+    /// The signed events this node holds past `since` (per origin, the sequence number a peer already
+    /// has; 0 for an origin it does not name): its own, with a checkpoint at its last event, and those it
+    /// accepted from other authors, with their checkpoints
     ///
     /// # Errors
+    /// [`AuthorshipError::NoAuthor`] for a node without an author, [`AuthorshipError::Credential`]
+    pub fn signed_events_since(
+        &mut self,
+        since: &BTreeMap<Origin, u64>,
+    ) -> std::result::Result<SignedEvents, AuthorshipError> {
+        let author = self.author.as_mut().ok_or(AuthorshipError::NoAuthor)?;
+        author.sign_now()?;
+        let from = since.get(&self.origin).copied().unwrap_or(0);
+        let mut out = SignedEvents {
+            events: self.events.since(crate::event::SeqNum(from)).to_vec(),
+            checkpoints: author
+                .checkpoints()
+                .range(from + 1..)
+                .map(|(_, c)| c.clone())
+                .collect(),
+        };
+        let others = self.verifier.since(since);
+        out.events.extend(others.events);
+        out.checkpoints.extend(others.checkpoints);
+        Ok(out)
+    }
+
+    /// Take signed events from another node: each author's events apply once its verified checkpoint
+    /// covers them ([`crate::authorship`]); returns how many applied. This node's own events in the batch
+    /// are passed over (it applied them when it emitted them).
     ///
-    /// [`SyncError::Unstamped`] for an event no stream stamped (made by [`Event::new`] and never
-    /// emitted): it has no origin and sequence number to tell it apart from another one, so it is
-    /// refused rather than taken for a duplicate. An error if the event fails to apply to the world
-    /// state.
-    pub fn apply_event(&mut self, event: &Event) -> Result<()> {
-        if !event.is_stamped() {
-            return Err(SyncError::Unstamped);
-        }
-        self.events.observe(event.timestamp);
-        self.converge.apply(&mut self.world, event)
+    /// # Errors
+    /// As [`Verifier::receive`]
+    pub fn receive(
+        &mut self,
+        batch: &SignedEvents,
+        policy: &impl TrustPolicy,
+    ) -> std::result::Result<usize, AuthorshipError> {
+        let own = self.origin;
+        let theirs = SignedEvents {
+            events: batch
+                .events
+                .iter()
+                .filter(|e| e.origin != own)
+                .cloned()
+                .collect(),
+            checkpoints: batch
+                .checkpoints
+                .iter()
+                .filter(|c| c.origin != own)
+                .cloned()
+                .collect(),
+        };
+        let (events, converge, world) = (&mut self.events, &mut self.converge, &mut self.world);
+        self.verifier.receive(&theirs, policy, |e| {
+            events.observe(e.timestamp);
+            converge.apply(world, e).map_err(|err| err.to_string())
+        })
     }
 
     /// Add a peer
@@ -254,12 +322,13 @@ pub struct NodeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authorship::testing;
     use crate::EventKind;
 
     #[test]
     fn test_node_sync() {
-        let mut node_a = Node::new(NodeId(1));
-        let mut node_b = Node::new(NodeId(2));
+        let mut node_a = Node::with_author(NodeId(1), testing::author(1));
+        let mut node_b = Node::with_author(NodeId(2), testing::author(2));
 
         node_a
             .emit(Event::new(EventKind::Spawn {
@@ -276,9 +345,10 @@ mod tests {
             }))
             .unwrap();
 
-        for e in node_a.events().all() {
-            node_b.apply_event(e).unwrap();
-        }
+        let batch = node_a
+            .signed_events_since(&std::collections::BTreeMap::new())
+            .unwrap();
+        node_b.receive(&batch, &testing::trusting(&[1])).unwrap();
 
         assert_eq!(node_a.world_hash(), node_b.world_hash());
     }
@@ -310,8 +380,8 @@ mod tests {
 
     #[test]
     fn test_many_entities_sync() {
-        let mut node_a = Node::new(NodeId(1));
-        let mut node_b = Node::new(NodeId(2));
+        let mut node_a = Node::with_author(NodeId(1), testing::author(1));
+        let mut node_b = Node::with_author(NodeId(2), testing::author(2));
 
         for i in 0..1000u32 {
             node_a
@@ -323,9 +393,10 @@ mod tests {
                 .unwrap();
         }
 
-        for e in node_a.events().all() {
-            node_b.apply_event(e).unwrap();
-        }
+        let batch = node_a
+            .signed_events_since(&std::collections::BTreeMap::new())
+            .unwrap();
+        node_b.receive(&batch, &testing::trusting(&[1])).unwrap();
 
         assert_eq!(node_a.world_hash(), node_b.world_hash());
         assert_eq!(node_a.world().entity_count(), 1000);

@@ -1,6 +1,8 @@
-//! ALICE-Law G13: the world a node builds from events received from several peers does not depend
-//! on the order they arrive in (the async transport delivers them in an order the scheduler picks),
-//! nor on a duplicate delivery.
+//! ALICE-Law G13: the world built from events received from several peers does not depend on the
+//! order they arrive in (the async transport delivers them in an order the scheduler picks), nor on a
+//! duplicate delivery. A node applies the events it accepts (signed by their authors,
+//! `alice_sync::authorship`) through `alice_sync::converge::Converge`; the arrival orders below are
+//! applied through it directly, and the node's own path is checked at the end (signed nodes).
 //!
 //! The oracle is independent of `alice_sync::converge`: the expected world is the one a single
 //! writer gets by applying each distinct event once, in key order (timestamp, origin, sequence),
@@ -10,6 +12,15 @@
 //! node's pruning (Motions keyed before a greater Spawn dropped). Two different events under one key
 //! (two nodes with one id) are both in the set; the model applies them in content order.
 
+use std::collections::BTreeMap;
+
+use alice_identity::artifact::Revocation;
+use alice_identity::device_cert::DeviceCert;
+use alice_identity::did::Did;
+use alice_sign::{KeyPair, PublicKey};
+use alice_sync::authorship::{Author, AuthorshipError, SignedEvents, TrustPolicy};
+use alice_sync::converge::Converge;
+use alice_sync::event::Origin;
 use alice_sync::{Event, EventKind, Node, NodeId, World};
 
 /// One entity: id, kind, position (raw Q16.16), property values, active-property mask
@@ -47,7 +58,7 @@ fn snapshot(world: &World) -> Snapshot {
     }
 }
 
-fn key(e: &Event) -> (u64, u64, u64) {
+fn key(e: &Event) -> (u64, Origin, u64) {
     (e.timestamp, e.origin, e.seq.0)
 }
 
@@ -55,7 +66,7 @@ fn key(e: &Event) -> (u64, u64, u64) {
 /// nodes with the same id), a Spawn after the other kinds (an event keyed at its Spawn belongs to an
 /// earlier incarnation, a Despawn keyed at it does not end it) and otherwise by content, ascending,
 /// so the greater Spawn, Property value and Tick frame are the ones left standing
-fn model_order(e: &Event) -> (u64, u64, u64, u8, [i64; 4]) {
+fn model_order(e: &Event) -> (u64, Origin, u64, u8, [i64; 4]) {
     let content = match e.kind {
         EventKind::Spawn { kind, pos, .. } => [
             i64::from(kind),
@@ -93,11 +104,12 @@ fn expected(events: &[Event]) -> Snapshot {
 }
 
 fn received(events: &[Event]) -> Snapshot {
-    let mut node = Node::new(NodeId(99));
+    let mut world = World::new(0);
+    let mut converge = Converge::new();
     for e in events {
-        node.apply_event(e).unwrap();
+        converge.apply(&mut world, e).unwrap();
     }
-    snapshot(node.world())
+    snapshot(&world)
 }
 
 /// Three peers that partly see each other's events, so their Lamport times interleave, emitting
@@ -106,72 +118,198 @@ fn received(events: &[Event]) -> Snapshot {
 /// one property at the same time from different origins, a Motion keyed before a re-spawn, a
 /// Despawn and a later re-Spawn, a Despawn keyed before a Spawn it arrives after, Ticks from every
 /// peer, and events that leave the world alone
+///
+/// Recorded as (kind, timestamp, origin, sequence number) from three nodes a (1), b (2) and c (3)
+/// emitting while delivering to each other: a spawns 1 and 4 and delivers to b and c; b and c each emit
+/// two equal Motions of 4 (same times, sequences and deltas: all four apply) and write property 3 of
+/// 4 at the same time (origin 3 > 2 wins, not the larger value); b moves 1 and despawns 3 (keyed before
+/// c's Spawn of 3); c spawns 5 and delivers to b, which despawns 5; c spawns 2; a moves 2 before seeing
+/// its Spawn (not applied), sees c, moves 2 and writes its property; b despawns 1 and delivers to a,
+/// which re-spawns 1 (a new incarnation: none of the motions above) and moves it; b delivers to c, which
+/// spawns 3 after the Despawn it may arrive after; Ticks from each and an Input. A fourth node made with
+/// a's id emits a Spawn of 6 stamped like a's first event: a collision both events survive.
 fn scenario() -> Vec<Event> {
-    let (mut a, mut b, mut c) = (
-        Node::new(NodeId(1)),
-        Node::new(NodeId(2)),
-        Node::new(NodeId(3)),
-    );
-    let spawn = |entity, kind, pos| Event::new(EventKind::Spawn { entity, kind, pos });
-    let motion = |entity, delta| Event::new(EventKind::Motion { entity, delta });
-    let prop = |entity, prop, value| {
-        Event::new(EventKind::Property {
-            entity,
-            prop,
-            value,
-        })
-    };
-    let deliver = |from: &Node, to: &mut Node| {
-        for e in from.events().all() {
-            to.apply_event(e).unwrap();
-        }
-    };
-
-    a.emit(spawn(1, 7, [10, 0, 0])).unwrap();
-    a.emit(spawn(4, 1, [0, 0, 0])).unwrap();
-    deliver(&a, &mut b);
-    deliver(&a, &mut c);
-    b.emit(motion(4, [5, 0, 0])).unwrap();
-    b.emit(motion(4, [5, 0, 0])).unwrap();
-    c.emit(motion(4, [5, 0, 0])).unwrap();
-    c.emit(motion(4, [5, 0, 0])).unwrap(); // same times, sequences and deltas as b's: all four apply
-    b.emit(prop(4, 3, 100)).unwrap();
-    c.emit(prop(4, 3, 50)).unwrap(); // same time as b's write: origin 3 > 2 wins, not the larger value
-    b.emit(motion(1, [5, 0, 0])).unwrap();
-    b.emit(Event::new(EventKind::Despawn { entity: 3 }))
-        .unwrap(); // keyed before c's Spawn of 3
-    c.emit(spawn(5, 6, [1, 1, 1])).unwrap();
-    deliver(&c, &mut b);
-    b.emit(Event::new(EventKind::Despawn { entity: 5 }))
-        .unwrap(); // ends entity 5
-    c.emit(spawn(2, 4, [0, 0, 0])).unwrap();
-    a.emit(motion(2, [1, 2, 3])).unwrap(); // keyed before entity 2's Spawn: not applied
-    deliver(&c, &mut a);
-    a.emit(motion(2, [0, 0, 9])).unwrap();
-    a.emit(prop(2, 1, -7)).unwrap();
-    b.emit(Event::new(EventKind::Despawn { entity: 1 }))
-        .unwrap();
-    deliver(&b, &mut a);
-    a.emit(spawn(1, 8, [0, 0, 0])).unwrap(); // a new incarnation: none of the motions above
-    a.emit(motion(1, [1, 1, 1])).unwrap();
-    deliver(&b, &mut c);
-    c.emit(spawn(3, 2, [3, 3, 3])).unwrap(); // after the Despawn, though it may arrive first
-    a.emit(Event::new(EventKind::Tick { frame: 5 })).unwrap();
-    b.emit(Event::new(EventKind::Tick { frame: 4 })).unwrap();
-    c.emit(Event::new(EventKind::Tick { frame: 6 })).unwrap();
-    c.emit(Event::new(EventKind::Input { player: 1, code: 9 }))
-        .unwrap();
-
-    // a fourth node created with node 1's id: its first event is stamped like a's first (a Spawn
-    // of entity 1), a collision both events survive (they are different events)
-    let mut d = Node::new(NodeId(1));
-    d.emit(spawn(6, 9, [7, 7, 7])).unwrap();
-
-    let mut all: Vec<Event> = Vec::new();
-    for n in [&a, &b, &c, &d] {
-        all.extend(n.events().all().iter().cloned());
-    }
-    all
+    vec![
+        stamped(
+            EventKind::Spawn {
+                entity: 1,
+                kind: 7,
+                pos: [10, 0, 0],
+            },
+            1,
+            1,
+            1,
+        ),
+        stamped(
+            EventKind::Spawn {
+                entity: 4,
+                kind: 1,
+                pos: [0, 0, 0],
+            },
+            2,
+            1,
+            2,
+        ),
+        stamped(
+            EventKind::Motion {
+                entity: 2,
+                delta: [1, 2, 3],
+            },
+            3,
+            1,
+            3,
+        ),
+        stamped(
+            EventKind::Motion {
+                entity: 2,
+                delta: [0, 0, 9],
+            },
+            8,
+            1,
+            4,
+        ),
+        stamped(
+            EventKind::Property {
+                entity: 2,
+                prop: 1,
+                value: -7,
+            },
+            9,
+            1,
+            5,
+        ),
+        stamped(
+            EventKind::Spawn {
+                entity: 1,
+                kind: 8,
+                pos: [0, 0, 0],
+            },
+            10,
+            1,
+            6,
+        ),
+        stamped(
+            EventKind::Motion {
+                entity: 1,
+                delta: [1, 1, 1],
+            },
+            11,
+            1,
+            7,
+        ),
+        stamped(EventKind::Tick { frame: 5 }, 12, 1, 8),
+        stamped(
+            EventKind::Motion {
+                entity: 4,
+                delta: [5, 0, 0],
+            },
+            3,
+            2,
+            1,
+        ),
+        stamped(
+            EventKind::Motion {
+                entity: 4,
+                delta: [5, 0, 0],
+            },
+            4,
+            2,
+            2,
+        ),
+        stamped(
+            EventKind::Property {
+                entity: 4,
+                prop: 3,
+                value: 100,
+            },
+            5,
+            2,
+            3,
+        ),
+        stamped(
+            EventKind::Motion {
+                entity: 1,
+                delta: [5, 0, 0],
+            },
+            6,
+            2,
+            4,
+        ),
+        stamped(EventKind::Despawn { entity: 3 }, 7, 2, 5),
+        stamped(EventKind::Despawn { entity: 5 }, 8, 2, 6),
+        stamped(EventKind::Despawn { entity: 1 }, 9, 2, 7),
+        stamped(EventKind::Tick { frame: 4 }, 10, 2, 8),
+        stamped(
+            EventKind::Motion {
+                entity: 4,
+                delta: [5, 0, 0],
+            },
+            3,
+            3,
+            1,
+        ),
+        stamped(
+            EventKind::Motion {
+                entity: 4,
+                delta: [5, 0, 0],
+            },
+            4,
+            3,
+            2,
+        ),
+        stamped(
+            EventKind::Property {
+                entity: 4,
+                prop: 3,
+                value: 50,
+            },
+            5,
+            3,
+            3,
+        ),
+        stamped(
+            EventKind::Spawn {
+                entity: 5,
+                kind: 6,
+                pos: [1, 1, 1],
+            },
+            6,
+            3,
+            4,
+        ),
+        stamped(
+            EventKind::Spawn {
+                entity: 2,
+                kind: 4,
+                pos: [0, 0, 0],
+            },
+            7,
+            3,
+            5,
+        ),
+        stamped(
+            EventKind::Spawn {
+                entity: 3,
+                kind: 2,
+                pos: [3, 3, 3],
+            },
+            10,
+            3,
+            6,
+        ),
+        stamped(EventKind::Tick { frame: 6 }, 11, 3, 7),
+        stamped(EventKind::Input { player: 1, code: 9 }, 12, 3, 8),
+        stamped(
+            EventKind::Spawn {
+                entity: 6,
+                kind: 9,
+                pos: [7, 7, 7],
+            },
+            1,
+            1,
+            1,
+        ),
+    ]
 }
 
 /// `SplitMix64`, so the shuffles are the same on every run and target
@@ -304,11 +442,15 @@ fn every_arrival_order_of_a_conflicting_subset_gives_one_world() {
     // events still, two of them sharing a key
     let b_write = subset
         .iter()
-        .position(|e| matches!(e.kind, EventKind::Property { .. }) && e.origin == 2)
+        .position(|e| {
+            matches!(e.kind, EventKind::Property { .. }) && e.origin == Origin::of_node(2)
+        })
         .unwrap();
     let c_write = subset
         .iter()
-        .position(|e| matches!(e.kind, EventKind::Property { .. }) && e.origin == 3)
+        .position(|e| {
+            matches!(e.kind, EventKind::Property { .. }) && e.origin == Origin::of_node(3)
+        })
         .unwrap();
     let mut twin = subset[b_write].clone();
     twin.kind = EventKind::Property {
@@ -371,7 +513,7 @@ fn seeded_shuffles_with_duplicates_of_the_whole_scenario_give_one_world() {
 
 #[test]
 fn the_emitting_node_and_a_receiver_agree() {
-    // the node that emitted the events in its own order and a node that received them reversed
+    // the node that emitted the events in its own order and a receiver that took them reversed
     let mut a = Node::new(NodeId(1));
     a.emit(Event::new(EventKind::Spawn {
         entity: 5,
@@ -390,26 +532,82 @@ fn the_emitting_node_and_a_receiver_agree() {
     assert_eq!(received(&reversed), snapshot(a.world()));
 }
 
+const NOW: u64 = 1_800_000_100;
+
+struct Trust(BTreeMap<String, PublicKey>);
+
+impl TrustPolicy for Trust {
+    fn master_of(&self, subject: &Did) -> Option<PublicKey> {
+        self.0.get(&subject.to_string()).copied()
+    }
+    fn revocation(&self) -> Revocation<'_> {
+        Revocation::NoListAvailable
+    }
+    fn now(&self) -> u64 {
+        NOW
+    }
+}
+
+/// A node with an author, and a trust store that accepts the authors of `seeds`
+fn signed_node(seed: u8) -> Node {
+    let (key, cert) = credential(seed);
+    Node::with_author(NodeId(u64::from(seed)), Author::new(key, cert).unwrap())
+}
+
+fn credential(seed: u8) -> (KeyPair, DeviceCert) {
+    let master = KeyPair::from_seed([seed; 32]);
+    let key = KeyPair::from_seed([seed.wrapping_add(100); 32]);
+    let cert = DeviceCert::issue(
+        &master,
+        &Did::parse(&format!("did:alice:n{seed}")).unwrap(),
+        key.public().0,
+        [0x4e; 32],
+        1_800_000_000,
+        1_800_086_400,
+        [seed; 16],
+    )
+    .unwrap();
+    (key, cert)
+}
+
+fn trusting(seeds: &[u8]) -> Trust {
+    Trust(
+        seeds
+            .iter()
+            .map(|&s| {
+                (
+                    format!("did:alice:n{s}"),
+                    KeyPair::from_seed([s; 32]).public(),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn everything(n: &mut Node) -> SignedEvents {
+    n.signed_events_since(&BTreeMap::new()).unwrap()
+}
+
 #[test]
 fn a_node_emits_after_what_it_received() {
     // Lamport: an event a node emits after receiving one is keyed after it
-    let mut a = Node::new(NodeId(1));
+    let mut a = signed_node(1);
     for _ in 0..5 {
         a.emit(Event::new(EventKind::Tick { frame: 1 })).unwrap();
     }
-    let mut b = Node::new(NodeId(2));
-    b.apply_event(a.events().all().last().unwrap()).unwrap();
+    let mut b = signed_node(2);
+    assert_eq!(b.receive(&everything(&mut a), &trusting(&[1])).unwrap(), 5);
     b.emit(Event::new(EventKind::Tick { frame: 2 })).unwrap();
     let theirs = key(a.events().all().last().unwrap());
     let mine = key(b.events().all().last().unwrap());
-    assert!(mine > theirs, "{mine:?} after {theirs:?}");
+    assert!(mine.0 > theirs.0, "{mine:?} after {theirs:?}");
 }
 
 #[test]
 fn a_write_made_after_seeing_another_wins_although_its_counter_is_lower() {
     // a writes property 0 after nine other events; b sees that write and overwrites it with its
     // first event: under per-node counters b's write (counter 0) would lose to a's (counter 9)
-    let mut a = Node::new(NodeId(1));
+    let mut a = signed_node(1);
     a.emit(Event::new(EventKind::Spawn {
         entity: 1,
         kind: 0,
@@ -425,10 +623,8 @@ fn a_write_made_after_seeing_another_wins_although_its_counter_is_lower() {
         value: 10,
     }))
     .unwrap();
-    let mut b = Node::new(NodeId(2));
-    for e in a.events().all() {
-        b.apply_event(e).unwrap();
-    }
+    let mut b = signed_node(2);
+    b.receive(&everything(&mut a), &trusting(&[1])).unwrap();
     b.emit(Event::new(EventKind::Property {
         entity: 1,
         prop: 0,
@@ -440,12 +636,17 @@ fn a_write_made_after_seeing_another_wins_although_its_counter_is_lower() {
     let mut all: Vec<Event> = a.events().all().to_vec();
     all.extend(b.events().all().iter().cloned());
     for arrival in [all.clone(), all.iter().rev().cloned().collect()] {
-        let mut n = Node::new(NodeId(3));
+        let mut world = World::new(0);
+        let mut converge = Converge::new();
         for e in &arrival {
-            n.apply_event(e).unwrap();
+            converge.apply(&mut world, e).unwrap();
         }
-        assert_eq!(n.world().get_entity(1).unwrap().properties.get(0), Some(20));
+        assert_eq!(world.get_entity(1).unwrap().properties.get(0), Some(20));
     }
+    // and through the signed path, b's batch (a's events and its own) in one piece
+    let mut c = signed_node(3);
+    c.receive(&everything(&mut b), &trusting(&[1, 2])).unwrap();
+    assert_eq!(c.world().get_entity(1).unwrap().properties.get(0), Some(20));
 }
 
 /// a's Spawn of entity 1 followed by one more event of a, delivered in both orders
@@ -487,16 +688,20 @@ fn a_motion_that_arrives_before_its_spawn_is_kept() {
 
 #[test]
 fn an_unstamped_event_is_refused_not_taken_for_a_duplicate() {
-    let mut node = Node::new(NodeId(1));
+    let mut a = signed_node(1);
+    a.emit(Event::new(EventKind::Tick { frame: 1 })).unwrap();
+    let mut batch = everything(&mut a);
     let spawn = Event::new(EventKind::Spawn {
         entity: 1,
         kind: 0,
         pos: [0, 0, 0],
     });
     assert!(!spawn.is_stamped());
+    batch.events.push(spawn);
+    let mut node = signed_node(2);
     assert!(matches!(
-        node.apply_event(&spawn),
-        Err(alice_sync::SyncError::Unstamped)
+        node.receive(&batch, &trusting(&[1])),
+        Err(AuthorshipError::Uncovered { .. })
     ));
     assert_eq!(node.world().entity_count(), 0);
 }
@@ -505,7 +710,7 @@ fn an_unstamped_event_is_refused_not_taken_for_a_duplicate() {
 fn stamped(kind: EventKind, timestamp: u64, origin: u64, seq: u64) -> Event {
     let mut e = Event::new(kind);
     e.timestamp = timestamp;
-    e.origin = origin;
+    e.origin = Origin::of_node(origin);
     e.seq = alice_sync::event::SeqNum(seq);
     e
 }

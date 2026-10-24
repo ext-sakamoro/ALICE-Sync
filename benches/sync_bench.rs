@@ -193,13 +193,14 @@ fn bench_sync_throughput(c: &mut Criterion) {
 
     group.bench_function("apply_1000_events", |b| {
         b.iter(|| {
-            let mut node = Node::new(NodeId(1));
+            let mut world = World::new(0);
+            let mut converge = alice_sync::converge::Converge::new();
 
             for e in &events {
-                node.apply_event(black_box(e)).unwrap();
+                converge.apply(&mut world, black_box(e)).unwrap();
             }
 
-            black_box(node.world_hash())
+            black_box(world.hash())
         });
     });
 

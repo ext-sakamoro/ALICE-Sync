@@ -15,6 +15,7 @@
 struct AsSyncWorld;
 struct AsSyncWorldSoA;
 struct AsSyncNode;
+struct AsSyncTrust;
 struct AsSyncEventStream;
 struct AsSyncEvent;
 struct AsSyncInputFrame;
@@ -52,11 +53,23 @@ extern "C"
     uint64_t as_sync_node_world_hash(const AsSyncNode* ptr);
     uint8_t as_sync_node_state(const AsSyncNode* ptr);
     int32_t as_sync_node_emit(AsSyncNode* ptr, const AsSyncEvent* evt);
-    /* an event received from another node, taken from it with as_sync_node_event_at (the world is the
-       same for every arrival order and for duplicates; node ids must be unique, two nodes with one id
-       stamp different events alike, which converge by content but not to what either meant); returns 0 applied, -1 null, -2 an event
-       never emitted (see as_sync_last_error) */
-    int32_t as_sync_node_apply_event(AsSyncNode* ptr, const AsSyncEvent* evt);
+    /* a node whose events are signed: deviceSeed 32 bytes (the device key), cert the encoded device
+       certificate naming that key; null when the certificate does not decode or name the key */
+    AsSyncNode* as_sync_node_with_author(uint64_t nodeId, const uint8_t* deviceSeed, const uint8_t* cert, uint32_t certLen);
+    /* the node's signed events (its own with a checkpoint at the last, and those it accepted), encoded;
+       the length is written to outLen; null without an author; free with as_sync_bytes_free */
+    uint8_t* as_sync_node_signed_events(AsSyncNode* ptr, uint32_t* outLen);
+    void as_sync_bytes_free(uint8_t* bytes, uint32_t len);
+    /* a trust store: the master key (32 bytes) of each subject (UTF-8 did:method:id) whose events are accepted */
+    AsSyncTrust* as_sync_trust_new();
+    int32_t as_sync_trust_add(AsSyncTrust* ptr, const uint8_t* subject, uint32_t subjectLen, const uint8_t* master);
+    void as_sync_trust_free(AsSyncTrust* ptr);
+    /* signed events from another node (as_sync_node_signed_events), trusting trust at time now: an author's
+       events apply once its checkpoint verifies, for every arrival order and grouping; returns how many
+       applied, -1 null or undecodable, -2 an event no checkpoint covers, -3 a refused checkpoint, -4 events
+       that do not match it, -5 a second history of one author, -6 the author's held events full, -7 other
+       (see as_sync_last_error) */
+    int64_t as_sync_node_receive(AsSyncNode* ptr, const uint8_t* bytes, uint32_t len, const AsSyncTrust* trust, uint64_t now);
     /* a copy of the node's index-th emitted event, stamped; null out of range; free with as_sync_event_free */
     AsSyncEvent* as_sync_node_event_at(const AsSyncNode* ptr, uint32_t index);
     /* peerSemanticsId: 32 bytes, the peer's SYNC_SEMANTICS_ID; returns 0 / 1 accepted, -1 null, -2 mismatch */
@@ -74,15 +87,17 @@ extern "C"
     AsSyncEvent* as_sync_event_new_tick(uint64_t frame);
     void as_sync_event_free(AsSyncEvent* ptr);
     uint32_t as_sync_event_size_bytes(const AsSyncEvent* ptr);
-    /* origin node, sequence number (from 1) and Lamport time; 0 until a node emits the event */
-    uint64_t as_sync_event_origin(const AsSyncEvent* ptr);
+    /* the 16-byte origin (the author's; zero until a node emits the event) is written to out; returns 0, -1 null.
+       Sequence number (from 1) and Lamport time are 0 until a node emits the event */
+    int32_t as_sync_event_origin(const AsSyncEvent* ptr, uint8_t* out);
     uint64_t as_sync_event_seq(const AsSyncEvent* ptr);
     uint64_t as_sync_event_timestamp(const AsSyncEvent* ptr);
 
     // EventStream
     AsSyncEventStream* as_sync_event_stream_new();
     void as_sync_event_stream_free(AsSyncEventStream* ptr);
-    uint64_t as_sync_event_stream_push(AsSyncEventStream* ptr, const AsSyncEvent* evt, uint64_t origin);
+    /* origin: 16 bytes */
+    uint64_t as_sync_event_stream_push(AsSyncEventStream* ptr, const AsSyncEvent* evt, const uint8_t* origin);
     uint32_t as_sync_event_stream_len(const AsSyncEventStream* ptr);
     int32_t as_sync_event_stream_is_empty(const AsSyncEventStream* ptr);
     uint64_t as_sync_event_stream_current_seq(const AsSyncEventStream* ptr);
