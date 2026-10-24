@@ -294,20 +294,30 @@ namespace Alice.Sync
         public byte PlayerId => NativeMethods.as_sync_input_frame_get_player_id(Ptr);
         public uint Actions => NativeMethods.as_sync_input_frame_get_actions(Ptr);
 
-        public void SetMovement(short x, short y, short z)
-            => NativeMethods.as_sync_input_frame_set_movement(Ptr, x, y, z);
+        /// <summary>Each component is the fixed-point value hi + lo / 2^64.</summary>
+        public void SetMovement(long xHi, ulong xLo, long yHi, ulong yLo, long zHi, ulong zLo)
+            => NativeMethods.as_sync_input_frame_set_movement(Ptr, xHi, xLo, yHi, yLo, zHi, zLo);
 
         public void SetActions(uint actions)
             => NativeMethods.as_sync_input_frame_set_actions(Ptr, actions);
 
-        public void SetAim(short x, short y, short z)
-            => NativeMethods.as_sync_input_frame_set_aim(Ptr, x, y, z);
+        public void SetAim(long xHi, ulong xLo, long yHi, ulong yLo, long zHi, ulong zLo)
+            => NativeMethods.as_sync_input_frame_set_aim(Ptr, xHi, xLo, yHi, yLo, zHi, zLo);
 
-        public void GetMovement(out short x, out short y, out short z)
-            => NativeMethods.as_sync_input_frame_get_movement(Ptr, out x, out y, out z);
+        /// <summary>The (x, y, z) components as integer (hi) and fractional (lo, units of 2^-64) words.</summary>
+        public void GetMovement(out long[] hi, out ulong[] lo)
+        {
+            hi = new long[3];
+            lo = new ulong[3];
+            NativeMethods.as_sync_input_frame_get_movement(Ptr, hi, lo);
+        }
 
-        public void GetAim(out short x, out short y, out short z)
-            => NativeMethods.as_sync_input_frame_get_aim(Ptr, out x, out y, out z);
+        public void GetAim(out long[] hi, out ulong[] lo)
+        {
+            hi = new long[3];
+            lo = new ulong[3];
+            NativeMethods.as_sync_input_frame_get_aim(Ptr, hi, lo);
+        }
 
         public void Dispose()
         {
@@ -527,14 +537,14 @@ namespace Alice.Sync
         // InputFrame
         [DllImport(Lib)] internal static extern IntPtr as_sync_input_frame_new(ulong frame, byte playerId);
         [DllImport(Lib)] internal static extern void as_sync_input_frame_free(IntPtr ptr);
-        [DllImport(Lib)] internal static extern void as_sync_input_frame_set_movement(IntPtr ptr, short x, short y, short z);
+        [DllImport(Lib)] internal static extern void as_sync_input_frame_set_movement(IntPtr ptr, long xHi, ulong xLo, long yHi, ulong yLo, long zHi, ulong zLo);
         [DllImport(Lib)] internal static extern void as_sync_input_frame_set_actions(IntPtr ptr, uint actions);
-        [DllImport(Lib)] internal static extern void as_sync_input_frame_set_aim(IntPtr ptr, short x, short y, short z);
+        [DllImport(Lib)] internal static extern void as_sync_input_frame_set_aim(IntPtr ptr, long xHi, ulong xLo, long yHi, ulong yLo, long zHi, ulong zLo);
         [DllImport(Lib)] internal static extern ulong as_sync_input_frame_get_frame(IntPtr ptr);
         [DllImport(Lib)] internal static extern byte as_sync_input_frame_get_player_id(IntPtr ptr);
-        [DllImport(Lib)] internal static extern void as_sync_input_frame_get_movement(IntPtr ptr, out short x, out short y, out short z);
+        [DllImport(Lib)] internal static extern void as_sync_input_frame_get_movement(IntPtr ptr, [Out] long[] hi, [Out] ulong[] lo);
         [DllImport(Lib)] internal static extern uint as_sync_input_frame_get_actions(IntPtr ptr);
-        [DllImport(Lib)] internal static extern void as_sync_input_frame_get_aim(IntPtr ptr, out short x, out short y, out short z);
+        [DllImport(Lib)] internal static extern void as_sync_input_frame_get_aim(IntPtr ptr, [Out] long[] hi, [Out] ulong[] lo);
 
         // InputFrameArray
         [DllImport(Lib)] internal static extern void as_sync_input_frame_array_free(IntPtr ptr);

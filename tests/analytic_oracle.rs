@@ -395,38 +395,38 @@ fn event_batch_compression_is_lossless_at_step_one_and_bounded_otherwise() {
 
 #[cfg(feature = "physics")]
 #[test]
-fn physics_bridge_reads_the_i16_wire_field_as_q8_8_in_both_directions() {
-    use alice_sync::input_sync::InputFrame;
+fn physics_bridge_carries_the_fixed_point_words_unchanged() {
+    use alice_sync::input_sync::{InputFix, InputFrame};
     use alice_sync::physics_bridge::{physics_input_to_sync, sync_input_to_physics};
-    // oracle: Q8.8 ⇒ 256 ↦ 1.0, −128 ↦ −0.5, 1 ↦ 1/256; round trip is the identity
+    // oracle: InputFix (hi, lo) is hi + lo / 2^64 ⇒ (1, 0) ↦ 1.0, (-1, 2^63) ↦ −0.5, (0, 2^56) ↦ 1/256,
+    // (2, 0) ↦ 2.0, (-1, 0) ↦ −1.0; the bridge copies the two words, so the round trip is the identity
     let input = InputFrame::new(7, 2)
-        .with_movement(256, -128, 1)
-        .with_aim(0, 512, -256);
+        .with_movement(
+            InputFix::from_raw(1, 0),
+            InputFix::from_raw(-1, 1 << 63),
+            InputFix::from_raw(0, 1 << 56),
+        )
+        .with_aim(
+            InputFix::ZERO,
+            InputFix::from_raw(2, 0),
+            InputFix::from_raw(-1, 0),
+        );
     let phys = sync_input_to_physics(&input);
     assert_eq!(phys.movement.x.to_f64(), 1.0, "movement.x");
     assert_eq!(phys.movement.y.to_f64(), -0.5, "movement.y");
     assert_eq!(phys.movement.z.to_f64(), 1.0 / 256.0, "movement.z");
     assert_eq!(phys.aim_direction.y.to_f64(), 2.0, "aim.y");
     assert_eq!(phys.aim_direction.z.to_f64(), -1.0, "aim.z");
-    // and the Sync-side Q16.16 reading of the same field agrees
-    assert_eq!(Fixed::from_i16(256).to_f32(), 1.0);
-    assert_eq!(
-        Vec3Fixed::from_i16_array(input.movement).to_f32_array(),
-        [
-            phys.movement.x.to_f64() as f32,
-            phys.movement.y.to_f64() as f32,
-            phys.movement.z.to_f64() as f32
-        ]
-    );
     let back = physics_input_to_sync(&phys, 7);
     assert_eq!(back.movement, input.movement, "round trip");
     assert_eq!(back.aim, input.aim);
-    for n in [i16::MIN, -1000, -1, 0, 1, 255, 1000, i16::MAX] {
-        let f = InputFrame::new(1, 0).with_movement(n, n, n);
+    for (hi, lo) in [(i64::MIN, 0), (-1, u64::MAX), (0, 1), (i64::MAX, u64::MAX)] {
+        let c = InputFix::from_raw(hi, lo);
+        let f = InputFrame::new(1, 0).with_movement(c, c, c);
         assert_eq!(
             physics_input_to_sync(&sync_input_to_physics(&f), 1).movement,
-            [n; 3],
-            "{n}"
+            [c; 3],
+            "({hi}, {lo})"
         );
     }
 }

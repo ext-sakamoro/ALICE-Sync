@@ -21,16 +21,17 @@ use numpy::{IntoPyArray, PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
 
 use crate::event::MotionData;
-use crate::input_sync::{InputFrame, LockstepSession, RollbackAction, RollbackSession};
+use crate::input_sync::{InputFix, InputFrame, LockstepSession, RollbackAction, RollbackSession};
 use crate::world_soa::WorldSoA;
 
 // ============================================================================
 // PyInputFrame
 // ============================================================================
 
-/// A single player's input for one simulation frame (~24 bytes).
+/// A single player's input for one simulation frame.
 ///
-/// Fixed-point i16 for deterministic network transmission.
+/// Each movement / aim component is the signed integer `value · 2⁶⁴` (the 128 bits of the fixed-point
+/// value), so every bit survives the network.
 #[pyclass(name = "InputFrame", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyInputFrame {
@@ -45,19 +46,27 @@ impl PyInputFrame {
     fn new(
         frame: u64,
         player_id: u8,
-        move_x: i16,
-        move_y: i16,
-        move_z: i16,
+        move_x: i128,
+        move_y: i128,
+        move_z: i128,
         actions: u32,
-        aim_x: i16,
-        aim_y: i16,
-        aim_z: i16,
+        aim_x: i128,
+        aim_y: i128,
+        aim_z: i128,
     ) -> Self {
         Self {
             inner: InputFrame::new(frame, player_id)
-                .with_movement(move_x, move_y, move_z)
+                .with_movement(
+                    InputFix::from_bits(move_x),
+                    InputFix::from_bits(move_y),
+                    InputFix::from_bits(move_z),
+                )
                 .with_actions(actions)
-                .with_aim(aim_x, aim_y, aim_z),
+                .with_aim(
+                    InputFix::from_bits(aim_x),
+                    InputFix::from_bits(aim_y),
+                    InputFix::from_bits(aim_z),
+                ),
         }
     }
 
@@ -83,12 +92,9 @@ impl PyInputFrame {
     }
 
     #[getter]
-    fn movement(&self) -> (i16, i16, i16) {
-        (
-            self.inner.movement[0],
-            self.inner.movement[1],
-            self.inner.movement[2],
-        )
+    fn movement(&self) -> (i128, i128, i128) {
+        let [x, y, z] = self.inner.movement;
+        (x.to_bits(), y.to_bits(), z.to_bits())
     }
 
     #[getter]
@@ -97,8 +103,9 @@ impl PyInputFrame {
     }
 
     #[getter]
-    fn aim(&self) -> (i16, i16, i16) {
-        (self.inner.aim[0], self.inner.aim[1], self.inner.aim[2])
+    fn aim(&self) -> (i128, i128, i128) {
+        let [x, y, z] = self.inner.aim;
+        (x.to_bits(), y.to_bits(), z.to_bits())
     }
 
     fn __repr__(&self) -> String {
@@ -106,9 +113,9 @@ impl PyInputFrame {
             "<InputFrame frame={} player={} move=({},{},{}) actions=0x{:x}>",
             self.inner.frame,
             self.inner.player_id,
-            self.inner.movement[0],
-            self.inner.movement[1],
-            self.inner.movement[2],
+            self.inner.movement[0].to_bits(),
+            self.inner.movement[1].to_bits(),
+            self.inner.movement[2].to_bits(),
             self.inner.actions,
         )
     }
@@ -431,13 +438,24 @@ mod tests {
     #[test]
     fn test_input_frame_roundtrip() {
         let frame = InputFrame::new(1, 0)
-            .with_movement(10, -5, 3)
+            .with_movement(
+                InputFix::from_int(10),
+                InputFix::from_int(-5),
+                InputFix::from_int(3),
+            )
             .with_actions(0x7);
         let bytes = frame.to_bytes();
         let decoded = InputFrame::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.frame, 1);
         assert_eq!(decoded.player_id, 0);
-        assert_eq!(decoded.movement, [10, -5, 3]);
+        assert_eq!(
+            decoded.movement,
+            [
+                InputFix::from_int(10),
+                InputFix::from_int(-5),
+                InputFix::from_int(3)
+            ]
+        );
         assert_eq!(decoded.actions, 0x7);
     }
 

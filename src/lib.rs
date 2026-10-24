@@ -203,7 +203,7 @@ pub use event::{
 };
 pub use fixed_point::{Fixed, Vec3Fixed, Vec3Simd};
 pub use input_sync::{
-    InputBuffer, InputFrame, LockstepSession, RollbackAction, RollbackSession, SyncResult,
+    InputBuffer, InputFix, InputFrame, LockstepSession, RollbackAction, RollbackSession, SyncResult,
 };
 pub use node::{Node, NodeId, NodeState};
 #[cfg(feature = "physics")]

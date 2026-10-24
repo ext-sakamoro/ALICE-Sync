@@ -4,7 +4,7 @@
 //! apply their own input and peers that decode it from the network step the same world.
 #![cfg(feature = "physics")]
 
-use alice_physics::{Fix128, FrameInput, Vec3Fix};
+use alice_physics::{Fix128, FrameInput, Vec3Fix, WireError};
 use alice_sync::physics_bridge::{physics_input_to_sync, sync_input_to_physics};
 use alice_sync::InputFrame;
 
@@ -66,4 +66,26 @@ fn a_physics_input_survives_the_sync_wire() {
         let back = sync_input_to_physics(&decoded);
         assert_eq!(bits(&back), bits(&input), "input {input:?}");
     }
+}
+
+#[test]
+fn the_physics_wire_of_a_sync_input_is_lossless_and_refuses_the_legacy_form() {
+    // the bytes a peer sends for an input that came through Sync: Physics' wire keeps every bit
+    for input in samples() {
+        let via_sync = sync_input_to_physics(&physics_input_to_sync(&input, 9));
+        let wire = via_sync.to_wire();
+        assert_eq!(wire.len(), FrameInput::WIRE_BYTES);
+        let back = FrameInput::from_wire(&wire).expect("decodes");
+        assert_eq!(bits(&back), bits(&input), "input {input:?}");
+    }
+    // the pre-4.0.0 20-byte form (integer part only) is refused, never read as an input
+    assert_eq!(FrameInput::LEGACY_BYTES, 20);
+    assert_eq!(
+        FrameInput::from_wire(&[0u8; FrameInput::LEGACY_BYTES]),
+        Err(WireError::Legacy)
+    );
+    assert!(matches!(
+        FrameInput::from_wire(&[0u8; FrameInput::LEGACY_BYTES + 1]),
+        Err(WireError::Length { found: 21 })
+    ));
 }
