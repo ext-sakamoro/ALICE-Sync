@@ -42,21 +42,23 @@ fn device(seed: u8, name: &str) -> Device {
 impl Device {
     fn credential(&self) -> Credential {
         let key = KeyPair::from_seed([self.seed.wrapping_add(100); 32]);
+        let noise = Keypair::from_secret([self.seed.wrapping_add(200); 32]);
         let cert = DeviceCert::issue(
             &self.master,
             &self.did,
             key.public().0,
+            noise.public(),
             1_800_000_000,
             1_800_086_400,
             [self.seed; 16],
         )
         .unwrap();
-        Credential::new(
-            key,
-            cert,
-            Keypair::from_secret([self.seed.wrapping_add(200); 32]),
-        )
-        .unwrap()
+        Credential::new(key, cert, noise).unwrap()
+    }
+
+    /// The certificate a peer dials this device with
+    fn cert(&self) -> DeviceCert {
+        self.credential().cert().clone()
     }
 }
 
@@ -134,7 +136,7 @@ async fn messages_travel_both_ways_after_an_explicit_connect() {
     let tb = transport(&b, &[&a]).await;
     let _serve = ta.clone().serve();
     let addr_a = ta.local_addr().unwrap();
-    tb.connect(addr_a).await.unwrap();
+    tb.connect(addr_a, a.cert()).await.unwrap();
     assert_eq!(
         tb.peer_cert(addr_a).await.unwrap().subject().to_string(),
         "did:alice:alice"
@@ -160,13 +162,14 @@ async fn messages_travel_both_ways_after_an_explicit_connect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn send_to_an_address_without_a_connection_dials_it() {
+async fn send_to_an_address_with_a_certificate_and_no_connection_dials_it() {
     let a = device(1, "alice");
     let b = device(2, "bob");
     let ta = transport(&a, &[&b]).await;
     let tb = transport(&b, &[&a]).await;
     let _serve = ta.clone().serve();
     let addr_a = ta.local_addr().unwrap();
+    tb.add_peer_cert(addr_a, a.cert()).await;
     assert!(tb.peers().await.is_empty());
     tb.send_to(&Message::Bye, addr_a).await.unwrap();
     assert_eq!(tb.peers().await, vec![addr_a]);
@@ -189,6 +192,7 @@ async fn a_message_larger_than_one_channel_message_arrives_whole() {
     let tb = transport(&b, &[&a]).await;
     let _serve = ta.clone().serve();
     let addr_a = ta.local_addr().unwrap();
+    tb.add_peer_cert(addr_a, a.cert()).await;
     let big = events(12_000, 5);
     let len = bytes(&big).len();
     assert!(
@@ -211,7 +215,7 @@ async fn concurrent_large_sends_to_one_peer_do_not_interleave() {
     let tb = transport(&b, &[&a]).await;
     let _serve = ta.clone().serve();
     let addr_a = ta.local_addr().unwrap();
-    tb.connect(addr_a).await.unwrap();
+    tb.connect(addr_a, a.cert()).await.unwrap();
     let sent: Vec<Vec<u8>> = (0..8u8).map(|t| bytes(&events(6_000, t))).collect();
     let mut tasks = Vec::new();
     for t in 0..8u8 {
@@ -243,7 +247,7 @@ async fn a_message_over_the_limit_is_refused_before_anything_is_sent() {
     let tb = transport(&b, &[&a]).await;
     let _serve = ta.clone().serve();
     let addr_a = ta.local_addr().unwrap();
-    tb.connect(addr_a).await.unwrap();
+    tb.connect(addr_a, a.cert()).await.unwrap();
     let huge = events(60_000, 1);
     assert!(bytes(&huge).len() > MAX_MESSAGE);
     assert!(matches!(
@@ -264,6 +268,7 @@ async fn an_unknown_device_is_refused_and_becomes_no_peer() {
     let tb = transport(&b, &[&a]).await;
     let _serve = ta.clone().serve();
     let addr_a = ta.local_addr().unwrap();
+    tb.add_peer_cert(addr_a, a.cert()).await;
     let sent = tb.send_to(&Message::Bye, addr_a).await;
     assert!(sent.is_err(), "the dialling side gets no channel");
     assert!(tb.peers().await.is_empty());
@@ -285,8 +290,10 @@ async fn an_unknown_device_is_refused_and_becomes_no_peer() {
     let _serve2 = ta2.clone().serve();
     let addr2 = ta2.local_addr().unwrap();
     let tb2 = transport(&b, &[&a]).await;
+    tb2.add_peer_cert(addr2, a.cert()).await;
     assert!(tb2.send_to(&Message::Bye, addr2).await.is_err());
     let tc = transport(&c, &[&a]).await;
+    tc.add_peer_cert(addr2, a.cert()).await;
     tc.send_to(&Message::Bye, addr2).await.unwrap();
     let env = timeout(WAIT, ta2.recv()).await.unwrap().unwrap();
     assert_eq!(bytes(&env.message), bytes(&Message::Bye));
@@ -327,9 +334,10 @@ async fn raw_peer(
     d: &Device,
     knows: &[&Device],
     to: std::net::SocketAddr,
+    peer: &Device,
 ) -> AsyncSecureChannel<TcpStream> {
     let stream = TcpStream::connect(to).await.unwrap();
-    AsyncSecureChannel::connect(stream, &d.credential(), &knowing(knows))
+    AsyncSecureChannel::connect(stream, &d.credential(), &knowing(knows), &peer.cert())
         .await
         .unwrap()
 }
@@ -349,7 +357,7 @@ async fn breaks_framing(frames: Vec<Vec<u8>>) {
     let b = device(2, "bob");
     let ta = transport(&a, &[&b]).await;
     let _serve = ta.clone().serve();
-    let mut raw = raw_peer(&b, &[&a], ta.local_addr().unwrap()).await;
+    let mut raw = raw_peer(&b, &[&a], ta.local_addr().unwrap(), &a).await;
     timeout(WAIT, async {
         while ta.peers().await.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -402,7 +410,7 @@ async fn a_well_framed_message_from_a_raw_peer_is_received() {
     let b = device(2, "bob");
     let ta = transport(&a, &[&b]).await;
     let _serve = ta.clone().serve();
-    let mut raw = raw_peer(&b, &[&a], ta.local_addr().unwrap()).await;
+    let mut raw = raw_peer(&b, &[&a], ta.local_addr().unwrap(), &a).await;
     let msg = bytes(&hello(4));
     let (front, tail) = msg.split_at(msg.len() / 2);
     let mut first = head(KIND_MESSAGE, msg.len());
@@ -429,6 +437,7 @@ async fn a_closed_peer_is_dropped_and_dialled_again_on_the_next_send() {
     // alice here is a bare listener answering with the channel, so the test can hang up on bob
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr_a = listener.local_addr().unwrap();
+    tb.add_peer_cert(addr_a, a.cert()).await;
     let ca = a.credential();
     let pa = knowing(&[&b]);
     let (first, second) = tokio::join!(
@@ -464,7 +473,7 @@ async fn with_raw_peer() -> (Arc<SecureTransport<Policy>>, AsyncSecureChannel<Tc
     let b = device(2, "bob");
     let ta = transport(&a, &[&b]).await;
     let _serve = ta.clone().serve();
-    let raw = raw_peer(&b, &[&a], ta.local_addr().unwrap()).await;
+    let raw = raw_peer(&b, &[&a], ta.local_addr().unwrap(), &a).await;
     timeout(WAIT, async {
         while ta.peers().await.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -482,13 +491,13 @@ async fn application_bytes_arrive_as_bytes_with_the_senders_certificate() {
     let ta = transport(&a, &[&b]).await;
     let _serve = ta.clone().serve();
     let tb = transport(&b, &[&a]).await;
+    let to = ta.local_addr().unwrap();
+    tb.add_peer_cert(to, a.cert()).await;
     let big: Vec<u8> = (0..3 * alice_channel::MAX_PAYLOAD + 17)
         .map(|i| (i % 251) as u8)
         .collect();
     for sent in [Vec::new(), vec![9, 8, 7], big] {
-        tb.send_bytes_to(&sent, ta.local_addr().unwrap())
-            .await
-            .unwrap();
+        tb.send_bytes_to(&sent, to).await.unwrap();
         let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
         assert!(matches!(&v.body, Body::Bytes(got) if *got == sent));
         assert_eq!(v.peer.subject().to_string(), "did:alice:bob");
@@ -503,6 +512,7 @@ async fn bytes_that_encode_a_sync_message_never_arrive_as_one() {
     let _serve = ta.clone().serve();
     let tb = transport(&b, &[&a]).await;
     let to = ta.local_addr().unwrap();
+    tb.add_peer_cert(to, a.cert()).await;
     let looks_like = bytes(&Message::Ack { seq: 9 });
     tb.send_bytes_to(&looks_like, to).await.unwrap();
     tb.send_to(&Message::Ack { seq: 10 }, to).await.unwrap();
@@ -529,6 +539,7 @@ async fn bytes_over_the_limit_are_refused_before_anything_is_sent() {
     let _serve = ta.clone().serve();
     let tb = transport(&b, &[&a]).await;
     let to = ta.local_addr().unwrap();
+    tb.add_peer_cert(to, a.cert()).await;
     assert!(matches!(
         tb.send_bytes_to(&vec![0; MAX_MESSAGE + 1], to).await,
         Err(TransportError::Codec(_))
@@ -573,4 +584,61 @@ async fn both_kinds_written_by_hand_are_received() {
     ta.send_bytes_to(&[4, 2], v.from).await.unwrap();
     let back = raw.recv().await.unwrap();
     assert_eq!(back, [head(KIND_BYTES, 2), vec![4, 2]].concat());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_to_an_address_without_a_certificate_is_refused_and_dials_nothing() {
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let ta = transport(&a, &[&b]).await;
+    let tb = transport(&b, &[&a]).await;
+    let _serve = ta.clone().serve();
+    let addr_a = ta.local_addr().unwrap();
+    for sent in [
+        tb.send_to(&Message::Bye, addr_a).await,
+        tb.send_bytes_to(&[1, 2, 3], addr_a).await,
+    ] {
+        assert!(
+            matches!(sent, Err(TransportError::NoPeerCert(addr)) if addr == addr_a),
+            "{sent:?}"
+        );
+    }
+    assert!(tb.peers().await.is_empty());
+    // nothing reached the listener: no handshake was attempted
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(ta.peers().await.is_empty());
+    assert_eq!(ta.refused_count(), 0);
+    // with the certificate in the book the same send goes through
+    tb.add_peer_cert(addr_a, a.cert()).await;
+    tb.send_to(&Message::Bye, addr_a).await.unwrap();
+    let env = timeout(WAIT, ta.recv()).await.unwrap().unwrap();
+    assert_eq!(bytes(&env.message), bytes(&Message::Bye));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_book_entry_is_replaced_only_by_add_peer_cert() {
+    // a wrong certificate for the address (another device's): the dial does not open at alice, and
+    // nothing is sent; add_peer_cert with alice's certificate replaces it and the send goes through
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let c = device(3, "carol");
+    let ta = transport(&a, &[&b]).await;
+    let tb = transport(&b, &[&a, &c]).await;
+    let _serve = ta.clone().serve();
+    let addr_a = ta.local_addr().unwrap();
+    tb.add_peer_cert(addr_a, c.cert()).await;
+    assert_eq!(
+        tb.book_cert(addr_a).await.unwrap().subject().to_string(),
+        "did:alice:carol"
+    );
+    assert!(tb.send_to(&Message::Bye, addr_a).await.is_err());
+    assert!(tb.peers().await.is_empty());
+    tb.add_peer_cert(addr_a, a.cert()).await;
+    tb.send_to(&Message::Bye, addr_a).await.unwrap();
+    let env = timeout(WAIT, ta.recv()).await.unwrap().unwrap();
+    assert_eq!(bytes(&env.message), bytes(&Message::Bye));
+    assert_eq!(
+        tb.peer_cert(addr_a).await.unwrap().subject().to_string(),
+        "did:alice:alice"
+    );
 }

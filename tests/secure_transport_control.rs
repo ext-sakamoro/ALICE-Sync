@@ -40,21 +40,22 @@ fn device(seed: u8, name: &str) -> Device {
 impl Device {
     fn credential(&self) -> Credential {
         let key = KeyPair::from_seed([self.seed.wrapping_add(100); 32]);
+        let noise = Keypair::from_secret([self.seed.wrapping_add(200); 32]);
         let cert = DeviceCert::issue(
             &self.master,
             &self.did,
             key.public().0,
+            noise.public(),
             ISSUED,
             EXPIRES,
             [self.seed; 16],
         )
         .unwrap();
-        Credential::new(
-            key,
-            cert,
-            Keypair::from_secret([self.seed.wrapping_add(200); 32]),
-        )
-        .unwrap()
+        Credential::new(key, cert, noise).unwrap()
+    }
+
+    fn cert(&self) -> DeviceCert {
+        self.credential().cert().clone()
     }
 }
 
@@ -129,6 +130,8 @@ async fn each_received_message_carries_the_certificate_it_came_with() {
     let to = ta.local_addr().unwrap();
     let tb = listener(&b, Shared::knowing(&[&a])).await;
     let tc = listener(&c, Shared::knowing(&[&a])).await;
+    tb.add_peer_cert(to, a.cert()).await;
+    tc.add_peer_cert(to, a.cert()).await;
     tb.send_to(&Message::Ack { seq: 2 }, to).await.unwrap();
     tc.send_to(&Message::Ack { seq: 3 }, to).await.unwrap();
     let mut seen = BTreeMap::new();
@@ -155,6 +158,7 @@ async fn a_closed_channel_is_gone_on_both_sides() {
     let _serve = ta.clone().serve();
     let to = ta.local_addr().unwrap();
     let tb = listener(&b, Shared::knowing(&[&a])).await;
+    tb.add_peer_cert(to, a.cert()).await;
     tb.send_to(&Message::Bye, to).await.unwrap();
     let from = timeout(WAIT, ta.recv_verified())
         .await
@@ -186,6 +190,8 @@ async fn revalidate_closes_the_peers_the_policy_now_refuses() {
     let to = ta.local_addr().unwrap();
     let tb = listener(&b, Shared::knowing(&[&a])).await;
     let tc = listener(&c, Shared::knowing(&[&a])).await;
+    tb.add_peer_cert(to, a.cert()).await;
+    tc.add_peer_cert(to, a.cert()).await;
     tb.send_to(&Message::Bye, to).await.unwrap();
     tc.send_to(&Message::Bye, to).await.unwrap();
     let mut from = BTreeMap::new();
@@ -222,6 +228,7 @@ async fn a_dialler_opens_no_listener_and_still_gets_replies() {
         timeout(WAIT, tb.accept()).await.unwrap(),
         Err(TransportError::Io(e)) if e.kind() == std::io::ErrorKind::NotConnected
     ));
+    tb.add_peer_cert(to, a.cert()).await;
     tb.send_to(&Message::Ack { seq: 7 }, to).await.unwrap();
     let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
     assert_eq!(v.peer.subject().to_string(), "did:alice:bob");
@@ -236,4 +243,34 @@ async fn a_dialler_opens_no_listener_and_still_gets_replies() {
         matches!(served, TransportError::Io(e) if e.kind() == std::io::ErrorKind::NotConnected)
     );
     until(|| true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_dial_checks_the_book_certificate_under_the_policy_as_it_stands() {
+    // the certificate is in the book, but alice's master is withdrawn from bob's policy: the dial is
+    // refused before a byte is written, and alice sees no handshake
+    let a = device(1, "alice");
+    let b = device(2, "bob");
+    let ta = listener(&a, Shared::knowing(&[&b])).await;
+    let _serve = ta.clone().serve();
+    let to = ta.local_addr().unwrap();
+    let policy = Shared::knowing(&[&a]);
+    let tb = listener(&b, policy.clone()).await;
+    tb.add_peer_cert(to, a.cert()).await;
+    policy.withdraw(&a);
+    assert!(tb.send_to(&Message::Bye, to).await.is_err());
+    assert!(tb.peers().await.is_empty());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(ta.refused_count(), 0);
+    assert!(ta.peers().await.is_empty());
+    // trusted again: the same book entry dials
+    policy.trust(&a);
+    tb.send_to(&Message::Bye, to).await.unwrap();
+    let v = timeout(WAIT, ta.recv_verified()).await.unwrap().unwrap();
+    assert_eq!(v.peer.subject().to_string(), "did:alice:bob");
+    // and after the clock passes alice's certificate, the next dial is refused again
+    assert!(tb.close(to).await);
+    policy.now.store(EXPIRES, Ordering::SeqCst);
+    assert!(tb.send_to(&Message::Bye, to).await.is_err());
+    assert!(tb.peers().await.is_empty());
 }
