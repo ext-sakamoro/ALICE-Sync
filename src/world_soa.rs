@@ -426,7 +426,7 @@ impl Slot {
 // ============================================================================
 
 use crate::keyed::IdIndex;
-use crate::world::{Entity, EntityProps, WorldHash, MAX_LIVE_ENTITIES};
+use crate::world::{Entity, EntityProps, WorldHash, WorldState, MAX_LIVE_ENTITIES};
 use crate::{Event, EventKind, MotionData, Result};
 
 /// SoA-based World (v0.5 "Zen Mode")
@@ -564,6 +564,58 @@ impl WorldSoA {
         }
 
         Ok(())
+    }
+
+    /// The world as a [`WorldState`], the one stored form: the live entities (in id order), the frame
+    /// and the seed. Store it with `persist::encode_state`; [`WorldSoA::from_state`] reads it back.
+    #[must_use]
+    pub fn to_state(&self) -> WorldState {
+        let mut state = WorldState::default();
+        state.frame = self.storage.frame;
+        state.seed = self.storage.seed;
+        for (id, slot) in self.id_to_slot.sorted() {
+            if self.storage.is_alive(slot) {
+                let h = state.entities.insert(self.storage.entity_at(slot));
+                state.set_handle(id, h);
+            }
+        }
+        state
+    }
+
+    /// A column world holding `state`'s live entities, frame and seed
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SyncError::TooManyEntities`] when `state` holds more than [`MAX_LIVE_ENTITIES`]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the world type composes its own operations; peers' events reach it through Node::apply_event (ALICE-Law G13)"
+    )]
+    pub fn from_state(state: &WorldState) -> Result<Self> {
+        if state.live_count() > MAX_LIVE_ENTITIES {
+            return Err(crate::SyncError::TooManyEntities {
+                limit: MAX_LIVE_ENTITIES,
+            });
+        }
+        let mut world = Self::new(state.seed);
+        world.storage.frame = state.frame;
+        for (id, h) in state.ids() {
+            let Some(e) = state.entities.get(h) else {
+                continue;
+            };
+            let slot =
+                world
+                    .storage
+                    .spawn(id, e.kind, e.position.x.0, e.position.y.0, e.position.z.0);
+            let i = slot as usize;
+            for (k, column) in world.storage.prop_values.iter_mut().enumerate() {
+                column[i] = e.properties.values[k];
+            }
+            world.storage.prop_active[i] = e.properties.active;
+            world.id_to_slot.insert(id, slot);
+            world.current_hash = world.current_hash.xor(world.storage.compute_hash(slot));
+        }
+        Ok(world)
     }
 
     /// Get world hash (O(1))

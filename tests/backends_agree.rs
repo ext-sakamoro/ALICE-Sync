@@ -6,8 +6,9 @@
 //! `Entity::compute_hash` of the expected entity for the hash.
 
 use alice_sync::fixed_point::{Fixed, Vec3Fixed};
+use alice_sync::persist::{decode_state, encode_state};
 use alice_sync::world::EntityProps;
-use alice_sync::{Entity, Event, EventKind, World, WorldSoA};
+use alice_sync::{Entity, Event, EventKind, World, WorldSoA, WorldState};
 
 fn spawn(entity: u32, pos: [i16; 3]) -> Event {
     Event::new(EventKind::Spawn {
@@ -22,8 +23,8 @@ fn motion(entity: u32, delta: [i16; 3]) -> Event {
 }
 
 fn both(events: &[Event]) -> (World, WorldSoA) {
-    let mut w = World::new(0);
-    let mut q = WorldSoA::new(0);
+    let mut w = World::new(77);
+    let mut q = WorldSoA::new(77);
     for e in events {
         w.apply(e).unwrap();
         q.apply(e).unwrap();
@@ -111,4 +112,79 @@ fn a_spawn_of_a_live_id_replaces_it_in_both_types() {
     let (mut cw, mut cq) = (w.clone(), q.clone());
     assert_eq!(cw.recalculate_hash(), w.hash());
     assert_eq!(cq.recalculate_hash(), q.hash());
+}
+
+/// A seeded stream of events of every kind over ids 0..60
+fn stream(seed: u64, n: usize) -> Vec<Event> {
+    let mut x = seed;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    (0..n)
+        .map(|_| {
+            let r = next();
+            let entity = u32::try_from(r % 60).unwrap();
+            let small =
+                |v: u64, m: u64| i16::try_from(v % m).unwrap() - i16::try_from(m / 2).unwrap();
+            Event::new(match (r >> 8) % 9 {
+                0..=2 => EventKind::Spawn {
+                    entity,
+                    kind: u16::try_from((r >> 16) % 4).unwrap(),
+                    pos: [
+                        small(r >> 20, 200),
+                        small(r >> 28, 200),
+                        small(r >> 36, 200),
+                    ],
+                },
+                3 => EventKind::Despawn { entity },
+                4..=6 => EventKind::Motion {
+                    entity,
+                    delta: [small(r >> 20, 30), small(r >> 28, 30), small(r >> 36, 30)],
+                },
+                7 => EventKind::Property {
+                    entity,
+                    prop: u16::try_from((r >> 16) % 20).unwrap(),
+                    value: i32::try_from((r >> 24) % 2001).unwrap() - 1000,
+                },
+                _ => EventKind::Tick { frame: r >> 40 },
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn both_types_store_the_same_bytes_for_the_same_events() {
+    let mut compared = 0;
+    for seed in 1..=40u64 {
+        let events = stream(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15), 400);
+        let (w, q) = both(&events);
+        let from_columns = q.to_state();
+        assert_eq!(
+            encode_state(&from_columns),
+            encode_state(w.state()),
+            "seed {seed}"
+        );
+        assert_eq!(q.hash(), w.hash(), "seed {seed}");
+        compared += 1;
+    }
+    assert_eq!(compared, 40);
+}
+
+#[test]
+fn a_column_world_round_trips_through_the_stored_form() {
+    for seed in 1..=20u64 {
+        let events = stream(seed.wrapping_mul(0xd6e8_feb8_6659_fd93), 300);
+        let (_, q) = both(&events);
+        let bytes = encode_state(&q.to_state());
+        let back =
+            WorldSoA::from_state(&decode_state::<WorldState>(&bytes).unwrap().value).unwrap();
+        assert_eq!(encode_state(&back.to_state()), bytes, "seed {seed}");
+        assert_eq!(back.hash(), q.hash(), "seed {seed}");
+        let mut copy = back.clone();
+        assert_eq!(copy.recalculate_hash(), back.hash());
+        assert_eq!(back.entity_count(), q.to_state().live_count());
+    }
 }
