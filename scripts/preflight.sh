@@ -85,6 +85,8 @@ step "ci.yml / test: Build (no default features)"
 step "ci.yml / msrv: Check (default + all native features)"
 (
   export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"
+  v=$(cargo +1.88 --version)
+  case "$v" in "cargo 1.88."*) ;; *) echo "::error::not 1.88: $v"; exit 1 ;; esac
   cargo +1.88 check --lib
   cargo +1.88 check --lib --features "$NATIVE_FEATURES"
 )
