@@ -44,7 +44,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # python (pyo3 extension-module) を除く全 native feature
-  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"
+  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"
   CARGO_NET_RETRY: "5"
   CARGO_HTTP_MULTIPLEXING: "false"
 

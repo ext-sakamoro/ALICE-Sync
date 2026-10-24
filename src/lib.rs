@@ -155,6 +155,9 @@ pub mod reliability;
 pub mod session;
 #[cfg(feature = "async")]
 pub mod transport;
+// The transport over authenticated, encrypted channels between certified devices
+#[cfg(feature = "secure-transport")]
+pub mod secure_transport;
 
 #[cfg(feature = "telemetry")]
 pub mod telemetry;

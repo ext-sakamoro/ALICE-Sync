@@ -1,6 +1,6 @@
 # scripts/api_boundary.py (ALICE-Law G7 / G8): the boundary of the public API,
 # enumerated from rustdoc JSON, and the decision for each item.
-features = "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"
+features = "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"
 
 [boundary]
 "abi::ffi::as_sync_clear_last_error" = "local: error-message plumbing, no Law-bearing value"
@@ -127,6 +127,8 @@ features = "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ff
 "fn::RollbackSession::get_snapshot" = "local: opaque caller bytes stored and returned unchanged; this crate never decodes them into a value, so their meaning is the caller's"
 "fn::RollbackSession::new" = "local: a small integer id or count typed u8 (player, local player, peer), not bytes"
 "fn::RollbackSession::save_snapshot" = "local: opaque caller bytes stored and returned unchanged; this crate never decodes them into a value, so their meaning is the caller's"
+"fn::SecureTransport::bind" = "local: a socket address as text, parsed by std into an address, not a Law-bearing value"
+"fn::SecureTransport::bind_with_timeout" = "local: a socket address as text, parsed by std into an address, not a Law-bearing value"
 "fn::SessionBuilder::bind" = "local: a socket address as text, parsed by std into an address, not a Law-bearing value"
 "fn::SessionBuilder::local_player" = "local: a small integer id or count typed u8 (player, local player, peer), not bytes"
 "fn::SessionBuilder::name" = "local: a text label or key chosen by the caller (topic, name, metadata), used as a name, never parsed into a value"

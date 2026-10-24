@@ -36,7 +36,7 @@ need cargo-machete "cargo install cargo-machete --locked"
 has_toolchain 1.88 || { echo "missing toolchain 1.88 (rustup toolchain install 1.88)" >&2; exit 1; }
 
 step "ci.yml / fmt: run"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo fmt --all -- --check )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo fmt --all -- --check )
 
 step "ci.yml / clippy: Identifier moves (tests, then against the published release)"
 # text files are LF in the index and the working tree (.github/workflows/eol.yml, shared by the ALICE crates)
@@ -47,15 +47,15 @@ python3 scripts/id_move_check.py
 
 step "ci.yml / clippy: Clippy (default)"
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo clippy --all-targets -- -D warnings )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo clippy --all-targets -- -D warnings )
 
 step "ci.yml / clippy: Clippy (all native features)"
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo clippy --all-targets --features "$NATIVE_FEATURES" -- -D warnings )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo clippy --all-targets --features "$NATIVE_FEATURES" -- -D warnings )
 
 step "ci.yml / clippy: Clippy (no default features)"
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo clippy --lib --no-default-features -- -D warnings )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo clippy --lib --no-default-features -- -D warnings )
 
 step "ci.yml / clippy: Clippy library configuration (tests)"
 python3 scripts/test_clippy_lib_gate.py
@@ -65,7 +65,7 @@ python3 scripts/clippy_lib_gate.py
 
 step "ci.yml / clippy: Clippy library code (default, all native features, python)"
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CLIPPY_CONF_DIR=".github/clippy-lib"; cargo clippy --lib -- -D clippy::disallowed_methods -D clippy::disallowed_types && relint && cargo clippy --lib --features "$NATIVE_FEATURES" -- -D clippy::disallowed_methods -D clippy::disallowed_types && relint && cargo clippy --lib --features python -- -D clippy::disallowed_methods -D clippy::disallowed_types )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CLIPPY_CONF_DIR=".github/clippy-lib"; cargo clippy --lib -- -D clippy::disallowed_methods -D clippy::disallowed_types && relint && cargo clippy --lib --features "$NATIVE_FEATURES" -- -D clippy::disallowed_methods -D clippy::disallowed_types && relint && cargo clippy --lib --features python -- -D clippy::disallowed_methods -D clippy::disallowed_types )
 
 step "ci.yml / clippy: Clippy canary data (generator tests)"
 python3 scripts/test_gen_clippy_canary_calls.py
@@ -80,20 +80,20 @@ step "ci.yml / clippy: Clippy canary (every planted banned call is flagged)"
 python3 scripts/clippy_canary.py
 
 step "ci.yml / test: Build (no default features)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo build --lib --no-default-features )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo build --lib --no-default-features )
 
 step "ci.yml / msrv: Check (default + all native features)"
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"
   cargo +1.88 check --lib
   cargo +1.88 check --lib --features "$NATIVE_FEATURES"
 )
 
 step "ci.yml / doc: run"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --features "$NATIVE_FEATURES" )
 
 step "ci.yml / feature-powerset: Check every feature pair (python 除外)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps )
 
 step "ci.yml / entropy-guard: Entropy guard (tests, then src/)"
 python3 scripts/test_entropy_guard.py
@@ -138,14 +138,14 @@ step "ci.yml / test: changed_paths.py (tests)"
 python3 scripts/test_changed_paths.py
 
 step "security-audit.yml / deny: Run cargo deny check all"
-( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --features "$NATIVE_FEATURES" check all )
+( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --features "$NATIVE_FEATURES" check all )
 
 step "security-audit.yml / unused-deps: cargo machete"
 cargo machete
 
 step "security-audit.yml / stub-guard: Block panic!(STUB) in src/**"
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rnE 'panic!\([^)]*STUB' \
     src/ --include="*.rs" \
@@ -163,7 +163,7 @@ step "security-audit.yml / stub-guard: Block panic!(STUB) in src/**"
 
 step "security-audit.yml / stub-guard: Detect todo! / unimplemented! (informational, not blocking)"
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rnE 'todo!\(|unimplemented!\(' \
     src/ --include="*.rs" \
@@ -182,7 +182,7 @@ step "security-audit.yml / stub-guard: Detect todo! / unimplemented! (informatio
 
 step "security-audit.yml / stub-guard: Detect dbg!() residual in src/**"
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rn 'dbg!(' src/ --include="*.rs" || true)
   if [ -n "$hits" ]; then
@@ -195,7 +195,7 @@ step "security-audit.yml / stub-guard: Detect dbg!() residual in src/**"
 
 step "security-audit.yml / stub-guard: Detect TODO / FIXME / XXX / HACK (informational)"
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rnE 'TODO|FIXME|XXX|HACK' src/ --include="*.rs" || true)
   if [ -n "$hits" ]; then
@@ -227,19 +227,19 @@ if [[ $quick -eq 1 ]]; then
 fi
 
 step "ci.yml / test: Test (default = std)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound -- cargo test )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound -- cargo test )
 
 step "ci.yml / test: Test (all native features)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound -- cargo test --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=13 -- cargo test --features "$NATIVE_FEATURES" )
 
 step "ci.yml / test: Analytic oracle (async + physics + codec)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo test --test analytic_oracle --features "async,physics,codec" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo test --test analytic_oracle --features "async,physics,codec" )
 
 step "ci.yml / test: Float environment (debug)"
 scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment
 
 step "ci.yml / test: Doc tests"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo test --doc --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo test --doc --features "$NATIVE_FEATURES" )
 
 step "release-profile.yml / release-tests: Release-profile golden and oracle tests"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" RELEASE_TEST_FEATURES="async,physics,codec,cloud,telemetry"; scripts/run_tests.sh determinism_golden,float_edge_golden,analytic_oracle,float_environment=2 -- cargo test --release --features "$RELEASE_TEST_FEATURES" --test determinism_golden --test float_edge_golden --test analytic_oracle --test float_environment )
@@ -251,7 +251,7 @@ python3 scripts/build_flags_check.py -- cargo check --release --lib --no-default
 
 step "security-audit.yml / audit: Run cargo audit"
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   cargo audit --deny yanked \
     --ignore RUSTSEC-2024-0436 \
     --ignore RUSTSEC-2025-0020 \

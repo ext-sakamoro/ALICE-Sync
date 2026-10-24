@@ -79,6 +79,7 @@ fn main() {
 | `channel` | topic 単位のフィルタを持つ topic ベースの pub/sub |
 | `discovery` | mDNS による LAN 自動検出、手動のピア登録、GC |
 | `session` | 高レベルのセッションドライバ: builder パターン、tick ループ、5 つの同期モード |
+| `secure_transport` | 認証・暗号化した channel の上の `SyncTransport`: 相手は証明書を持つ端末、message は封をして送る (feature `secure-transport`) |
 
 ### 同期モード
 
@@ -448,6 +449,7 @@ match rollback.add_remote_input(confirmed_input) {
 | `analytics` | なし | ALICE-Analytics による DDSketch / HLL / CMS の確率的テレメトリ |
 | `ffi` | なし | Unity / UE5 向けの C-ABI FFI (79 関数) |
 | `cloud` | なし | クラウド側の複数デバイス空間同期ハブ |
+| `secure-transport` | なし | `SecureTransport`: 相手が Noise の handshake で証明書付きの端末の鍵を示す TCP の transport (ALICE-Channel、ALICE-Identity)、message は封をして送る |
 | `all-bridges` | なし | すべての連携ブリッジを有効にする (`physics` + `telemetry` + `cache` + `auth` + `codec` + `analytics`) |
 
 ## C-ABI FFI (Unity / UE5)
