@@ -169,13 +169,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
-      # 宣言値と同じ toolchain: Cargo.toml の rust-version を bump したら同 commit で @<version> も更新
+      # 宣言値と同じ toolchain: Cargo.toml の rust-version を bump したら同 commit で @<version> と +<version> も更新
+      # rust-toolchain.toml が既定の toolchain を決めるので、+1.88 で明示し、版を確かめてから check する
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - name: Check (default + all native features)
         run: |
-          cargo check --lib
-          cargo check --lib --features "$NATIVE_FEATURES"
+          v=$(cargo +1.88 --version)
+          case "$v" in "cargo 1.88."*) ;; *) echo "::error::not 1.88: $v"; exit 1 ;; esac
+          cargo +1.88 check --lib
+          cargo +1.88 check --lib --features "$NATIVE_FEATURES"
 
   doc:
     name: Doc (RUSTDOCFLAGS=-Dwarnings)
