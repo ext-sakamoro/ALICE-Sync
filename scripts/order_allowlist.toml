@@ -1,5 +1,15 @@
 # scripts/order_guard.py (ALICE-Law G13): production sites whose order cannot
 # reach a Law-bearing output, with the exact line count, the SHA-256 of each
 # allowed line (stripped, in file order; the comment shows the line) and the reason
-# (no site is allowed: src/ uses BTreeMap / BTreeSet only and starts no thread)
+# (src/ starts no thread; the one hash table is src/keyed.rs, lookups only)
 [allow]
+"src/keyed.rs::HashMap" = { count = 4, lines = [
+    # use std::collections::hash_map::RandomState;
+    "ca533401ccc231393cf36ece5962075dd2351fb32ae804f9ff904598a4c59a50",
+    # use std::collections::HashMap;
+    "1fb77b68322924c2bb91f5dab41b3e7da2813eaca6a3c072635ea8c7c0e4a68d",
+    # pub(crate) type KeyedMap<K, V> = HashMap<K, V, RandomState>;
+    "62483834105d94dc0c1a1c17a50488479b03008a42d10a8bf27547baf58203ca",
+    # HashMap::with_hasher(RandomState::new())
+    "3996d7f413284344021ce72030c9f200f5904949366be9ab05a0019e753ea74d",
+], reason = "the keyed lookup table of entity ids (World and WorldSoA): get / insert / remove / len only; its one iteration is keyed::sorted, which sorts by key before anything leaves the table, so the table's order reaches no world hash, stored byte or message (tests/keyed_lookup.rs, tests/g13_bounds.rs)" }

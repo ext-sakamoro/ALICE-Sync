@@ -15,10 +15,9 @@
 //! 5. Branchless property hash: Zero conditional branches
 //! 6. Bounds check elimination: unsafe `get_unchecked`
 
-use std::collections::BTreeMap;
-
 use crate::arena::{Arena, Handle};
 use crate::fixed_point::{Vec3Fixed, Vec3Simd};
+use crate::keyed::{keyed_map, sorted, KeyedMap};
 use crate::{Event, EventKind, Result};
 use serde::{Deserialize, Serialize};
 
@@ -167,24 +166,50 @@ impl Entity {
 /// stored world with more is malformed
 pub const MAX_LIVE_ENTITIES: usize = 1 << 16;
 
-/// World state container with O(log n) entity lookup by id
+/// World state container with entity lookup by id
 ///
-/// The id map holds one entry per live entity, ordered by id: its memory follows the number of
-/// entities, not the value of their ids (an id is chosen by whichever node spawns the entity).
-#[derive(Debug, Clone, Default)]
+/// The id map holds one entry per live entity in a keyed lookup table (see the `keyed` module): its
+/// memory follows the number of entities, not the value of their ids, and its lookups stay fast for
+/// ids a peer chooses. Ordered views ([`WorldState::ids`], [`World::iter_entities`]) are sorted by
+/// id.
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-raw", derive(Serialize, Deserialize))]
 pub struct WorldState {
     /// All entities in arena (cache-friendly)
     pub entities: Arena<Entity>,
-    /// `entity_id` -> handle of each live entity, in id order
-    pub id_map: BTreeMap<u32, Handle>,
+    /// `entity_id` -> handle of each live entity
+    #[cfg_attr(feature = "serde-raw", serde(with = "crate::keyed::serde_sorted"))]
+    id_map: KeyedMap<u32, Handle>,
     /// Current simulation frame
     pub frame: u64,
     /// Random seed (for deterministic procedural generation)
     pub seed: u64,
 }
 
+impl Default for WorldState {
+    fn default() -> Self {
+        Self {
+            entities: Arena::default(),
+            id_map: keyed_map(),
+            frame: 0,
+            seed: 0,
+        }
+    }
+}
+
 impl WorldState {
+    /// The live entity ids with their handles, in ascending id order
+    #[must_use]
+    pub fn ids(&self) -> Vec<(u32, Handle)> {
+        sorted(&self.id_map)
+    }
+
+    /// The number of live entities
+    #[must_use]
+    pub fn live_count(&self) -> usize {
+        self.id_map.len()
+    }
+
     /// Get handle for `entity_id`
     #[inline(always)]
     #[must_use]
@@ -259,7 +284,7 @@ impl World {
 
             EventKind::Spawn { entity, kind, pos } => {
                 if self.state.get_handle(*entity).is_none()
-                    && self.state.id_map.len() >= MAX_LIVE_ENTITIES
+                    && self.state.live_count() >= MAX_LIVE_ENTITIES
                 {
                     return Err(crate::SyncError::TooManyEntities {
                         limit: MAX_LIVE_ENTITIES,
@@ -424,10 +449,9 @@ impl World {
     /// entities were spawned and removed)
     pub fn iter_entities(&self) -> impl Iterator<Item = &Entity> {
         self.state
-            .id_map
-            .values()
-            .filter(|h| h.is_valid())
-            .filter_map(|&h| self.state.entities.get(h))
+            .ids()
+            .into_iter()
+            .filter_map(|(_, h)| self.state.entities.get(h))
     }
 
     // ========================================================================
@@ -985,11 +1009,11 @@ mod tests {
         let h = state.entities.insert(Entity::default());
         state.set_handle(u32::MAX, h);
         state.set_handle(100, h);
-        assert_eq!(state.id_map.len(), 2);
+        assert_eq!(state.live_count(), 2);
         assert_eq!(state.remove_handle(u32::MAX), Some(h));
-        assert_eq!(state.id_map.len(), 1);
+        assert_eq!(state.live_count(), 1);
         state.set_handle(100, Handle::INVALID);
-        assert!(state.id_map.is_empty());
+        assert_eq!(state.live_count(), 0);
     }
 
     #[test]

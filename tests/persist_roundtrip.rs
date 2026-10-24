@@ -276,16 +276,16 @@ fn a_version_1_world_is_read_as_legacy() {
         (w.state().frame, w.state().seed)
     );
     let mut ids = Vec::new();
-    for (id, h) in &d.value.id_map {
-        let e = d.value.entities.get(*h).unwrap();
-        assert_eq!(e.id, *id);
+    for (id, h) in d.value.ids() {
+        let e = d.value.entities.get(h).unwrap();
+        assert_eq!(e.id, id);
         let original = w
             .state()
             .entities
-            .get(w.state().get_handle(*id).unwrap())
+            .get(w.state().get_handle(id).unwrap())
             .unwrap();
         assert_eq!(e.compute_hash(), original.compute_hash());
-        ids.extend([*id]);
+        ids.extend([id]);
     }
     assert_eq!(ids, [0, 2, 3, 5, 9]);
     assert_eq!(encode_state(&d.value), encode_state(w.state()));

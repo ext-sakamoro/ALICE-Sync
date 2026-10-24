@@ -420,8 +420,7 @@ impl Slot {
 // WorldSoA - Complete SoA World Implementation
 // ============================================================================
 
-use std::collections::BTreeMap;
-
+use crate::keyed::{keyed_map, KeyedMap};
 use crate::world::WorldHash;
 use crate::{Event, EventKind, MotionData, Result};
 
@@ -436,9 +435,9 @@ use crate::{Event, EventKind, MotionData, Result};
 pub struct WorldSoA {
     storage: WorldStorage,
     current_hash: WorldHash,
-    /// `entity_id` -> slot of each live entity, in id order (its memory follows the number of
-    /// entities, not the value of their ids)
-    id_to_slot: BTreeMap<u32, u32>,
+    /// `entity_id` -> slot of each live entity (a keyed lookup table: its memory follows the number
+    /// of entities, not the value of their ids, and lookups stay fast for ids a peer chooses)
+    id_to_slot: KeyedMap<u32, u32>,
 }
 
 impl Default for WorldSoA {
@@ -457,7 +456,7 @@ impl WorldSoA {
         Self {
             storage,
             current_hash: WorldHash::zero(),
-            id_to_slot: BTreeMap::new(),
+            id_to_slot: keyed_map(),
         }
     }
 

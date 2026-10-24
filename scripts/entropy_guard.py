@@ -76,6 +76,13 @@ ALLOWED: dict[tuple[str, str], tuple[int, str]] = {
     ("src/clock.rs", "Instant::now"): (
         1, "the one monotonic clock read of the transport layer (retransmit timers, round-trip samples, "
            "fragment expiry, peer liveness); no event, world hash or wire byte is computed from it",
+    ),    ("src/keyed.rs", "RandomState"): (
+        3, "the one keyed lookup table (src/keyed.rs keyed_map: the use, the KeyedMap alias and the "
+           "constructor): a SipHash key drawn per table, so a peer cannot pick colliding entity ids; "
+           "the key changes only where entries sit, never a lookup's answer, and every ordered output "
+           "goes through keyed::sorted; tests/keyed_lookup.rs "
+           "worlds_with_different_keys_store_the_same_bytes_and_hash shows stored bytes and world "
+           "hashes equal under two keys",
     ),
 }
 # a char literal ('{', '\\n', '\\u{1F600}', also after a `b` prefix) but not a lifetime ('a, 'static)

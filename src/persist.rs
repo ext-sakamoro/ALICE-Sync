@@ -65,8 +65,6 @@
 //! reserves follows the length of the bytes, never a count or an id read from
 //! them.
 
-use std::collections::BTreeMap;
-
 use crate::arena::{Arena, Handle};
 #[cfg(feature = "async")]
 use crate::crdt::LwwRegister;
@@ -369,12 +367,11 @@ impl sealed::Sealed for WorldState {}
 impl Persist for WorldState {
     const TAG: u8 = 4;
     fn write_body(&self, out: &mut Vec<u8>) {
-        // the live entities in id order: the id map holds exactly them, ordered by id
+        // the live entities in id order
         let live: Vec<&Entity> = self
-            .id_map
-            .values()
-            .filter(|h| h.is_valid())
-            .filter_map(|&h| self.entities.get(h))
+            .ids()
+            .into_iter()
+            .filter_map(|(_, h)| self.entities.get(h))
             .collect();
         out.extend_from_slice(&len_u32(live.len()).to_le_bytes());
         for e in live {
@@ -391,8 +388,8 @@ impl Persist for WorldState {
             ));
         }
         // no more entities can follow than the bytes hold bodies for
-        let mut entities = Arena::with_capacity(n.min(r.bytes.len() / ENTITY_BODY_LEN));
-        let mut id_map = BTreeMap::new();
+        let mut world = Self::default();
+        world.entities = Arena::with_capacity(n.min(r.bytes.len() / ENTITY_BODY_LEN));
         let mut previous: Option<u32> = None;
         for _ in 0..n {
             let e = Entity::read_body(r)?;
@@ -403,16 +400,12 @@ impl Persist for WorldState {
             }
             previous = Some(e.id);
             let id = e.id;
-            id_map.insert(id, entities.insert(e));
+            let h = world.entities.insert(e);
+            world.set_handle(id, h);
         }
-        let frame = r.u64()?;
-        let seed = r.u64()?;
-        Ok(Self {
-            entities,
-            id_map,
-            frame,
-            seed,
-        })
+        world.frame = r.u64()?;
+        world.seed = r.u64()?;
+        Ok(world)
     }
     fn read_body_v1(r: &mut Reader<'_>) -> Result<Self, PersistError> {
         let n = r.u32()? as usize;
@@ -431,28 +424,24 @@ impl Persist for WorldState {
         let entities = Arena::from_parts(slots, free_head).map_err(PersistError::Malformed)?;
         // version 1 stored the id map densely: entry i is the handle of entity id i, or invalid
         let m = r.u32()?;
-        let mut id_map = BTreeMap::new();
+        let mut world = Self::default();
+        world.entities = entities;
         for id in 0..m {
             let index = r.u32()?;
             let generation = r.u32()?;
             let h = Handle { index, generation };
             if h.is_valid() {
-                if entities.get(h).is_none() {
+                if world.entities.get(h).is_none() {
                     return Err(PersistError::Malformed(
                         "an id map handle does not point to an occupied slot of its generation",
                     ));
                 }
-                id_map.insert(id, h);
+                world.set_handle(id, h);
             }
         }
-        let frame = r.u64()?;
-        let seed = r.u64()?;
-        Ok(Self {
-            entities,
-            id_map,
-            frame,
-            seed,
-        })
+        world.frame = r.u64()?;
+        world.seed = r.u64()?;
+        Ok(world)
     }
 }
 
