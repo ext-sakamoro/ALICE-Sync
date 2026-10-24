@@ -15,7 +15,7 @@
 //! 3. Memory bandwidth: 12 bytes/entity instead of 84 bytes
 //! 4. Perfect alignment: Each array is naturally aligned for SIMD
 
-use crate::fixed_point::Fixed;
+use crate::fixed_point::{Fixed, Vec3Fixed};
 #[cfg(feature = "serde-raw")]
 use serde::{Deserialize, Serialize};
 use wide::i32x8;
@@ -25,6 +25,12 @@ pub const MAX_ENTITIES: usize = 65536;
 
 /// Maximum properties per entity
 pub const MAX_PROPS: usize = 16;
+
+/// An event's Q8.8 coordinate as the raw bits of a [`Fixed`] (Q16.16): the scale `World` stores
+#[inline(always)]
+const fn q88(v: i16) -> i32 {
+    Fixed::from_i16(v).0
+}
 
 /// `SoA` World Storage - Component arrays instead of Entity structs
 #[derive(Debug, Clone)]
@@ -227,27 +233,26 @@ impl WorldStorage {
     #[inline(always)]
     #[must_use]
     pub fn compute_hash(&self, slot: u32) -> u64 {
-        const WYHASH_K: u64 = 0x517c_c1b7_2722_0a95;
+        self.entity_at(slot).compute_hash()
+    }
 
-        let idx = slot as usize;
-
-        let mut h = self.ids[idx] as u64;
-        h ^= (self.kinds[idx] as u64).rotate_left(32);
-        h ^= (self.pos_x[idx] as u64).rotate_left(5);
-        h ^= (self.pos_y[idx] as u64).rotate_left(14);
-        h ^= (self.pos_z[idx] as u64).rotate_left(23);
-
-        // Branchless property hash
-        let active = self.prop_active[idx];
-        for i in 0..MAX_PROPS {
-            let is_active = ((active >> i) & 1) as u64;
-            let val = (self.prop_values[i][idx] as u64).wrapping_mul(is_active);
-            h ^= val.rotate_left((i * 4) as u32);
+    /// The entity in `slot`, as `World` holds it
+    #[must_use]
+    pub fn entity_at(&self, slot: u32) -> Entity {
+        let i = slot as usize;
+        Entity {
+            id: self.ids[i],
+            kind: self.kinds[i],
+            position: Vec3Fixed {
+                x: Fixed(self.pos_x[i]),
+                y: Fixed(self.pos_y[i]),
+                z: Fixed(self.pos_z[i]),
+            },
+            properties: EntityProps {
+                values: std::array::from_fn(|k| self.prop_values[k][i]),
+                active: self.prop_active[i],
+            },
         }
-
-        // Final avalanche
-        h = (h ^ (h >> 30)).wrapping_mul(WYHASH_K);
-        h ^ (h >> 27)
     }
 
     // ========================================================================
@@ -421,7 +426,7 @@ impl Slot {
 // ============================================================================
 
 use crate::keyed::IdIndex;
-use crate::world::WorldHash;
+use crate::world::{Entity, EntityProps, WorldHash, MAX_LIVE_ENTITIES};
 use crate::{Event, EventKind, MotionData, Result};
 
 /// SoA-based World (v0.5 "Zen Mode")
@@ -487,9 +492,9 @@ impl WorldSoA {
                     self.current_hash = self.current_hash.xor(old_hash);
 
                     // Update position in SoA storage
-                    let dx = (delta[0] as i32) << 6;
-                    let dy = (delta[1] as i32) << 6;
-                    let dz = (delta[2] as i32) << 6;
+                    let dx = q88(delta[0]);
+                    let dy = q88(delta[1]);
+                    let dz = q88(delta[2]);
                     self.storage.add_position(slot, dx, dy, dz);
 
                     // XOR in new hash
@@ -499,9 +504,18 @@ impl WorldSoA {
             }
 
             EventKind::Spawn { entity, kind, pos } => {
-                let x = (pos[0] as i32) << 6;
-                let y = (pos[1] as i32) << 6;
-                let z = (pos[2] as i32) << 6;
+                if let Some(old) = self.get_slot(*entity) {
+                    self.current_hash = self.current_hash.xor(self.storage.compute_hash(old));
+                    self.storage.despawn(old);
+                    self.id_to_slot.remove(*entity);
+                } else if self.id_to_slot.len() >= MAX_LIVE_ENTITIES {
+                    return Err(crate::SyncError::TooManyEntities {
+                        limit: MAX_LIVE_ENTITIES,
+                    });
+                }
+                let x = q88(pos[0]);
+                let y = q88(pos[1]);
+                let z = q88(pos[2]);
 
                 let slot = self.storage.spawn(*entity, *kind, x, y, z);
 
@@ -673,9 +687,9 @@ impl WorldSoA {
                 self.current_hash = self.current_hash.xor(old_hash);
 
                 // Update position
-                let dx = (m.delta_x as i32) << 6;
-                let dy = (m.delta_y as i32) << 6;
-                let dz = (m.delta_z as i32) << 6;
+                let dx = q88(m.delta_x);
+                let dy = q88(m.delta_y);
+                let dz = q88(m.delta_z);
                 self.storage.add_position(slot, dx, dy, dz);
 
                 // XOR in new hash
@@ -763,9 +777,9 @@ impl WorldSoA {
 
                 if all_same_delta {
                     // Uniform SIMD: all 8 have same delta
-                    let dx = (first_delta.delta_x as i32) << 6;
-                    let dy = (first_delta.delta_y as i32) << 6;
-                    let dz = (first_delta.delta_z as i32) << 6;
+                    let dx = q88(first_delta.delta_x);
+                    let dy = q88(first_delta.delta_y);
+                    let dz = q88(first_delta.delta_z);
 
                     self.apply_motions_vertical_8(
                         start_slot as usize,
@@ -777,13 +791,7 @@ impl WorldSoA {
                     // Variable SIMD: 8 different deltas
                     let deltas: Vec<_> = slot_motions[i..i + 8]
                         .iter()
-                        .map(|(_, m)| {
-                            (
-                                (m.delta_x as i32) << 6,
-                                (m.delta_y as i32) << 6,
-                                (m.delta_z as i32) << 6,
-                            )
-                        })
+                        .map(|(_, m)| (q88(m.delta_x), q88(m.delta_y), q88(m.delta_z)))
                         .collect();
 
                     let dx = i32x8::new([
@@ -827,9 +835,9 @@ impl WorldSoA {
                 let old_hash = self.storage.compute_hash(*slot);
                 self.current_hash = self.current_hash.xor(old_hash);
 
-                let dx = (m.delta_x as i32) << 6;
-                let dy = (m.delta_y as i32) << 6;
-                let dz = (m.delta_z as i32) << 6;
+                let dx = q88(m.delta_x);
+                let dy = q88(m.delta_y);
+                let dz = q88(m.delta_z);
                 self.storage.add_position(*slot, dx, dy, dz);
 
                 let new_hash = self.storage.compute_hash(*slot);
@@ -865,9 +873,9 @@ impl WorldSoA {
             let old_hash = self.storage.compute_hash(slot);
             self.current_hash = self.current_hash.xor(old_hash);
 
-            let dx = (m.delta_x as i32) << 6;
-            let dy = (m.delta_y as i32) << 6;
-            let dz = (m.delta_z as i32) << 6;
+            let dx = q88(m.delta_x);
+            let dy = q88(m.delta_y);
+            let dz = q88(m.delta_z);
             self.storage.add_position(slot, dx, dy, dz);
 
             let new_hash = self.storage.compute_hash(slot);
@@ -931,34 +939,34 @@ impl WorldSoA {
             if can_simd {
                 // SIMD path: 8 contiguous slots
                 let dx = i32x8::new([
-                    (motions[i].delta_x as i32) << 6,
-                    (motions[i + 1].delta_x as i32) << 6,
-                    (motions[i + 2].delta_x as i32) << 6,
-                    (motions[i + 3].delta_x as i32) << 6,
-                    (motions[i + 4].delta_x as i32) << 6,
-                    (motions[i + 5].delta_x as i32) << 6,
-                    (motions[i + 6].delta_x as i32) << 6,
-                    (motions[i + 7].delta_x as i32) << 6,
+                    q88(motions[i].delta_x),
+                    q88(motions[i + 1].delta_x),
+                    q88(motions[i + 2].delta_x),
+                    q88(motions[i + 3].delta_x),
+                    q88(motions[i + 4].delta_x),
+                    q88(motions[i + 5].delta_x),
+                    q88(motions[i + 6].delta_x),
+                    q88(motions[i + 7].delta_x),
                 ]);
                 let dy = i32x8::new([
-                    (motions[i].delta_y as i32) << 6,
-                    (motions[i + 1].delta_y as i32) << 6,
-                    (motions[i + 2].delta_y as i32) << 6,
-                    (motions[i + 3].delta_y as i32) << 6,
-                    (motions[i + 4].delta_y as i32) << 6,
-                    (motions[i + 5].delta_y as i32) << 6,
-                    (motions[i + 6].delta_y as i32) << 6,
-                    (motions[i + 7].delta_y as i32) << 6,
+                    q88(motions[i].delta_y),
+                    q88(motions[i + 1].delta_y),
+                    q88(motions[i + 2].delta_y),
+                    q88(motions[i + 3].delta_y),
+                    q88(motions[i + 4].delta_y),
+                    q88(motions[i + 5].delta_y),
+                    q88(motions[i + 6].delta_y),
+                    q88(motions[i + 7].delta_y),
                 ]);
                 let dz = i32x8::new([
-                    (motions[i].delta_z as i32) << 6,
-                    (motions[i + 1].delta_z as i32) << 6,
-                    (motions[i + 2].delta_z as i32) << 6,
-                    (motions[i + 3].delta_z as i32) << 6,
-                    (motions[i + 4].delta_z as i32) << 6,
-                    (motions[i + 5].delta_z as i32) << 6,
-                    (motions[i + 6].delta_z as i32) << 6,
-                    (motions[i + 7].delta_z as i32) << 6,
+                    q88(motions[i].delta_z),
+                    q88(motions[i + 1].delta_z),
+                    q88(motions[i + 2].delta_z),
+                    q88(motions[i + 3].delta_z),
+                    q88(motions[i + 4].delta_z),
+                    q88(motions[i + 5].delta_z),
+                    q88(motions[i + 6].delta_z),
+                    q88(motions[i + 7].delta_z),
                 ]);
 
                 // Hash update (XOR out old)
@@ -985,9 +993,12 @@ impl WorldSoA {
                     let old_h = self.storage.compute_hash(slot);
                     self.current_hash = self.current_hash.xor(old_h);
 
-                    self.storage.pos_x[slot as usize] += (m.delta_x as i32) << 6;
-                    self.storage.pos_y[slot as usize] += (m.delta_y as i32) << 6;
-                    self.storage.pos_z[slot as usize] += (m.delta_z as i32) << 6;
+                    self.storage.pos_x[slot as usize] =
+                        self.storage.pos_x[slot as usize].wrapping_add(q88(m.delta_x));
+                    self.storage.pos_y[slot as usize] =
+                        self.storage.pos_y[slot as usize].wrapping_add(q88(m.delta_y));
+                    self.storage.pos_z[slot as usize] =
+                        self.storage.pos_z[slot as usize].wrapping_add(q88(m.delta_z));
 
                     let new_h = self.storage.compute_hash(slot);
                     self.current_hash = self.current_hash.xor(new_h);
@@ -1005,9 +1016,12 @@ impl WorldSoA {
                 let old_h = self.storage.compute_hash(slot);
                 self.current_hash = self.current_hash.xor(old_h);
 
-                self.storage.pos_x[slot as usize] += (m.delta_x as i32) << 6;
-                self.storage.pos_y[slot as usize] += (m.delta_y as i32) << 6;
-                self.storage.pos_z[slot as usize] += (m.delta_z as i32) << 6;
+                self.storage.pos_x[slot as usize] =
+                    self.storage.pos_x[slot as usize].wrapping_add(q88(m.delta_x));
+                self.storage.pos_y[slot as usize] =
+                    self.storage.pos_y[slot as usize].wrapping_add(q88(m.delta_y));
+                self.storage.pos_z[slot as usize] =
+                    self.storage.pos_z[slot as usize].wrapping_add(q88(m.delta_z));
 
                 let new_h = self.storage.compute_hash(slot);
                 self.current_hash = self.current_hash.xor(new_h);
@@ -1031,9 +1045,9 @@ impl WorldSoA {
         dy: i16,
         dz: i16,
     ) {
-        let dx_fixed = (dx as i32) << 6;
-        let dy_fixed = (dy as i32) << 6;
-        let dz_fixed = (dz as i32) << 6;
+        let dx_fixed = q88(dx);
+        let dy_fixed = q88(dy);
+        let dz_fixed = q88(dz);
 
         let dx_simd = i32x8::splat(dx_fixed);
         let dy_simd = i32x8::splat(dy_fixed);
@@ -1068,10 +1082,87 @@ impl WorldSoA {
 mod tests {
     use super::*;
 
+    /// Every batch path moves the entities as the same motions applied one by one as events do
+    /// (positions and hash), duplicates for one entity included: one scale, one sum
+    #[test]
+    fn every_batch_motion_path_equals_applying_the_motions_as_events() {
+        let make = || {
+            let mut w = WorldSoA::new(1);
+            for id in 0..40u32 {
+                w.apply(&Event::new(EventKind::Spawn {
+                    entity: id,
+                    kind: 1,
+                    pos: [i16::try_from(id).unwrap(), -3, 7],
+                }))
+                .unwrap();
+            }
+            w
+        };
+        let mut motions = Vec::new();
+        let mut x = 0x9e37_79b9_u32;
+        for _ in 0..200 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            motions.push(MotionData {
+                entity: x % 40,
+                delta_x: i16::try_from(x % 21).unwrap() - 10,
+                delta_y: i16::try_from((x >> 8) % 9).unwrap() - 4,
+                delta_z: i16::try_from((x >> 16) % 5).unwrap() - 2,
+            });
+        }
+        let mut reference = make();
+        for m in &motions {
+            reference
+                .apply(&Event::new(EventKind::Motion {
+                    entity: m.entity,
+                    delta: [m.delta_x, m.delta_y, m.delta_z],
+                }))
+                .unwrap();
+        }
+        let positions = |w: &WorldSoA| {
+            (0..40u32)
+                .map(|id| w.storage.get_position(w.get_slot(id).unwrap()))
+                .map(|(a, b, c)| (a.0, b.0, c.0))
+                .collect::<Vec<_>>()
+        };
+        let want = positions(&reference);
+        let mut sorted = motions.clone();
+        sorted.sort_by_key(|m| m.entity);
+        let mut compared = 0;
+        type Path<'a> = (&'a str, Box<dyn Fn(&mut WorldSoA) + 'a>);
+        let paths: [Path; 5] = [
+            ("batch", Box::new(|w| w.apply_motions_batch(&motions))),
+            (
+                "sorted",
+                Box::new(|w| w.apply_motions_sorted(motions.clone())),
+            ),
+            (
+                "presorted",
+                Box::new(|w| w.apply_motions_presorted(&sorted)),
+            ),
+            (
+                "demon",
+                Box::new(|w| w.apply_motions_demon(motions.clone())),
+            ),
+            ("nosort", Box::new(|w| w.apply_motions_nosort(&motions))),
+        ];
+        for (name, path) in &paths {
+            let mut w = make();
+            path(&mut w);
+            assert_eq!(positions(&w), want, "{name}");
+            assert_eq!(w.hash(), reference.hash(), "{name}");
+            let mut copy = w.clone();
+            assert_eq!(copy.recalculate_hash(), w.hash(), "{name}");
+            compared += 1;
+        }
+        assert_eq!(compared, 5);
+    }
+
     #[test]
     fn spawn_raw_and_despawn_slot_keep_the_hash_and_the_id_map() {
         let mut raw = WorldSoA::new(0);
-        let slot = raw.spawn_raw(7, 2, 3 << 6, -(4 << 6), 5 << 6);
+        let slot = raw.spawn_raw(7, 2, q88(3), q88(-4), q88(5));
         let mut via_event = WorldSoA::new(0);
         via_event
             .apply(&Event::new(EventKind::Spawn {
@@ -1352,8 +1443,8 @@ mod tests {
         // Verify entity 10 got coalesced delta (20 + 5 = 25)
         let slot = world.get_slot(10).unwrap();
         let (x, _, _) = world.storage.get_position(slot);
-        // 25 << 6 = 1600
-        assert_eq!(x.0, 1600);
+        // 25 in Q8.8 as Q16.16 raw bits: 25 << 8
+        assert_eq!(x.0, 6400);
     }
 
     #[test]
@@ -1393,7 +1484,7 @@ mod tests {
         for i in 0..8 {
             let slot = world.get_slot(i).unwrap();
             let (x, _, _) = world.storage.get_position(slot);
-            assert_eq!(x.0, 100 << 6);
+            assert_eq!(x.0, 100 << 8);
         }
     }
 }

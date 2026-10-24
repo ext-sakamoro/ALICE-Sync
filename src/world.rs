@@ -271,9 +271,12 @@ impl World {
             }
 
             EventKind::Spawn { entity, kind, pos } => {
-                if self.state.get_handle(*entity).is_none()
-                    && self.state.live_count() >= MAX_LIVE_ENTITIES
-                {
+                if let Some(old) = self.state.remove_handle(*entity) {
+                    // a new incarnation replaces the live one
+                    if let Some(e) = self.state.entities.remove(old) {
+                        self.current_hash = self.current_hash.xor(e.compute_hash());
+                    }
+                } else if self.state.live_count() >= MAX_LIVE_ENTITIES {
                     return Err(crate::SyncError::TooManyEntities {
                         limit: MAX_LIVE_ENTITIES,
                     });
