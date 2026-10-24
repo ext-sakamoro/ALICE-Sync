@@ -32,7 +32,7 @@ pub struct CompressedEventBatch {
 
 /// Compress a serialized event batch using wavelet + rANS.
 ///
-/// `serialized` should be the bitcode/bincode output of an event batch.
+/// `serialized` should be the bitcode output of an event batch.
 /// `quantizer_step` controls lossy compression (1 = near-lossless).
 #[must_use]
 pub fn compress_event_batch(serialized: &[u8], quantizer_step: i32) -> CompressedEventBatch {

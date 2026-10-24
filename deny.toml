@@ -30,7 +30,7 @@ ignore = [
     # rkyv 0.7 Rc/Arc archive validation OOB: alice-db (db feature、local path dep) の archived 型に
     # Rc/Arc 無し = 非該当 (CI では alice-db は stub のため出現しない、local --all-features 用)
     "RUSTSEC-2026-0235",
-    # bincode 1.x unmaintained (alice-db 経由 transitive、alice-db 側で ignore 済と同期)
+    # bincode 1.x unmaintained: feature telemetry の alice-db (crates.io 0.2.0-beta) だけが引く (alice-sync 自身は依存しない)
     "RUSTSEC-2025-0141",
     # pyo3 経由の既知 advisory (python feature 有効時のみ、0.29 移行で解消)
     "RUSTSEC-2025-0020",  # PyString::from_object buffer overflow (0.24.1+ で fix)

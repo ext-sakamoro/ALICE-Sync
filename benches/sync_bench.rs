@@ -140,24 +140,24 @@ fn bench_serialization(c: &mut Criterion) {
         delta: [1000, 2000, 3000],
     });
 
-    group.bench_function("bincode_encode", |b| b.iter(|| black_box(event.to_bytes())));
+    group.bench_function("serial_encode", |b| b.iter(|| black_box(event.to_bytes())));
 
     group.bench_function("bitcode_encode", |b| {
         b.iter(|| black_box(event.to_compact_bytes()));
     });
 
-    let bincode_bytes = event.to_bytes();
+    let serial_bytes = event.to_bytes().expect("encodes");
     let bitcode_bytes = event.to_compact_bytes();
 
     println!(
-        "Size: bincode={} bytes, bitcode={} bytes ({}% smaller)",
-        bincode_bytes.len(),
+        "Size: alice-serial={} bytes, bitcode={} bytes ({}% smaller)",
+        serial_bytes.len(),
         bitcode_bytes.len(),
-        100 - (bitcode_bytes.len() * 100 / bincode_bytes.len())
+        100 - (bitcode_bytes.len() * 100 / serial_bytes.len())
     );
 
-    group.bench_function("bincode_decode", |b| {
-        b.iter(|| black_box(Event::from_bytes(&bincode_bytes)));
+    group.bench_function("serial_decode", |b| {
+        b.iter(|| black_box(Event::from_bytes(&serial_bytes)));
     });
 
     group.bench_function("bitcode_decode", |b| {

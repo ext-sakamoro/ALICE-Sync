@@ -171,6 +171,7 @@ pub mod protocol;
 #[cfg(feature = "python")]
 mod python;
 pub mod semantics;
+mod serial_codec;
 // Async P2P infrastructure (transport, discovery, pub/sub, CRDT, session)
 #[cfg(feature = "async")]
 pub mod channel;

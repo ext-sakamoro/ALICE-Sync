@@ -169,10 +169,13 @@ impl Event {
         }
     }
 
-    /// Serialize to bytes using bincode (for compatibility)
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_default()
+    /// Serialize to bytes in the alice-serial format (fields in declaration order; the kind as its
+    /// variant number and fields)
+    ///
+    /// # Errors
+    /// [`crate::SyncError::SerializationError`] when alice-serial refuses the value
+    pub fn to_bytes(&self) -> Result<Vec<u8>, crate::SyncError> {
+        crate::serial_codec::encode(&crate::serial_codec::event_value(self))
     }
 
     /// Serialize to compact bytes using bitcode
@@ -181,10 +184,11 @@ impl Event {
         bitcode::encode(self)
     }
 
-    /// Deserialize from bincode bytes
+    /// Deserialize from the bytes of [`Event::to_bytes`]: `None` unless they are exactly one encoded
+    /// event (every field of its type and range, nothing after it)
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::deserialize(bytes).ok()
+        crate::serial_codec::event_from(&crate::serial_codec::decode(bytes)?)
     }
 
     /// Deserialize from bitcode bytes
@@ -540,15 +544,15 @@ mod tests {
         });
 
         let compact = motion.to_compact_bytes();
-        let bincode_size = motion.to_bytes().len();
+        let serial_size = motion.to_bytes().unwrap().len();
 
         println!(
-            "Compact: {} bytes, Bincode: {} bytes",
+            "Compact: {} bytes, alice-serial: {} bytes",
             compact.len(),
-            bincode_size
+            serial_size
         );
         // Compact should be significantly smaller
-        assert!(compact.len() <= bincode_size);
+        assert!(compact.len() <= serial_size);
     }
 
     #[test]
@@ -656,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn test_event_bincode_roundtrip_all_kinds() {
+    fn test_event_serial_roundtrip_all_kinds() {
         let kinds = vec![
             EventKind::Despawn { entity: 42 },
             EventKind::Property {
@@ -676,7 +680,7 @@ mod tests {
         ];
         for kind in kinds {
             let original = Event::new(kind);
-            let bytes = original.to_bytes();
+            let bytes = original.to_bytes().unwrap();
             let restored = Event::from_bytes(&bytes).unwrap();
             assert_eq!(original.kind, restored.kind);
         }

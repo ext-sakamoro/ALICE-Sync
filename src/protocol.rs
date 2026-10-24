@@ -85,10 +85,13 @@ pub enum Message {
 }
 
 impl Message {
-    /// Serialize to bytes (bincode, compatible)
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_default()
+    /// Serialize to bytes in the alice-serial format (the variant number, then its fields in
+    /// declaration order); the transports send [`Message::to_compact_bytes`]
+    ///
+    /// # Errors
+    /// [`crate::SyncError::SerializationError`] when alice-serial refuses the value
+    pub fn to_bytes(&self) -> Result<Vec<u8>, crate::SyncError> {
+        crate::serial_codec::encode(&crate::serial_codec::message_value(self))
     }
 
     /// Serialize to compact bytes (bitcode)
@@ -97,10 +100,11 @@ impl Message {
         bitcode::encode(self)
     }
 
-    /// Deserialize from bincode bytes
+    /// Deserialize from the bytes of [`Message::to_bytes`]: `None` unless they are exactly one encoded
+    /// message (a known variant, every field of its type and range, nothing after it)
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::deserialize(bytes).ok()
+        crate::serial_codec::message_from(&crate::serial_codec::decode(bytes)?)
     }
 
     /// Deserialize from bitcode bytes
@@ -232,14 +236,14 @@ mod tests {
         };
 
         let compact = hello.to_compact_bytes();
-        let bincode_size = hello.to_bytes().len();
+        let serial_size = hello.to_bytes().unwrap().len();
 
         println!(
-            "Hello - Compact: {} bytes, Bincode: {} bytes",
+            "Hello - Compact: {} bytes, alice-serial: {} bytes",
             compact.len(),
-            bincode_size
+            serial_size
         );
-        assert!(compact.len() <= bincode_size);
+        assert!(compact.len() <= serial_size);
     }
 
     #[test]
@@ -260,14 +264,14 @@ mod tests {
             checkpoints: Vec::new(),
         };
         let compact = msg.to_compact_bytes();
-        let bincode_size = msg.to_bytes().len();
+        let serial_size = msg.to_bytes().unwrap().len();
 
         println!(
-            "Events(2) - Compact: {} bytes, Bincode: {} bytes",
+            "Events(2) - Compact: {} bytes, alice-serial: {} bytes",
             compact.len(),
-            bincode_size
+            serial_size
         );
-        assert!(compact.len() <= bincode_size);
+        assert!(compact.len() <= serial_size);
     }
 
     // --- Message ラウンドトリップ (全バリアント) ---
