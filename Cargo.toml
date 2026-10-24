@@ -30,8 +30,8 @@ alice-analytics = { version = "0.3", optional = true, default-features = false, 
 mdns-sd = { version = "0.11", optional = true }
 # the secure transport: the channel and the device certificates (feature secure-transport), taken by
 # git at a full commit of their public repositories
-alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", rev = "e9ea4f280467921ddf41f9e058269632feed2d91", features = ["async"], optional = true }
-alice-identity = { version = "1.2.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", rev = "c32a873238a11c7dc0d878aa9cfb7db871ab4c0b", optional = true }
+alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", rev = "feb5ea61ff5595751b21ceb5468f6698f3f7dc23", features = ["async"], optional = true }
+alice-identity = { version = "1.2.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", rev = "1e89ae099fed4f29a5d4e6b676370e48c0f66525", optional = true }
 
 [dev-dependencies]
 # device keys for the secure transport tests

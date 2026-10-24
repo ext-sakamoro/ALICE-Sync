@@ -79,7 +79,7 @@ Enable with `--features async` to get a complete, self-contained P2P stack.
 | `channel` | Topic-based pub/sub with per-topic filtering |
 | `discovery` | mDNS LAN auto-discovery + manual peer registration + GC |
 | `session` | High-level session driver: builder pattern, tick loop, 5 sync modes |
-| `secure_transport` | `SyncTransport` over an authenticated, encrypted channel: peers are certified devices, messages are sealed and carry the certificate they came with, application bytes travel beside Sync messages (feature `secure-transport`) |
+| `secure_transport` | `SyncTransport` over an authenticated, encrypted channel: peers are certified devices dialled by their certificate (Noise IK), messages are sealed and carry the certificate they came with, application bytes travel beside Sync messages (feature `secure-transport`) |
 
 ### Sync Modes
 
