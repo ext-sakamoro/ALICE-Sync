@@ -4,7 +4,18 @@ All notable changes to ALICE-Sync will be documented in this file.
 
 ## [Unreleased]
 
+### 破壊的変更
+
+- 保存形式 2 (`persist::FORMAT_VERSION`): `WorldState` の本体を、生存する entity (id の昇順)、frame、seed で書く slot・generation・free list は書かない 形式 1 は `FormatStatus::Legacy(1)` として読み、`decode_state_strict` は `PersistError::LegacyFormat` で拒む `Decoded` に `format`、`PersistError` に `LegacyFormat` を足した `Handle` は保存と復元の後に保たれない
+- `WorldState::id_map` を非公開にした 生存する entity の id と handle は `WorldState::ids` (id の昇順)、数は `WorldState::live_count`
+- `SyncError` に `TooManyEntities` を足した `World::apply` と `WorldSoA::apply` は `world::MAX_LIVE_ENTITIES` (65536) を超える新しい id の Spawn を拒み、保存形式もその数を超える件数を拒む
+- `WorldSoA` の位置を `Fixed` の Q16.16 (event の Q8.8 の値を `<< 8`) にした (以前は `<< 6`) slot の hash は `Entity::compute_hash` と同じ式 (active の mask を含む)
+- 生存する id の Spawn は、`World` と `WorldSoA` の両方で前の entity を置き換える (以前は前の entity が storage に残った)
+- `converge`: 記録は event が名指す id の小さい `MAX_ENTITY_RECORDS` 個、world は生存する id の小さい `MAX_LIVE_ENTITIES` 個 (届く順に依らない、`Converge::with_limits` で小さくできる)
+
 ### Added
+- `WorldSoA::to_state` / `WorldSoA::from_state`、`WorldStorage::entity_at`、`Converge::with_limits`、`persist::decode_state_strict`、`persist::FormatStatus`、`persist::LEGACY_FORMAT_VERSIONS`
+- 試験: `tests/persist_canonical.rs` (受信順の違う node の保存 bytes)、`tests/untrusted_entity_id_alloc_bound.rs` (上限 16 MiB の allocator で、他の node の entity id と保存された件数で確保する量)、`tests/g13_bounds.rs` (上限つきの world を模型と比べる)、`tests/keyed_lookup.rs` (key の違う表で同じ保存 bytes と hash)、`tests/backends_agree.rs` (`World` と `WorldSoA` の値と保存 bytes)、`tests/raw_serde_has_stamped_path.rs`、形式 1 の固定 file `tests/data/persist/world_state_v1.bin`
 - `conformance/g11-own.toml`: ALICE-Law G11 の表のうち、この crate 固有の行 (G4 / G5 の golden、G6 の識別子、比較 0 件は `scripts/run_tests.sh` の試験、G10 の `scripts/entropy_guard.py` とその試験) 共有の検査器の行は ALICE-Law の `conformance/g11-shared-rows.toml` から生成する
 - CI (ALICE-Law G11): test job の default と全 native feature の `cargo test` を `scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism` で走らせ、名指した golden・識別子・順序の試験の binary が 1 件も走らない時に step が落ちるようにした release-profile.yml の golden の段に `determinism_golden` を足した `tests/determinism_golden.rs` の 4 つの golden は 1 つの照合 (`golden_mismatch`) を通り、`checker_rejects_a_wrong_digest` が動いた bit の digest が記録と一致しないことを確かめる (照合を常に一致にする変異でこの試験だけが失敗する)
 - CI (ALICE-Law G11 (c)): ほかの ALICE の crate と同じ bytes で持つ file を ALICE-Law の表と比べる `scripts/shared_files.sh` (試験 `scripts/test_shared_files.py`、ALICE-DetMath などと同じ中身) と `.github/shared-files-pin` を足し、test job (3 OS) と preflight で走らせる 表と検査器は pin の版で取得し SHA-256 を確かめる 差、表に無い共有の path、比較 0 件は失敗
@@ -27,6 +38,8 @@ All notable changes to ALICE-Sync will be documented in this file.
 - CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
 ### Changed
+- entity id の索引: id が `4 * MAX_LIVE_ENTITIES` より小さければ上限までの密な表、大きければ表ごとに key を引いた SipHash の表 使う memory は生存する entity の数に比例する 順序のある出力は id の昇順の写しを通す
+- `scripts/api_boundary.toml`: features に `serde-raw` を足し、その `Serialize` / `Deserialize` 10 件を足した
 - Licence: from `AGPL-3.0-or-later OR LicenseRef-Commercial` to `LicenseRef-Proprietary` from this version (the source stays published for reading; using it needs a written agreement); published versions keep their licence
 - CI: `scripts/run_tests.sh` と試験 `scripts/test_run_tests.py` を ALICE-LLM と同じ bytes にし、`.github/shared-files-pin` を ALICE-Law の新しい版に移す 名前 `lib` を library の単体試験として数えるようになったが、この repository は `lib` を名指さないので各段の試験の名前と件数は変わらない 試験 `scripts/test_public_text.py` を ALICE-SDF と同じ版にした (公開する text の検査を pin の checker で走らせ、置いた note link を tree と commit message で検出すること、pin の 3 行目 `config-sha256` が設定を承認することを確かめる、network を使う) `scripts/public_text.sh` と public-text の pin は変えないので検査の結果は変わらない
 - **破壊的変更**: `Node::apply_event` は他の node から受け取った event の適用で、刻まれた key のまま当て、刻み直さない (これまでは sequence 番号 0 の event を自分の log に積み直していたが、stream の最初の event も番号 0 なので、peer の最初の event が node ごとに別の key になった) 自分が出す event は `Node::emit` を使う `Event::new` のままの event (刻印が無い) は `SyncError::Unstamped` で拒否する `World::iter_entities` は格納順でなく実体 id の順に返す (格納順は Spawn と Despawn の履歴に依る) README と crate の doc の例は emit した log を受け手に渡す形にした `EventStream` の sequence 番号は 1 から振る (0 は stream が刻んでいない event、`Event::is_stamped`) `Node::apply_event` は刻印の無い event を重複とみなさず `SyncError::Unstamped` で拒否する C-ABI: `as_sync_node_apply_event` は刻印の無い event に -2 を返し `as_sync_last_error` に理由を置く (それまでは 2 つ目以降を重複として黙って捨て 0 を返した) `as_sync_node_event_at` (node が emit した event の複製、受け手の apply に渡す) と `as_sync_event_origin` / `as_sync_event_seq` / `as_sync_event_timestamp` を追加 (79 関数、Unity と UE5 の宣言は 76) README に同期の手順を書いた (node の id は node ごとに違うこと: 同じ id の 2 つの node は同じ key で別の event を刻み、どの受け手でも中身の順で同じ world に収束するが、その中身は意図したものにならない) `WorldStorage` の field は crate の外から書けない (`pub(crate)`) crate の外からは capacity / ids / kinds / count / seed などの field も読めなくなった (accessor は無く、`len` / `get_position` / `iter_alive` などの method は残る)、`WorldSoA::storage` は読み取り専用の `WorldSoA::storage()` になった (hash と id の対応を保たない書き込みを防ぐ) Python の `WorldSoA.spawn` / `despawn` は新しい `WorldSoA::spawn_raw` / `despawn_slot` を通り、hash と id の対応を保つ (それまでは storage を直接変え、hash が古いままになった)

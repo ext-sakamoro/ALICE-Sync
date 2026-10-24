@@ -227,10 +227,10 @@ if [[ $quick -eq 1 ]]; then
 fi
 
 step "ci.yml / test: Test (default = std)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound -- cargo test )
 
 step "ci.yml / test: Test (all native features)"
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism -- cargo test --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound -- cargo test --features "$NATIVE_FEATURES" )
 
 step "ci.yml / test: Analytic oracle (async + physics + codec)"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw"; cargo test --test analytic_oracle --features "async,physics,codec" )
