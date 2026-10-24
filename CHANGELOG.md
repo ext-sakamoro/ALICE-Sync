@@ -39,6 +39,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
 ### Changed
+- CI: Security & Hygiene の package integrity の job を dispatch でだけ走る `.github/workflows/package-integrity.yml` に移した
 - entity id の索引: id が `4 * MAX_LIVE_ENTITIES` より小さければ上限までの密な表、大きければ表ごとに key を引いた SipHash の表 使う memory は生存する entity の数に比例する 順序のある出力は id の昇順の写しを通す
 - `scripts/api_boundary.toml`: features に `serde-raw` を足し、その `Serialize` / `Deserialize` 10 件を足した
 - Licence: `AGPL-3.0-or-later OR LicenseRef-Commercial` → `LicenseRef-Proprietary`
