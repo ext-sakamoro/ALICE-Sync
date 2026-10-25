@@ -14,13 +14,6 @@ name: Security & Hygiene
 on:
   push:
     branches: [main, 'ci/**']
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'src/**'
-      - 'deny.toml'
-      - '.github/workflows/security-audit.yml'
-      - '.github/actions/**'
   pull_request:
     branches: [main]
     paths:
@@ -30,6 +23,7 @@ on:
       - 'deny.toml'
       - '.github/workflows/security-audit.yml'
       - '.github/actions/**'
+      - '.github/paths/security-audit.txt'
   schedule:
     # 毎週月曜 09:00 UTC = 18:00 JST
     - cron: '0 9 * * 1'
@@ -49,7 +43,38 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  # which files changed: a new or force-pushed branch is compared with merge-base(origin/main),
+  # another push with before..after, a pull request with base...head; schedule and manual
+  # runs always run; any error runs (fail-closed) — scripts/changed_paths.py
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after || github.sha }}
+          CREATED: ${{ github.event.created }}
+          FORCED: ${{ github.event.forced }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          python3 scripts/changed_paths.py decide --event "$EVENT"
+          --before "$BEFORE" --after "$AFTER" --created "$CREATED" --forced "$FORCED"
+          --base "$PR_BASE" --head "$PR_HEAD"
+          --patterns-file .github/paths/security-audit.txt
+
   audit:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: cargo audit (RustSec CVE scan)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -79,6 +104,8 @@ jobs:
             --ignore RUSTSEC-2026-0235
 
   deny:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: cargo-deny (license + advisories + bans + sources)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -97,6 +124,8 @@ jobs:
         run: cargo deny --features "$NATIVE_FEATURES" check all
 
   unused-deps:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: cargo-machete (unused dependencies)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -108,6 +137,8 @@ jobs:
       - uses: bnjbvr/cargo-machete@main
 
   stub-guard:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: Stub / mock / dbg guard (grep)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -174,6 +205,8 @@ jobs:
           fi
 
   coverage:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: Coverage (cargo-llvm-cov、informational)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -198,3 +231,16 @@ jobs:
           name: coverage-summary
           path: coverage-summary.txt
           retention-days: 30
+
+  gate:
+    name: Gate
+    if: always()
+    needs: [changes, audit, deny, unused-deps, stub-guard, coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/changed_paths.py gate --needs-json "$NEEDS"
