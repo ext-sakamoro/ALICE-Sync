@@ -156,6 +156,7 @@ features = "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ff
 "fn::SyncTelemetry::record_peer" = "local: a peer id typed u8 recorded as telemetry, not bytes"
 "fn::TcpTransport::bind" = "local: a socket address as text, parsed by std into an address, not a Law-bearing value"
 "fn::UdpTransport::bind" = "local: a socket address as text, parsed by std into an address, not a Law-bearing value"
+"fn::UdpTransport::bind_with_peer_limit" = "local: a socket address as text, parsed by std into an address, not a Law-bearing value"
 "fn::Verifier::receive" = "handshake: a_checkpoint_signed_by_another_device_for_the_origin_is_refused"
 "fn::authorship::canonical_bytes" = "local: an event's integers in a fixed byte order, no Law-bearing value"
 "fn::authorship::chain_next" = "local: a chain head and an event's fixed bytes hashed, no Law-bearing value"

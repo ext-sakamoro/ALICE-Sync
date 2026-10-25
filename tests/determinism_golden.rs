@@ -265,7 +265,7 @@ fn golden_crdt() {
 }
 
 pub const GOLDEN_UDP_WIRE: &str =
-    "a794c39249a6a2b492111b3601742eeb8471b2c7dbfa083e6be987adaefce763";
+    "940261a2380bdf620e1379895861b8068bab97d9d9d7cf4bec8017f65d19a352";
 
 /// The UDP wire (version 2): the packets of a fixed exchange between two reliability endpoints (data
 /// packets, one lost, acknowledgement-only packets for a near and a far sequence number, a reply that

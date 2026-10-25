@@ -121,11 +121,53 @@ pub trait SyncTransport: Send + Sync {
 /// How often [`UdpTransport::recv`] sends the due acknowledgements and retransmissions while it waits
 const MAINTENANCE: std::time::Duration = std::time::Duration::from_millis(25);
 
+/// How many peer addresses a [`UdpTransport`] keeps state for by default ([`UdpTransport::bind_with_peer_limit`])
+pub const MAX_UDP_PEERS: usize = 1024;
+
 /// One peer's reliability state and reassembly
-#[derive(Default)]
 struct PeerLink {
     reliability: ReliableEndpoint,
     reassembly: ReassemblyBuffer,
+    /// when a packet was last sent to or received from the peer
+    last_used: std::time::Instant,
+}
+
+impl PeerLink {
+    fn new(now: std::time::Instant) -> Self {
+        Self {
+            reliability: ReliableEndpoint::new(),
+            reassembly: ReassemblyBuffer::new(),
+            last_used: now,
+        }
+    }
+}
+
+/// The link of `addr`, made when it has none; a new link beyond `max` pushes out the least recently used one,
+/// whose unacknowledged packets are returned as delivery failures
+fn link_of<'a>(
+    peers: &'a mut std::collections::BTreeMap<SocketAddr, PeerLink>,
+    addr: SocketAddr,
+    max: usize,
+    evicted: &mut Vec<(SocketAddr, DeliveryFailure)>,
+) -> &'a mut PeerLink {
+    let now = crate::clock::now();
+    if !peers.contains_key(&addr) {
+        while peers.len() >= max {
+            let Some(oldest) = peers
+                .iter()
+                .min_by_key(|(a, l)| (l.last_used, **a))
+                .map(|(a, _)| *a)
+            else {
+                break;
+            };
+            if let Some(mut gone) = peers.remove(&oldest) {
+                evicted.extend(gone.reliability.abandon().into_iter().map(|f| (oldest, f)));
+            }
+        }
+    }
+    let link = peers.entry(addr).or_insert_with(|| PeerLink::new(now));
+    link.last_used = now;
+    link
 }
 
 /// UDP-based transport with reliability layer.
@@ -142,20 +184,41 @@ pub struct UdpTransport {
     socket: UdpSocket,
     peers: tokio::sync::Mutex<std::collections::BTreeMap<SocketAddr, PeerLink>>,
     failures: tokio::sync::Mutex<std::collections::VecDeque<(SocketAddr, DeliveryFailure)>>,
-    /// Peers already reported as sending another wire version
-    other_wire: tokio::sync::Mutex<std::collections::BTreeSet<SocketAddr>>,
+    /// Peers already reported as sending another wire version, oldest first (at most `max_peers`)
+    other_wire: tokio::sync::Mutex<std::collections::VecDeque<SocketAddr>>,
+    /// How many peer addresses have state (links, and the other-wire reports)
+    max_peers: usize,
 }
 
 impl UdpTransport {
     /// Bind to a local address
     pub async fn bind(addr: &str) -> TransportResult<Self> {
+        Self::bind_with_peer_limit(addr, MAX_UDP_PEERS).await
+    }
+
+    /// Bind, keeping state for at most `max_peers` peer addresses (at least 1): a packet from or to a new
+    /// address beyond that pushes out the least recently used peer, whose unacknowledged packets are returned
+    /// from `recv` as [`TransportError::Undelivered`] ([`DeliveryFailure::Abandoned`])
+    pub async fn bind_with_peer_limit(addr: &str, max_peers: usize) -> TransportResult<Self> {
         let socket = UdpSocket::bind(addr).await?;
         Ok(Self {
             socket,
             peers: tokio::sync::Mutex::new(std::collections::BTreeMap::new()),
             failures: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
-            other_wire: tokio::sync::Mutex::new(std::collections::BTreeSet::new()),
+            other_wire: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
+            max_peers: max_peers.max(1),
         })
+    }
+
+    /// How many peer addresses have reliability state now (at most the limit)
+    pub async fn peer_count(&self) -> usize {
+        self.peers.lock().await.len()
+    }
+
+    async fn note_evicted(&self, evicted: Vec<(SocketAddr, DeliveryFailure)>) {
+        if !evicted.is_empty() {
+            self.failures.lock().await.extend(evicted);
+        }
     }
 
     /// Acknowledged and lost packet counts over all peers, and the loss rate
@@ -230,7 +293,8 @@ impl SyncTransport for UdpTransport {
         let payload = message.to_compact_bytes();
         let packets = {
             let mut peers = self.peers.lock().await;
-            let link = peers.entry(addr).or_default();
+            let mut evicted = Vec::new();
+            let link = link_of(&mut peers, addr, self.max_peers, &mut evicted);
             let packets: Vec<Vec<u8>> = if payload.len() <= MAX_PAYLOAD - HEADER_SIZE {
                 vec![link.reliability.wrap_outgoing(&payload)]
             } else {
@@ -241,6 +305,7 @@ impl SyncTransport for UdpTransport {
                     .collect()
             };
             self.note_failures(addr, &mut link.reliability).await;
+            self.note_evicted(evicted).await;
             packets
         };
         for packet in packets {
@@ -265,17 +330,29 @@ impl SyncTransport for UdpTransport {
                 }
             };
             let packet = &buf[..len];
-            if crate::reliability::classify(packet) == Err(PacketError::OtherWire) {
-                if self.other_wire.lock().await.insert(from) {
+            match crate::reliability::classify(packet) {
+                Ok(_) => {}
+                Err(PacketError::OtherWire) => {
+                    let mut seen = self.other_wire.lock().await;
+                    if seen.contains(&from) {
+                        continue;
+                    }
+                    if seen.len() >= self.max_peers {
+                        seen.pop_front();
+                    }
+                    seen.push_back(from);
                     return Err(TransportError::Handshake(
                         crate::protocol::HandshakeRefused::WireMismatch { peer: from },
                     ));
                 }
-                continue;
+                // this wire's magic with an unknown kind or a wrong length: dropped, no state, no report
+                Err(PacketError::Malformed) => continue,
             }
             let complete = {
                 let mut peers = self.peers.lock().await;
-                let link = peers.entry(from).or_default();
+                let mut evicted = Vec::new();
+                let link = link_of(&mut peers, from, self.max_peers, &mut evicted);
+                self.note_evicted(evicted).await;
                 let Some(payload) = link.reliability.unwrap_incoming(packet) else {
                     continue; // duplicate, acknowledgement-only or invalid
                 };

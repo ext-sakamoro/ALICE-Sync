@@ -241,3 +241,86 @@ async fn interleaved_fragments_of_two_messages_stay_apart() {
         }
     }
 }
+
+/// Packets from many source addresses do not grow the state past the peer limit: the least recently used
+/// peer is pushed out, and what it had in flight is reported, not forgotten
+#[tokio::test]
+async fn a_flood_of_source_addresses_is_bounded() {
+    let b = Arc::new(
+        UdpTransport::bind_with_peer_limit("127.0.0.1:0", 4)
+            .await
+            .unwrap(),
+    );
+    let b_addr = b.local_addr().unwrap();
+    // b sends to a silent address first: its packet is in flight when the flood pushes it out
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let dead = silent.local_addr().unwrap();
+    b.send_to(&Message::Ack { seq: 1 }, dead).await.unwrap();
+    let mut at_b = pump(b.clone());
+    let mut senders = Vec::new();
+    for i in 0..12u64 {
+        let s = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+        s.send_to(&Message::Ack { seq: 100 + i }, b_addr)
+            .await
+            .unwrap();
+        senders.push(s);
+    }
+    let (mut got, mut evicted) = (0, false);
+    while got < 12 || !evicted {
+        match timeout(WAIT, at_b.recv())
+            .await
+            .expect("all arrive")
+            .unwrap()
+        {
+            Ok(Message::Ack { .. }) => got += 1,
+            Err(e) => {
+                assert!(
+                    e.contains(&dead.to_string()) && e.contains("abandoned"),
+                    "{e}"
+                );
+                evicted = true;
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(b.peer_count().await <= 4, "state beyond the limit");
+    }
+    drop(silent);
+}
+
+/// The peer pushed out at the limit is the least recently used one, not the oldest made
+#[tokio::test]
+async fn the_least_recently_used_peer_is_pushed_out() {
+    let b = Arc::new(
+        UdpTransport::bind_with_peer_limit("127.0.0.1:0", 2)
+            .await
+            .unwrap(),
+    );
+    let silent: Vec<UdpSocket> = futures_bind(3).await;
+    let addr: Vec<SocketAddr> = silent.iter().map(|s| s.local_addr().unwrap()).collect();
+    b.send_to(&Message::Ack { seq: 1 }, addr[0]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    b.send_to(&Message::Ack { seq: 2 }, addr[1]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    b.send_to(&Message::Ack { seq: 3 }, addr[0]).await.unwrap(); // the first is used again
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    b.send_to(&Message::Ack { seq: 4 }, addr[2]).await.unwrap(); // a third pushes one out
+    let mut at_b = pump(b.clone());
+    let err = timeout(WAIT, at_b.recv())
+        .await
+        .expect("reported")
+        .unwrap()
+        .expect_err("a failure");
+    assert!(
+        err.contains(&addr[1].to_string()) && err.contains("abandoned"),
+        "{err}"
+    );
+    assert_eq!(b.peer_count().await, 2);
+}
+
+async fn futures_bind(n: usize) -> Vec<UdpSocket> {
+    let mut v = Vec::new();
+    for _ in 0..n {
+        v.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    }
+    v
+}

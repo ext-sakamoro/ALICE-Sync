@@ -207,7 +207,7 @@ mod async_laws {
             (rf.message_id, rf.fragment_index, rf.fragment_count),
             (f.message_id, f.fragment_index, f.fragment_count)
         );
-        assert_eq!((HEADER_SIZE, FRAGMENT_HEADER_SIZE), (27, 10));
+        assert_eq!((HEADER_SIZE, FRAGMENT_HEADER_SIZE), (33, 10));
 
         let chunk = MAX_PAYLOAD - FRAGMENT_HEADER_SIZE;
         for len in [

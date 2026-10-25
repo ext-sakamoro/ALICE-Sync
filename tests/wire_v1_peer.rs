@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use alice_sync::protocol::{HandshakeRefused, Message};
 use alice_sync::reliability::{
-    ack_packet, classify, PacketError, ReliableEndpoint, ACK_SIZE, HEADER_SIZE,
+    ack_packet, classify, PacketError, ReliableEndpoint, ACK_SIZE, HEADER_SIZE, WIRE_MAGIC,
 };
 use alice_sync::session::{SessionBuilder, SessionEvent};
 use alice_sync::transport::{SyncTransport, TransportError, UdpTransport};
@@ -242,5 +242,101 @@ async fn a_session_reports_a_version_1_peer() {
         HandshakeRefused::WireMismatch {
             peer: old.local_addr().unwrap()
         }
+    );
+}
+
+/// A datagram with this wire's magic and an unknown kind (or a wrong length) is malformed, not another wire:
+/// it is dropped without a report and leaves no state; another wire from the same address is still reported
+#[tokio::test]
+async fn a_malformed_packet_of_this_wire_is_not_a_wire_mismatch() {
+    let b = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+    let b_addr = b.local_addr().unwrap();
+    let s = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let old = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let mut unknown = ack_packet(1, 0).to_vec();
+    unknown[WIRE_MAGIC.len()] = 9;
+    let mut short = ack_packet(1, 0).to_vec();
+    short.pop();
+    for p in [&unknown, &short] {
+        s.send_to(p, b_addr).await.unwrap();
+    }
+    old.send_to(&v1::packet(0, 0, &hello().to_compact_bytes()), b_addr)
+        .await
+        .unwrap();
+    // the first report names the other-wire sender, not the sender of the malformed datagrams
+    match timeout(WAIT, b.recv()).await.expect("reported") {
+        Err(TransportError::Handshake(HandshakeRefused::WireMismatch { peer })) => {
+            assert_eq!(peer, old.local_addr().unwrap());
+        }
+        other => {
+            panic!("the malformed packets are dropped, then the other wire is reported: {other:?}")
+        }
+    }
+    assert_eq!(
+        b.peer_count().await,
+        0,
+        "no link for a malformed or another wire's datagram"
+    );
+}
+
+/// A version-1 packet whose first four bytes spell this wire's prefix (seq 21313 = `AS`, ack 512 = `\0\x02`,
+/// any ack bits) is still another wire: reported once with the peer, never delivered, and another peer's link
+/// keeps working
+#[tokio::test]
+async fn a_version_1_packet_that_spells_the_prefix_is_another_wire() {
+    let b = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+    let b_addr = b.local_addr().unwrap();
+    let old = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let payload = hello().to_compact_bytes();
+    for bits_low in [1u8, 2, 0x55] {
+        let mut p = v1::packet(21313, 512, &payload);
+        assert_eq!(&p[..4], b"AS\x00\x02");
+        p[4] = bits_low;
+        assert_eq!(classify(&p), Err(PacketError::OtherWire));
+        old.send_to(&p, b_addr).await.unwrap();
+    }
+    match timeout(WAIT, b.recv()).await.expect("reported") {
+        Err(TransportError::Handshake(HandshakeRefused::WireMismatch { peer })) => {
+            assert_eq!(peer, old.local_addr().unwrap());
+        }
+        other => panic!("expected WireMismatch, got {other:?}"),
+    }
+    let a = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+    a.send_to(&Message::Ack { seq: 5 }, b_addr).await.unwrap();
+    match timeout(WAIT, b.recv()).await.expect("delivered") {
+        Ok(env) => assert!(matches!(env.message, Message::Ack { seq: 5 })),
+        other => panic!("only the other peer's message arrives, got {other:?}"),
+    }
+}
+
+/// The other-wire reports are bounded by the peer limit: the oldest reported address is forgotten (and reported
+/// again when it comes back)
+#[tokio::test]
+async fn other_wire_reports_are_bounded() {
+    let b = UdpTransport::bind_with_peer_limit("127.0.0.1:0", 2)
+        .await
+        .unwrap();
+    let b_addr = b.local_addr().unwrap();
+    let mut olds = Vec::new();
+    for _ in 0..3 {
+        olds.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    }
+    let p = v1::packet(0, 0, &hello().to_compact_bytes());
+    let mut reported = Vec::new();
+    for s in olds.iter().chain(std::iter::once(&olds[0])) {
+        s.send_to(&p, b_addr).await.unwrap();
+        match timeout(WAIT, b.recv()).await.expect("reported") {
+            Err(TransportError::Handshake(HandshakeRefused::WireMismatch { peer })) => {
+                reported.push(peer)
+            }
+            other => panic!("expected WireMismatch, got {other:?}"),
+        }
+    }
+    let first = olds[0].local_addr().unwrap();
+    assert_eq!(reported.first(), Some(&first));
+    assert_eq!(
+        reported.last(),
+        Some(&first),
+        "forgotten past the limit, reported again"
     );
 }

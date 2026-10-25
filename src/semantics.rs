@@ -13,7 +13,7 @@
 //! # Hex form
 //!
 //! ```text
-//! a964b354942cd6ab6e81d4a4b55560e79a70609b792bb3998ba1cbe0bd490868
+//! 4bb9b3bfc82c4b09073061cc571d319ce1754a57c185bd81398337968e7bc455
 //! ```
 //!
 //! # Entries
@@ -95,7 +95,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     ),
     (
         "udp-wire",
-        hex32("a794c39249a6a2b492111b3601742eeb8471b2c7dbfa083e6be987adaefce763"),
+        hex32("940261a2380bdf620e1379895861b8068bab97d9d9d7cf4bec8017f65d19a352"),
     ),
     (
         "alice-physics",
@@ -110,7 +110,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
 /// The semantics identifier of this crate: the fold of
 /// [`SYNC_SEMANTICS_PINS`] (see the module documentation).
 pub const SYNC_SEMANTICS_ID: [u8; 32] =
-    hex32("a964b354942cd6ab6e81d4a4b55560e79a70609b792bb3998ba1cbe0bd490868");
+    hex32("4bb9b3bfc82c4b09073061cc571d319ce1754a57c185bd81398337968e7bc455");
 
 /// Earlier values of [`SYNC_SEMANTICS_ID`] whose pinned bits this release
 /// still reproduces (none yet: this is the first identifier).

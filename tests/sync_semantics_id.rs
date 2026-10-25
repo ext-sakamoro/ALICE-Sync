@@ -47,6 +47,40 @@ fn the_identifier_is_the_fold_of_its_pins() {
     );
 }
 
+/// The 64 hex digits of `pub const NAME: &str = "…";` in `src`, whatever whitespace (rustfmt's line break
+/// included) stands between `=` and the quote; `None` when the const or its quoted 64 hex digits are missing
+fn recorded_digest<'a>(src: &'a str, constant: &str) -> Option<&'a str> {
+    let key = format!("pub const {constant}: &str =");
+    let after = src.find(&key)? + key.len();
+    let d = src[after..].trim_start().strip_prefix('"')?.get(..65)?;
+    let (hex, close) = d.split_at(64);
+    (close == "\"" && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
+}
+
+#[test]
+fn the_digest_is_read_across_a_line_break() {
+    let h = "ab".repeat(32);
+    for src in [
+        format!("pub const G: &str = \"{h}\";"),
+        format!("pub const G: &str =\n    \"{h}\";"),
+        format!("pub const G: &str =\r\n\t\"{h}\";"),
+    ] {
+        assert_eq!(recorded_digest(&src, "G"), Some(h.as_str()), "{src:?}");
+    }
+    assert_eq!(
+        recorded_digest(&format!("pub const G: &str = \"{}\";", &h[..63]), "G"),
+        None
+    );
+    assert_eq!(
+        recorded_digest(&format!("pub const G: &str = \"{h}0\";"), "G"),
+        None
+    );
+    assert_eq!(
+        recorded_digest(&format!("pub const H: &str = \"{h}\";"), "G"),
+        None
+    );
+}
+
 /// The golden entries are the digests `tests/determinism_golden.rs` records.
 #[test]
 fn golden_pins_are_the_recorded_goldens() {
@@ -59,12 +93,8 @@ fn golden_pins_are_the_recorded_goldens() {
         ("receive", "GOLDEN_RECEIVE"),
         ("udp-wire", "GOLDEN_UDP_WIRE"),
     ] {
-        let key = format!("pub const {constant}: &str = \"");
-        let start = src
-            .find(&key)
-            .unwrap_or_else(|| panic!("{constant} not found"))
-            + key.len();
-        let recorded = &src[start..start + 64];
+        let recorded = recorded_digest(src, constant)
+            .unwrap_or_else(|| panic!("{constant} has no recorded digest"));
         let pin = SYNC_SEMANTICS_PINS
             .iter()
             .find(|(n, _)| *n == name)

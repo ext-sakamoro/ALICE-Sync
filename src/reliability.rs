@@ -20,15 +20,21 @@
 //!
 //! # Packets (wire version 2)
 //!
-//! Every packet starts with [`WIRE_MAGIC`] (4 bytes, the last one the version), then its kind:
+//! Every packet starts with [`WIRE_MAGIC`] (10 bytes: `AS`, a zero byte, the version, four zero bytes,
+//! `0xff 0xff`), then its kind:
 //!
 //! ```text
-//! data              [magic:4][1][seq:8][ack:8][ack_bits:4][payload_len:2][payload]
-//! acknowledgement   [magic:4][2][ack:8][ack_bits:4]
+//! data              [magic:10][1][seq:8][ack:8][ack_bits:4][payload_len:2][payload]
+//! acknowledgement   [magic:10][2][ack:8][ack_bits:4]
 //! ```
 //!
-//! all integers little-endian. A packet without the magic is not of this version (an older peer's)
-//! and is refused by [`classify`]; the transport reports such a peer.
+//! all integers little-endian, and the datagram is exactly its kind's length (the payload length included).
+//! A packet without the magic is not of this version and is refused by [`classify`] as
+//! [`PacketError::OtherWire`]; the transport reports such a peer. No version-1 packet starts with the magic:
+//! version 1 headers are `[seq:2][ack:2][ack_bits:4][payload_len:2]` with the datagram 10 + payload_len
+//! bytes, so bytes 8 and 9 of the magic (payload length 0xffff) would make a version-1 datagram longer than
+//! UDP carries. A datagram with the magic whose kind is unknown or whose length is not its kind's is
+//! [`PacketError::Malformed`] and is dropped without a report.
 
 #![allow(
     clippy::missing_const_for_fn,
@@ -44,8 +50,11 @@ use std::time::{Duration, Instant};
 /// Maximum payload per UDP datagram (conservative MTU - IP/UDP headers)
 pub const MAX_PAYLOAD: usize = 1200;
 
-/// The first bytes of every packet of this wire version: `AS`, a zero byte, the version (2)
-pub const WIRE_MAGIC: [u8; 4] = *b"AS\x00\x02";
+/// The first bytes of every packet of this wire version: `AS`, a zero byte, the version (2), four zero bytes
+/// and `0xff 0xff` (where a version-1 header holds a payload length no version-1 datagram can have)
+pub const WIRE_MAGIC: [u8; 10] = *b"AS\x00\x02\x00\x00\x00\x00\xff\xff";
+
+const M: usize = WIRE_MAGIC.len();
 
 /// The kind byte of a data packet
 pub const KIND_DATA: u8 = 1;
@@ -54,10 +63,10 @@ pub const KIND_DATA: u8 = 1;
 pub const KIND_ACK: u8 = 2;
 
 /// Header size of a data packet in bytes (magic, kind, seq, ack, ack bits, payload length)
-pub const HEADER_SIZE: usize = 4 + 1 + 8 + 8 + 4 + 2;
+pub const HEADER_SIZE: usize = M + 1 + 8 + 8 + 4 + 2;
 
 /// Size of an acknowledgement-only packet in bytes (magic, kind, ack, ack bits)
-pub const ACK_SIZE: usize = 4 + 1 + 8 + 4;
+pub const ACK_SIZE: usize = M + 1 + 8 + 4;
 
 /// Maximum fragment count per message
 pub const MAX_FRAGMENTS: u8 = 255;
@@ -77,6 +86,9 @@ pub enum DeliveryFailure {
     GaveUp { seq: u64 },
     /// Pushed out of the send window (too many packets in flight) before it was acknowledged
     Evicted { seq: u64 },
+    /// In flight when the endpoint stopped delivering ([`ReliableEndpoint::abandon`]: the transport dropped the
+    /// peer's state at its peer limit)
+    Abandoned { seq: u64 },
 }
 
 impl core::fmt::Display for DeliveryFailure {
@@ -84,6 +96,7 @@ impl core::fmt::Display for DeliveryFailure {
         match self {
             Self::GaveUp { seq } => write!(f, "packet {seq} never acknowledged"),
             Self::Evicted { seq } => write!(f, "packet {seq} pushed out of the send window"),
+            Self::Abandoned { seq } => write!(f, "packet {seq} abandoned with the peer's state"),
         }
     }
 }
@@ -102,7 +115,7 @@ pub enum Packet<'a> {
 pub enum PacketError {
     /// It does not start with [`WIRE_MAGIC`]: another wire version (an older peer)
     OtherWire,
-    /// It starts with the magic but is shorter than its kind's header, or its kind is unknown
+    /// It starts with the magic, but its kind is unknown or its length is not its kind's
     Malformed,
 }
 
@@ -124,26 +137,26 @@ impl PacketHeader {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut buf = [0u8; HEADER_SIZE];
-        buf[0..4].copy_from_slice(&WIRE_MAGIC);
-        buf[4] = KIND_DATA;
-        buf[5..13].copy_from_slice(&self.seq.to_le_bytes());
-        buf[13..21].copy_from_slice(&self.ack.to_le_bytes());
-        buf[21..25].copy_from_slice(&self.ack_bits.to_le_bytes());
-        buf[25..27].copy_from_slice(&self.payload_len.to_le_bytes());
+        buf[..M].copy_from_slice(&WIRE_MAGIC);
+        buf[M] = KIND_DATA;
+        buf[M + 1..M + 9].copy_from_slice(&self.seq.to_le_bytes());
+        buf[M + 9..M + 17].copy_from_slice(&self.ack.to_le_bytes());
+        buf[M + 17..M + 21].copy_from_slice(&self.ack_bits.to_le_bytes());
+        buf[M + 21..M + 23].copy_from_slice(&self.payload_len.to_le_bytes());
         buf
     }
 
     /// Read a data packet's header (`None` without the magic or the data kind)
     #[must_use]
     pub fn from_bytes(buf: &[u8; HEADER_SIZE]) -> Option<Self> {
-        if buf[..4] != WIRE_MAGIC || buf[4] != KIND_DATA {
+        if buf[..M] != WIRE_MAGIC || buf[M] != KIND_DATA {
             return None;
         }
         Some(Self {
-            seq: u64_at(buf, 5),
-            ack: u64_at(buf, 13),
-            ack_bits: u32_at(buf, 21),
-            payload_len: u16::from_le_bytes([buf[25], buf[26]]),
+            seq: u64_at(buf, M + 1),
+            ack: u64_at(buf, M + 9),
+            ack_bits: u32_at(buf, M + 17),
+            payload_len: u16::from_le_bytes([buf[M + 21], buf[M + 22]]),
         })
     }
 }
@@ -163,32 +176,31 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
 /// Read a datagram as a packet of this wire version
 ///
 /// # Errors
-/// [`PacketError::OtherWire`] without the magic, [`PacketError::Malformed`] for a short packet or an
-/// unknown kind
+/// [`PacketError::OtherWire`] without the magic, [`PacketError::Malformed`] for an unknown kind or a
+/// datagram whose length is not its kind's (a data packet is exactly its header and its payload length)
 pub fn classify(packet: &[u8]) -> Result<Packet<'_>, PacketError> {
-    if packet.len() < 5 || packet[..4] != WIRE_MAGIC {
+    if packet.len() <= M || packet[..M] != WIRE_MAGIC {
         return Err(PacketError::OtherWire);
     }
-    match packet[4] {
+    match packet[M] {
         KIND_DATA if packet.len() >= HEADER_SIZE => {
-            let payload_len = u16::from_le_bytes([packet[25], packet[26]]);
-            let end = HEADER_SIZE + usize::from(payload_len);
-            if packet.len() < end {
+            let payload_len = u16::from_le_bytes([packet[M + 21], packet[M + 22]]);
+            if packet.len() != HEADER_SIZE + usize::from(payload_len) {
                 return Err(PacketError::Malformed);
             }
             Ok(Packet::Data(
                 PacketHeader {
-                    seq: u64_at(packet, 5),
-                    ack: u64_at(packet, 13),
-                    ack_bits: u32_at(packet, 21),
+                    seq: u64_at(packet, M + 1),
+                    ack: u64_at(packet, M + 9),
+                    ack_bits: u32_at(packet, M + 17),
                     payload_len,
                 },
-                &packet[HEADER_SIZE..end],
+                &packet[HEADER_SIZE..],
             ))
         }
-        KIND_ACK if packet.len() >= ACK_SIZE => Ok(Packet::Ack {
-            ack: u64_at(packet, 5),
-            ack_bits: u32_at(packet, 13),
+        KIND_ACK if packet.len() == ACK_SIZE => Ok(Packet::Ack {
+            ack: u64_at(packet, M + 1),
+            ack_bits: u32_at(packet, M + 9),
         }),
         _ => Err(PacketError::Malformed),
     }
@@ -198,10 +210,10 @@ pub fn classify(packet: &[u8]) -> Result<Packet<'_>, PacketError> {
 #[must_use]
 pub fn ack_packet(ack: u64, ack_bits: u32) -> [u8; ACK_SIZE] {
     let mut buf = [0u8; ACK_SIZE];
-    buf[0..4].copy_from_slice(&WIRE_MAGIC);
-    buf[4] = KIND_ACK;
-    buf[5..13].copy_from_slice(&ack.to_le_bytes());
-    buf[13..17].copy_from_slice(&ack_bits.to_le_bytes());
+    buf[..M].copy_from_slice(&WIRE_MAGIC);
+    buf[M] = KIND_ACK;
+    buf[M + 1..M + 9].copy_from_slice(&ack.to_le_bytes());
+    buf[M + 9..M + 13].copy_from_slice(&ack_bits.to_le_bytes());
     buf
 }
 
@@ -618,6 +630,19 @@ impl ReliableEndpoint {
             .collect()
     }
 
+    /// Stop trying to deliver every packet not yet acknowledged, and return them as
+    /// [`DeliveryFailure::Abandoned`] (after the failures not yet taken); the endpoint keeps no packet in flight
+    pub fn abandon(&mut self) -> Vec<DeliveryFailure> {
+        let mut out = std::mem::take(&mut self.failures);
+        for sent in self.sent_packets.drain(..) {
+            if !sent.acked {
+                self.packets_lost += 1;
+                out.push(DeliveryFailure::Abandoned { seq: sent.seq });
+            }
+        }
+        out
+    }
+
     /// The packets given up or evicted since the last call
     pub fn take_failures(&mut self) -> Vec<DeliveryFailure> {
         std::mem::take(&mut self.failures)
@@ -817,9 +842,28 @@ mod tests {
             payload_len: 100,
         };
         let bytes = header.to_bytes();
-        assert_eq!(&bytes[..4], &WIRE_MAGIC);
-        assert_eq!(bytes[4], KIND_DATA);
+        assert_eq!(&bytes[..M], &WIRE_MAGIC);
+        assert_eq!(bytes[M], KIND_DATA);
         assert_eq!(PacketHeader::from_bytes(&bytes), Some(header));
+    }
+
+    /// No version-1 datagram (10-byte header, then its payload length of bytes) starts with the magic, also
+    /// one whose first bytes spell the version-2 prefix (seq 0x5341, ack 0x0200)
+    #[test]
+    fn test_no_version_1_datagram_has_the_magic() {
+        for len in 0..=1200usize {
+            for bits_low in [0u8, 1, 2, 0xff] {
+                let mut p = vec![0u8; 10 + len];
+                p[0..2].copy_from_slice(&0x5341u16.to_le_bytes());
+                p[2..4].copy_from_slice(&0x0200u16.to_le_bytes());
+                p[4] = bits_low;
+                p[8..10].copy_from_slice(&(len as u16).to_le_bytes());
+                assert_eq!(&p[..4], b"AS\x00\x02");
+                assert_eq!(classify(&p), Err(PacketError::OtherWire), "len {len}");
+            }
+        }
+        // the payload length the magic implies cannot fit a datagram
+        assert!(10 + usize::from(u16::from_le_bytes([WIRE_MAGIC[8], WIRE_MAGIC[9]])) > 65_507);
     }
 
     #[test]
@@ -832,7 +876,7 @@ mod tests {
         other_version[3] = 1;
         assert_eq!(classify(&other_version), Err(PacketError::OtherWire));
         let mut unknown_kind = ack_packet(3, 0);
-        unknown_kind[4] = 9;
+        unknown_kind[M] = 9;
         assert_eq!(classify(&unknown_kind), Err(PacketError::Malformed));
         assert_eq!(
             classify(&ack_packet(3, 0)[..ACK_SIZE - 1]),
@@ -846,6 +890,14 @@ mod tests {
         let p = ep.wrap_outgoing(b"abc");
         assert!(matches!(classify(&p), Ok(Packet::Data(_, b"abc"))));
         assert_eq!(classify(&p[..p.len() - 1]), Err(PacketError::Malformed));
+        let longer = [&p[..], &[0u8]].concat();
+        assert_eq!(
+            classify(&longer),
+            Err(PacketError::Malformed),
+            "a trailing byte"
+        );
+        let ack_longer = [&ack_packet(3, 0)[..], &[0u8]].concat();
+        assert_eq!(classify(&ack_longer), Err(PacketError::Malformed));
         let empty = ep.wrap_outgoing(b"");
         assert!(matches!(classify(&empty), Ok(Packet::Data(_, b""))));
     }
