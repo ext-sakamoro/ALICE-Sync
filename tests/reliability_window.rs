@@ -4,6 +4,8 @@
 //! far behind the newest is acknowledged by name, and a packet the sender stops retrying or drops from its
 //! window is reported as a delivery failure instead of being counted as acknowledged.
 
+#![cfg(feature = "async")]
+
 use alice_sync::reliability::{DeliveryFailure, ReliableEndpoint, RECV_WINDOW};
 
 #[test]
@@ -18,7 +20,11 @@ fn a_retransmission_far_behind_the_newest_is_taken_once() {
     // its retransmission comes 99 sequence numbers behind the newest
     assert_eq!(b.unwrap_incoming(&packets[0]), Some(vec![0]));
     assert_eq!(b.unwrap_incoming(&packets[0]), None, "only once");
-    assert_eq!(b.unwrap_incoming(&packets[50]), None, "a repeat is still refused");
+    assert_eq!(
+        b.unwrap_incoming(&packets[50]),
+        None,
+        "a repeat is still refused"
+    );
 }
 
 #[test]
@@ -38,7 +44,11 @@ fn a_silent_receiver_still_acknowledges() {
     let mut a = ReliableEndpoint::new();
     let mut b = ReliableEndpoint::new();
     let p = a.wrap_outgoing(b"data");
-    assert_eq!(b.take_acks().len(), 0, "nothing received yet, nothing to acknowledge");
+    assert_eq!(
+        b.take_acks().len(),
+        0,
+        "nothing received yet, nothing to acknowledge"
+    );
     b.unwrap_incoming(&p).unwrap();
     let acks = b.take_acks();
     assert_eq!(acks.len(), 1);
@@ -82,7 +92,10 @@ fn a_packet_received_far_behind_is_acknowledged_by_name() {
     for ack in b.take_acks() {
         a.unwrap_incoming(&ack);
     }
-    assert!(a.collect_retransmits_now().is_empty(), "the late one is acknowledged too");
+    assert!(
+        a.collect_retransmits_now().is_empty(),
+        "the late one is acknowledged too"
+    );
     assert!(a.take_failures().is_empty());
 }
 

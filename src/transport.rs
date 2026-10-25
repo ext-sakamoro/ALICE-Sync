@@ -15,7 +15,9 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 
 use crate::protocol::Message;
-use crate::reliability::{ReassemblyBuffer, ReliableEndpoint, HEADER_SIZE, MAX_PAYLOAD};
+use crate::reliability::{
+    DeliveryFailure, ReassemblyBuffer, ReliableEndpoint, HEADER_SIZE, MAX_PAYLOAD,
+};
 
 /// Received envelope: payload + source address
 #[derive(Debug, Clone)]
@@ -37,6 +39,12 @@ pub enum TransportError {
     /// No certificate is held for the address, so it cannot be dialled (the secure transport dials only a
     /// device whose certificate it holds)
     NoPeerCert(std::net::SocketAddr),
+    /// A packet to `peer` was never acknowledged, or was pushed out of the send window: what it carried
+    /// may not have arrived
+    Undelivered {
+        peer: SocketAddr,
+        failure: DeliveryFailure,
+    },
 }
 
 impl From<std::io::Error> for TransportError {
@@ -53,6 +61,7 @@ impl std::fmt::Display for TransportError {
             Self::Closed => write!(f, "transport closed"),
             Self::Handshake(r) => write!(f, "handshake refused: {r}"),
             Self::NoPeerCert(a) => write!(f, "no peer certificate for {a}"),
+            Self::Undelivered { peer, failure } => write!(f, "not delivered to {peer}: {failure}"),
         }
     }
 }
@@ -109,13 +118,28 @@ pub trait SyncTransport: Send + Sync {
 // UDP Transport
 // ============================================================================
 
+/// How often [`UdpTransport::recv`] sends the due acknowledgements and retransmissions while it waits
+const MAINTENANCE: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// One peer's reliability state and reassembly
+#[derive(Default)]
+struct PeerLink {
+    reliability: ReliableEndpoint,
+    reassembly: ReassemblyBuffer,
+}
+
 /// UDP-based transport with reliability layer.
 ///
 /// Best for: low-latency real-time sync (games, `IoT`, live collaboration).
+///
+/// Each peer address has its own reliability state. While [`SyncTransport::recv`] waits it acknowledges
+/// what was received (also when this side sends nothing else) and retransmits what was not acknowledged; a
+/// packet that is never acknowledged, or that is pushed out of the send window, is returned from `recv` as
+/// [`TransportError::Undelivered`] (a session reports it as [`crate::session::SessionEvent::DeliveryFailed`]).
 pub struct UdpTransport {
     socket: UdpSocket,
-    reliability: tokio::sync::Mutex<ReliableEndpoint>,
-    reassembly: tokio::sync::Mutex<ReassemblyBuffer>,
+    peers: tokio::sync::Mutex<std::collections::BTreeMap<SocketAddr, PeerLink>>,
+    failures: tokio::sync::Mutex<std::collections::VecDeque<(SocketAddr, DeliveryFailure)>>,
 }
 
 impl UdpTransport {
@@ -124,22 +148,73 @@ impl UdpTransport {
         let socket = UdpSocket::bind(addr).await?;
         Ok(Self {
             socket,
-            reliability: tokio::sync::Mutex::new(ReliableEndpoint::new()),
-            reassembly: tokio::sync::Mutex::new(ReassemblyBuffer::new()),
+            peers: tokio::sync::Mutex::new(std::collections::BTreeMap::new()),
+            failures: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
         })
     }
 
-    /// Get a reference to the reliability endpoint (for stats)
+    /// Acknowledged and lost packet counts over all peers, and the loss rate
     pub async fn reliability_stats(&self) -> (u64, u64, f64) {
-        let rel = self.reliability.lock().await;
-        (rel.packets_acked, rel.packets_lost, rel.loss_rate())
+        let peers = self.peers.lock().await;
+        let (acked, lost) = peers.values().fold((0, 0), |(a, l), p| {
+            (
+                a + p.reliability.packets_acked,
+                l + p.reliability.packets_lost,
+            )
+        });
+        let total = acked + lost;
+        #[allow(clippy::cast_precision_loss)]
+        let rate = if total == 0 {
+            0.0
+        } else {
+            lost as f64 / total as f64
+        };
+        (acked, lost, rate)
     }
 
-    /// Collect and send retransmissions
+    /// Collect and send retransmissions to `peer` now (`recv` also does this while it waits)
     pub async fn retransmit(&self, peer: SocketAddr) -> TransportResult<()> {
-        let retransmits = self.reliability.lock().await.collect_retransmits();
-        for packet in retransmits {
+        let packets = {
+            let mut peers = self.peers.lock().await;
+            let Some(link) = peers.get_mut(&peer) else {
+                return Ok(());
+            };
+            let packets = link.reliability.collect_retransmits();
+            self.note_failures(peer, &mut link.reliability).await;
+            packets
+        };
+        for packet in packets {
             self.socket.send_to(&packet, peer).await?;
+        }
+        Ok(())
+    }
+
+    async fn note_failures(&self, peer: SocketAddr, reliability: &mut ReliableEndpoint) {
+        let found = reliability.take_failures();
+        if !found.is_empty() {
+            let mut q = self.failures.lock().await;
+            q.extend(found.into_iter().map(|f| (peer, f)));
+        }
+    }
+
+    /// Send every peer's due acknowledgements and retransmissions, and note its delivery failures
+    async fn maintain(&self) -> TransportResult<()> {
+        let mut out = Vec::new();
+        {
+            let mut peers = self.peers.lock().await;
+            for (addr, link) in peers.iter_mut() {
+                for p in link.reliability.take_acks() {
+                    out.push((*addr, p));
+                }
+                for p in link.reliability.collect_retransmits() {
+                    out.push((*addr, p));
+                }
+                link.reassembly.gc();
+                self.note_failures(*addr, &mut link.reliability).await;
+            }
+        }
+        for (addr, p) in out {
+            self.socket.send_to(&p, addr).await?;
         }
         Ok(())
     }
@@ -148,49 +223,59 @@ impl UdpTransport {
 impl SyncTransport for UdpTransport {
     async fn send_to(&self, message: &Message, addr: SocketAddr) -> TransportResult<()> {
         let payload = message.to_compact_bytes();
-
-        if payload.len() <= MAX_PAYLOAD - HEADER_SIZE {
-            // Single packet
-            let packet = self.reliability.lock().await.wrap_outgoing(&payload);
+        let packets = {
+            let mut peers = self.peers.lock().await;
+            let link = peers.entry(addr).or_default();
+            let packets: Vec<Vec<u8>> = if payload.len() <= MAX_PAYLOAD - HEADER_SIZE {
+                vec![link.reliability.wrap_outgoing(&payload)]
+            } else {
+                let msg_id = link.reliability.local_seq();
+                crate::reliability::fragment_payload(msg_id, &payload)
+                    .iter()
+                    .map(|frag| link.reliability.wrap_outgoing(frag))
+                    .collect()
+            };
+            self.note_failures(addr, &mut link.reliability).await;
+            packets
+        };
+        for packet in packets {
             self.socket.send_to(&packet, addr).await?;
-        } else {
-            // Fragment and send each fragment as a reliable packet
-            let msg_id = self.reliability.lock().await.local_seq();
-            let fragments = crate::reliability::fragment_payload(msg_id, &payload);
-            for frag in fragments {
-                let packet = self.reliability.lock().await.wrap_outgoing(&frag);
-                self.socket.send_to(&packet, addr).await?;
-            }
         }
         Ok(())
     }
 
     async fn recv(&self) -> TransportResult<Envelope> {
         let mut buf = vec![0u8; 65535];
+        let mut next = tokio::time::Instant::from_std(crate::clock::now()) + MAINTENANCE;
         loop {
-            let (len, from) = self.socket.recv_from(&mut buf).await?;
-            let packet = &buf[..len];
-
-            let unwrap_result = self.reliability.lock().await.unwrap_incoming(packet);
-            let Some(payload) = unwrap_result else {
-                continue; // duplicate or invalid
+            if let Some((peer, failure)) = self.failures.lock().await.pop_front() {
+                return Err(TransportError::Undelivered { peer, failure });
+            }
+            let (len, from) = tokio::select! {
+                r = self.socket.recv_from(&mut buf) => r?,
+                () = tokio::time::sleep_until(next) => {
+                    next = tokio::time::Instant::from_std(crate::clock::now()) + MAINTENANCE;
+                    self.maintain().await?;
+                    continue;
+                }
             };
-
-            // Check if this is a fragment (payload starts with fragment header)
-            // Fragments have payload > MAX_PAYLOAD threshold, but we detect by trying
-            // bitcode decode first (fast path for non-fragmented)
-            if let Some(msg) = Message::from_compact_bytes(&payload) {
+            let packet = &buf[..len];
+            let complete = {
+                let mut peers = self.peers.lock().await;
+                let link = peers.entry(from).or_default();
+                let Some(payload) = link.reliability.unwrap_incoming(packet) else {
+                    continue; // duplicate, acknowledgement-only or invalid
+                };
+                // a whole message decodes as it is; otherwise it is a fragment
+                if Message::from_compact_bytes(&payload).is_some() {
+                    Some(payload)
+                } else {
+                    link.reassembly.feed(&payload)
+                }
+            };
+            if let Some(msg) = complete.and_then(|c| Message::from_compact_bytes(&c)) {
                 return Ok(Envelope { message: msg, from });
             }
-
-            // Try fragment reassembly
-            let reassemble_result = self.reassembly.lock().await.feed(&payload);
-            if let Some(complete) = reassemble_result {
-                if let Some(msg) = Message::from_compact_bytes(&complete) {
-                    return Ok(Envelope { message: msg, from });
-                }
-            }
-
             // Could not decode — skip
         }
     }

@@ -104,7 +104,11 @@ async fn a_burst_arrives_once_each_through_loss_repeats_and_reordering() {
     }
     let mut got = BTreeSet::new();
     while got.len() < 40 {
-        match timeout(WAIT, at_b.recv()).await.expect("all 40 arrive").unwrap() {
+        match timeout(WAIT, at_b.recv())
+            .await
+            .expect("all 40 arrive")
+            .unwrap()
+        {
             Ok(Message::Ack { seq }) => assert!(got.insert(seq), "{seq} came twice"),
             other => panic!("{other:?}"),
         }
@@ -122,7 +126,10 @@ async fn a_peer_that_never_answers_is_reported() {
     let dead = silent.local_addr().unwrap();
     let mut from_a = pump(a.clone());
     a.send_to(&Message::Ack { seq: 1 }, dead).await.unwrap();
-    let r = timeout(WAIT, from_a.recv()).await.expect("a failure is reported").unwrap();
+    let r = timeout(WAIT, from_a.recv())
+        .await
+        .expect("a failure is reported")
+        .unwrap();
     let err = r.expect_err("a failure, not a message");
     assert!(err.contains(&dead.to_string()), "{err}");
     drop(silent);

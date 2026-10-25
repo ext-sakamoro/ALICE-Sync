@@ -8,6 +8,15 @@
 //! - **ACK bitfield**: 32-bit trailing ACK (covers last 33 packets)
 //! - **Retransmission**: RTT-based adaptive timeout
 //! - **Fragmentation**: MTU-safe split/reassemble for large payloads
+//! - **Receive window**: the last [`RECV_WINDOW`] sequence numbers are remembered, so a retransmission
+//!   that comes after newer packets is still taken once and a repeat is refused
+//! - **Acknowledgement-only packets** ([`ReliableEndpoint::take_acks`]): a receiver acknowledges what it
+//!   got even when it has no data to send; such a packet has an empty payload, takes no sequence number
+//!   and is never delivered (an older peer decodes it as nothing and still reads its acknowledgements).
+//!   A packet received far behind the newest is acknowledged by its own sequence number
+//! - **Delivery failures** ([`ReliableEndpoint::take_failures`]): a packet that is never acknowledged
+//!   after [`MAX_RETRANSMITS`] tries, or that is pushed out of the send window, is reported, not counted as
+//!   acknowledged
 //!
 //! # Packet Header (10 bytes)
 //!
@@ -34,6 +43,32 @@ pub const HEADER_SIZE: usize = 10;
 
 /// Maximum fragment count per message
 pub const MAX_FRAGMENTS: u8 = 255;
+
+/// How many sequence numbers, the newest received one included, the receiver remembers
+pub const RECV_WINDOW: u16 = 1024;
+
+/// How many times an unacknowledged packet is sent again before it is reported as given up
+pub const MAX_RETRANSMITS: u8 = 10;
+
+const RECV_WORDS: usize = (RECV_WINDOW / 64) as usize;
+
+/// A packet the sender stopped trying to deliver
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryFailure {
+    /// Never acknowledged after [`MAX_RETRANSMITS`] retransmissions
+    GaveUp { seq: u16 },
+    /// Pushed out of the send window (too many packets in flight) before it was acknowledged
+    Evicted { seq: u16 },
+}
+
+impl core::fmt::Display for DeliveryFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::GaveUp { seq } => write!(f, "packet {seq} never acknowledged"),
+            Self::Evicted { seq } => write!(f, "packet {seq} pushed out of the send window"),
+        }
+    }
+}
 
 /// Packet header on the wire
 #[derive(Debug, Clone, Copy)]
@@ -82,13 +117,13 @@ struct SentPacket {
     retransmit_count: u8,
 }
 
-/// Received packet tracking for deduplication
+/// Received packet tracking for deduplication: a bit per sequence number of the last [`RECV_WINDOW`]
 #[derive(Debug)]
 struct RecvTracker {
     /// Most recent received sequence
     most_recent: u16,
-    /// Bitfield of received packets (relative to `most_recent`)
-    recv_bits: u32,
+    /// slot `seq % RECV_WINDOW` is set when `seq`, within the window, has been received
+    seen: [u64; RECV_WORDS],
     /// Whether we have received any packet yet
     initialized: bool,
 }
@@ -97,57 +132,79 @@ impl RecvTracker {
     fn new() -> Self {
         Self {
             most_recent: 0,
-            recv_bits: 0,
+            seen: [0; RECV_WORDS],
             initialized: false,
         }
     }
 
-    /// Record a received sequence number. Returns `false` if duplicate.
+    const fn slot(seq: u16) -> (usize, u64) {
+        let i = seq % RECV_WINDOW;
+        ((i / 64) as usize, 1 << (i % 64))
+    }
+
+    fn has(&self, seq: u16) -> bool {
+        let (w, b) = Self::slot(seq);
+        self.seen[w] & b != 0
+    }
+
+    fn set(&mut self, seq: u16) {
+        let (w, b) = Self::slot(seq);
+        self.seen[w] |= b;
+    }
+
+    /// Whether `seq` lies in the window ending at the newest received sequence number
+    fn in_window(&self, seq: u16) -> bool {
+        let back = seq_diff(self.most_recent, seq);
+        (0..i32::from(RECV_WINDOW)).contains(&back)
+    }
+
+    /// Record a received sequence number. Returns `false` if it was received before or is older than the
+    /// window.
     fn record(&mut self, seq: u16) -> bool {
         if !self.initialized {
             self.most_recent = seq;
             self.initialized = true;
+            self.set(seq);
             return true;
         }
-
         let diff = seq_diff(seq, self.most_recent);
-
-        if diff == 0 {
-            return false; // duplicate of most_recent
-        }
-
         if diff > 0 {
-            // Newer packet: shift bits and update most_recent
-            let shift = diff.min(32) as u32;
-            self.recv_bits = if shift >= 32 {
-                0
+            // newer: the slots the window moves over held sequence numbers that have now left it
+            if diff >= i32::from(RECV_WINDOW) {
+                self.seen = [0; RECV_WORDS];
             } else {
-                self.recv_bits << shift
-            };
-            // Mark the old most_recent in the bitfield
-            if shift <= 32 {
-                self.recv_bits |= 1 << (shift - 1);
+                for k in 1..=diff {
+                    let (w, b) = Self::slot(self.most_recent.wrapping_add(k as u16));
+                    self.seen[w] &= !b;
+                }
             }
             self.most_recent = seq;
-            true
-        } else {
-            // Older packet: check if already received
-            let bit = (-diff) as u32;
-            if bit > 32 {
-                return false; // too old
-            }
-            let mask = 1 << (bit - 1);
-            if self.recv_bits & mask != 0 {
-                return false; // duplicate
-            }
-            self.recv_bits |= mask;
-            true
+            self.set(seq);
+            return true;
         }
+        if !self.in_window(seq) || self.has(seq) {
+            return false;
+        }
+        self.set(seq);
+        true
+    }
+
+    /// The acknowledgement header with `reference` as its newest acknowledged sequence number: bit `i`
+    /// stands for `reference - 1 - i`
+    fn ack_header_for(&self, reference: u16) -> (u16, u32) {
+        let mut bits = 0u32;
+        for i in 0..32u16 {
+            let seq = reference.wrapping_sub(1 + i);
+            if self.in_window(seq) && self.has(seq) {
+                bits |= 1 << i;
+            }
+        }
+        (reference, bits)
     }
 
     /// Build ack header from current state
     fn ack_header(&self) -> (u16, u32) {
-        (self.most_recent, self.recv_bits)
+        self.ack_header_for(self.most_recent)
     }
 }
 
@@ -231,6 +288,10 @@ pub struct ReliableEndpoint {
     pub packets_lost: u64,
     /// Packet acked counter
     pub packets_acked: u64,
+    /// Received sequence numbers to acknowledge by name in the next acknowledgement-only packets
+    acks_due: std::collections::BTreeSet<u16>,
+    /// Packets given up or evicted, not yet taken
+    failures: Vec<DeliveryFailure>,
 }
 
 impl ReliableEndpoint {
@@ -245,6 +306,8 @@ impl ReliableEndpoint {
             max_in_flight: 256,
             packets_lost: 0,
             packets_acked: 0,
+            acks_due: std::collections::BTreeSet::new(),
+            failures: Vec::new(),
         }
     }
 
@@ -278,14 +341,20 @@ impl ReliableEndpoint {
             retransmit_count: 0,
         });
 
-        // Trim old sent packets
+        // Trim old sent packets: one never acknowledged is reported
         while self.sent_packets.len() > self.max_in_flight {
             if let Some(old) = self.sent_packets.pop_front() {
                 if !old.acked {
                     self.packets_lost += 1;
+                    self.failures
+                        .push(DeliveryFailure::Evicted { seq: old.seq });
                 }
             }
         }
+        // this packet's header acknowledges the newest received one and the 32 before it
+        let newest = self.recv_tracker.most_recent;
+        self.acks_due
+            .retain(|r| !(0..33).contains(&seq_diff(newest, *r)));
 
         let mut packet = Vec::with_capacity(HEADER_SIZE + payload.len());
         packet.extend_from_slice(&header.to_bytes());
@@ -304,17 +373,26 @@ impl ReliableEndpoint {
         let header_bytes: [u8; HEADER_SIZE] = packet[..HEADER_SIZE].try_into().ok()?;
         let header = PacketHeader::from_bytes(&header_bytes);
 
-        // Process ACKs from remote
-        self.process_acks(header.ack, header.ack_bits);
-
-        // Check for duplicate
-        if !self.recv_tracker.record(header.seq) {
-            return None; // duplicate
-        }
-
         let payload_end = HEADER_SIZE + header.payload_len as usize;
         if packet.len() < payload_end {
             return None; // truncated
+        }
+
+        // Process ACKs from remote
+        self.process_acks(header.ack, header.ack_bits);
+
+        // an acknowledgement-only packet carries no data and takes no sequence number
+        if header.payload_len == 0 {
+            return None;
+        }
+
+        let fresh = self.recv_tracker.record(header.seq);
+        // a repeat is acknowledged again too: the sender did not see the earlier acknowledgement
+        if fresh || self.recv_tracker.in_window(header.seq) {
+            self.acks_due.insert(header.seq);
+        }
+        if !fresh {
+            return None; // duplicate or too old
         }
 
         Some(packet[HEADER_SIZE..payload_end].to_vec())
@@ -355,23 +433,35 @@ impl ReliableEndpoint {
         }
     }
 
-    /// Collect packets that need retransmission (timed out, not yet acked).
+    /// Collect packets that need retransmission (timed out, not yet acked). A packet that has been sent
+    /// [`MAX_RETRANSMITS`] times more without an acknowledgement is dropped and reported
+    /// ([`Self::take_failures`]).
     pub fn collect_retransmits(&mut self) -> Vec<Vec<u8>> {
+        self.retransmit(false)
+    }
+
+    /// As [`Self::collect_retransmits`] for every unacknowledged packet now, whatever its timer (for a
+    /// caller that knows the path changed)
+    pub fn collect_retransmits_now(&mut self) -> Vec<Vec<u8>> {
+        self.retransmit(true)
+    }
+
+    fn retransmit(&mut self, all: bool) -> Vec<Vec<u8>> {
         let now = crate::clock::now();
         let rto = self.rtt.rto();
         let mut retransmits = Vec::new();
+        let mut gave_up = Vec::new();
 
         for sent in &mut self.sent_packets {
             if sent.acked {
                 continue;
             }
-            if now.duration_since(sent.send_time) >= rto {
+            if all || now.duration_since(sent.send_time) >= rto {
                 sent.send_time = now; // reset timer
                 sent.retransmit_count += 1;
 
-                if sent.retransmit_count > 10 {
-                    sent.acked = true; // give up
-                    self.packets_lost += 1;
+                if sent.retransmit_count > MAX_RETRANSMITS {
+                    gave_up.push(sent.seq);
                     continue;
                 }
 
@@ -391,7 +481,47 @@ impl ReliableEndpoint {
             }
         }
 
+        if !gave_up.is_empty() {
+            self.sent_packets.retain(|p| !gave_up.contains(&p.seq));
+            for seq in gave_up {
+                self.packets_lost += 1;
+                self.failures.push(DeliveryFailure::GaveUp { seq });
+            }
+        }
         retransmits
+    }
+
+    /// Acknowledgement-only packets for what was received since the last packet this side sent: one with
+    /// the newest received sequence number, and one per packet received far behind it (each names its own
+    /// sequence number). They take no sequence number and are not retransmitted
+    pub fn take_acks(&mut self) -> Vec<Vec<u8>> {
+        let due = std::mem::take(&mut self.acks_due);
+        let newest = self.recv_tracker.most_recent;
+        let mut refs: Vec<u16> = Vec::new();
+        if due.iter().any(|r| (0..33).contains(&seq_diff(newest, *r))) {
+            refs.push(newest);
+        }
+        refs.extend(
+            due.into_iter()
+                .filter(|r| !(0..33).contains(&seq_diff(newest, *r))),
+        );
+        refs.into_iter()
+            .map(|reference| {
+                let (ack, ack_bits) = self.recv_tracker.ack_header_for(reference);
+                let header = PacketHeader {
+                    seq: self.local_seq.wrapping_sub(1),
+                    ack,
+                    ack_bits,
+                    payload_len: 0,
+                };
+                header.to_bytes().to_vec()
+            })
+            .collect()
+    }
+
+    /// The packets given up or evicted since the last call
+    pub fn take_failures(&mut self) -> Vec<DeliveryFailure> {
+        std::mem::take(&mut self.failures)
     }
 
     /// Current packet loss rate (0.0 - 1.0)

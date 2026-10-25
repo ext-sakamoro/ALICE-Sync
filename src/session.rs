@@ -178,6 +178,12 @@ pub enum SessionEvent {
     /// with another semantics identifier, or a message before an accepted
     /// Hello. The message is dropped
     MessageRefused(HandshakeRefused),
+    /// A packet to `peer` was never acknowledged or was pushed out of the send window: what it carried
+    /// may not have arrived (the transport reports it from its receive loop)
+    DeliveryFailed {
+        peer: SocketAddr,
+        failure: crate::reliability::DeliveryFailure,
+    },
 }
 
 // ============================================================================
@@ -803,6 +809,9 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
                         let _ = event_tx.send(SessionEvent::MessageReceived(envelope));
                     }
                     Err(TransportError::Closed) => break,
+                    Err(TransportError::Undelivered { peer, failure }) => {
+                        let _ = event_tx.send(SessionEvent::DeliveryFailed { peer, failure });
+                    }
                     Err(_) => {}
                 }
             }
