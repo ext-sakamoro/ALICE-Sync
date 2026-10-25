@@ -16,7 +16,8 @@ use tokio::sync::mpsc;
 
 use crate::protocol::Message;
 use crate::reliability::{
-    DeliveryFailure, PacketError, ReassemblyBuffer, ReliableEndpoint, HEADER_SIZE, MAX_PAYLOAD,
+    DeliveryFailure, PacketError, ReassemblyBuffer, ReliableEndpoint, Tokens, HEADER_SIZE,
+    MAX_PAYLOAD,
 };
 
 /// Received envelope: payload + source address
@@ -121,8 +122,35 @@ pub trait SyncTransport: Send + Sync {
 /// How often [`UdpTransport::recv`] sends the due acknowledgements and retransmissions while it waits
 const MAINTENANCE: std::time::Duration = std::time::Duration::from_millis(25);
 
-/// How many peer addresses a [`UdpTransport`] keeps state for by default ([`UdpTransport::bind_with_peer_limit`])
+/// How many peer addresses a [`UdpTransport`] keeps state for by default ([`UdpOptions`])
 pub const MAX_UDP_PEERS: usize = 1024;
+
+/// Options of [`UdpTransport::bind_with`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UdpOptions {
+    /// How many peer addresses have state (at least 1): a packet from or to a new address beyond that pushes
+    /// out the least recently used peer, whose unacknowledged packets are returned from `recv` as
+    /// [`TransportError::Undelivered`] ([`DeliveryFailure::Abandoned`])
+    pub max_peers: usize,
+    /// Where the transport's link tokens start ([`crate::reliability::Tokens::starting_at`]): a caller that
+    /// numbers its process incarnations passes a start past the previous incarnation's tokens
+    pub token_start: u64,
+}
+
+impl Default for UdpOptions {
+    fn default() -> Self {
+        Self {
+            max_peers: MAX_UDP_PEERS,
+            token_start: 0,
+        }
+    }
+}
+
+/// The peers' state and the transport's link tokens, under one lock
+struct Peers {
+    links: std::collections::BTreeMap<SocketAddr, PeerLink>,
+    tokens: Tokens,
+}
 
 /// One peer's reliability state and reassembly
 struct PeerLink {
@@ -180,9 +208,15 @@ fn link_of<'a>(
 /// [`TransportError::Undelivered`] (a session reports it as [`crate::session::SessionEvent::DeliveryFailed`]).
 /// A datagram that is not a packet of this wire version is dropped; the first from each address is returned
 /// as [`TransportError::Handshake`] with [`crate::protocol::HandshakeRefused::WireMismatch`].
+///
+/// The traffic to a peer goes on a link the peer opens ([`crate::reliability`]): the first message to an
+/// address waits for the peer's answer, which `recv` takes, so a side that only sends must still run `recv`.
+/// A peer that dropped the link (its peer limit, or a restart) asks for a new one, and what it had not
+/// acknowledged is sent again on it. Plain UDP does not authenticate a peer: a datagram forged with its
+/// address can reopen its link (the secure transport authenticates every datagram).
 pub struct UdpTransport {
     socket: UdpSocket,
-    peers: tokio::sync::Mutex<std::collections::BTreeMap<SocketAddr, PeerLink>>,
+    peers: tokio::sync::Mutex<Peers>,
     failures: tokio::sync::Mutex<std::collections::VecDeque<(SocketAddr, DeliveryFailure)>>,
     /// Peers already reported as sending another wire version, oldest first (at most `max_peers`)
     other_wire: tokio::sync::Mutex<std::collections::VecDeque<SocketAddr>>,
@@ -193,26 +227,38 @@ pub struct UdpTransport {
 impl UdpTransport {
     /// Bind to a local address
     pub async fn bind(addr: &str) -> TransportResult<Self> {
-        Self::bind_with_peer_limit(addr, MAX_UDP_PEERS).await
+        Self::bind_with(addr, UdpOptions::default()).await
     }
 
-    /// Bind, keeping state for at most `max_peers` peer addresses (at least 1): a packet from or to a new
-    /// address beyond that pushes out the least recently used peer, whose unacknowledged packets are returned
-    /// from `recv` as [`TransportError::Undelivered`] ([`DeliveryFailure::Abandoned`])
-    pub async fn bind_with_peer_limit(addr: &str, max_peers: usize) -> TransportResult<Self> {
+    /// Bind with [`UdpOptions`]
+    pub async fn bind_with(addr: &str, options: UdpOptions) -> TransportResult<Self> {
         let socket = UdpSocket::bind(addr).await?;
         Ok(Self {
             socket,
-            peers: tokio::sync::Mutex::new(std::collections::BTreeMap::new()),
+            peers: tokio::sync::Mutex::new(Peers {
+                links: std::collections::BTreeMap::new(),
+                tokens: Tokens::starting_at(options.token_start),
+            }),
             failures: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
             other_wire: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
-            max_peers: max_peers.max(1),
+            max_peers: options.max_peers.max(1),
         })
     }
 
     /// How many peer addresses have reliability state now (at most the limit)
     pub async fn peer_count(&self) -> usize {
-        self.peers.lock().await.len()
+        self.peers.lock().await.links.len()
+    }
+
+    /// Data packets of links this transport did not hold (answered with a reopen request), over all peers
+    pub async fn stale_frames(&self) -> u64 {
+        self.peers
+            .lock()
+            .await
+            .links
+            .values()
+            .map(|l| l.reliability.stale_frames)
+            .sum()
     }
 
     async fn note_evicted(&self, evicted: Vec<(SocketAddr, DeliveryFailure)>) {
@@ -224,7 +270,7 @@ impl UdpTransport {
     /// Acknowledged and lost packet counts over all peers, and the loss rate
     pub async fn reliability_stats(&self) -> (u64, u64, f64) {
         let peers = self.peers.lock().await;
-        let (acked, lost) = peers.values().fold((0, 0), |(a, l), p| {
+        let (acked, lost) = peers.links.values().fold((0, 0), |(a, l), p| {
             (
                 a + p.reliability.packets_acked,
                 l + p.reliability.packets_lost,
@@ -244,7 +290,7 @@ impl UdpTransport {
     pub async fn retransmit(&self, peer: SocketAddr) -> TransportResult<()> {
         let packets = {
             let mut peers = self.peers.lock().await;
-            let Some(link) = peers.get_mut(&peer) else {
+            let Some(link) = peers.links.get_mut(&peer) else {
                 return Ok(());
             };
             let packets = link.reliability.collect_retransmits();
@@ -270,7 +316,7 @@ impl UdpTransport {
         let mut out = Vec::new();
         {
             let mut peers = self.peers.lock().await;
-            for (addr, link) in peers.iter_mut() {
+            for (addr, link) in peers.links.iter_mut() {
                 for p in link.reliability.take_acks() {
                     out.push((*addr, p));
                 }
@@ -293,15 +339,16 @@ impl SyncTransport for UdpTransport {
         let payload = message.to_compact_bytes();
         let packets = {
             let mut peers = self.peers.lock().await;
+            let Peers { links, tokens } = &mut *peers;
             let mut evicted = Vec::new();
-            let link = link_of(&mut peers, addr, self.max_peers, &mut evicted);
+            let link = link_of(links, addr, self.max_peers, &mut evicted);
             let packets: Vec<Vec<u8>> = if payload.len() <= MAX_PAYLOAD - HEADER_SIZE {
-                vec![link.reliability.wrap_outgoing(&payload)]
+                link.reliability.wrap_outgoing(&payload, tokens)
             } else {
                 let msg_id = link.reliability.next_message_id();
                 crate::reliability::fragment_payload(msg_id, &payload)
                     .iter()
-                    .map(|frag| link.reliability.wrap_outgoing(frag))
+                    .flat_map(|frag| link.reliability.wrap_outgoing(frag, tokens))
                     .collect()
             };
             self.note_failures(addr, &mut link.reliability).await;
@@ -348,21 +395,32 @@ impl SyncTransport for UdpTransport {
                 // this wire's magic with an unknown kind or a wrong length: dropped, no state, no report
                 Err(PacketError::Malformed) => continue,
             }
-            let complete = {
+            let (complete, replies) = {
                 let mut peers = self.peers.lock().await;
+                let Peers { links, tokens } = &mut *peers;
                 let mut evicted = Vec::new();
-                let link = link_of(&mut peers, from, self.max_peers, &mut evicted);
+                let link = link_of(links, from, self.max_peers, &mut evicted);
                 self.note_evicted(evicted).await;
-                let Some(payload) = link.reliability.unwrap_incoming(packet) else {
-                    continue; // duplicate, acknowledgement-only or invalid
-                };
-                // a whole message decodes as it is; otherwise it is a fragment
-                if Message::from_compact_bytes(&payload).is_some() {
-                    Some(payload)
-                } else {
-                    link.reassembly.feed(&payload)
+                let mut got = link.reliability.unwrap_incoming(packet, tokens);
+                // what was received is acknowledged now (also by the maintenance while recv waits): the
+                // sender then holds as little unacknowledged as it can if this side drops the link later
+                if got.payload.is_some() {
+                    got.replies.extend(link.reliability.take_acks());
                 }
+                self.note_failures(from, &mut link.reliability).await;
+                // a whole message decodes as it is; otherwise it is a fragment
+                let complete = got.payload.and_then(|payload| {
+                    if Message::from_compact_bytes(&payload).is_some() {
+                        Some(payload)
+                    } else {
+                        link.reassembly.feed(&payload)
+                    }
+                });
+                (complete, got.replies)
             };
+            for reply in replies {
+                self.socket.send_to(&reply, from).await?;
+            }
             if let Some(msg) = complete.and_then(|c| Message::from_compact_bytes(&c)) {
                 return Ok(Envelope { message: msg, from });
             }

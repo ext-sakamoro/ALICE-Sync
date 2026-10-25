@@ -227,7 +227,7 @@ pub use crdt::{CrdtMergeable, GCounter, LwwMap, LwwRegister, OrSet, PnCounter};
 #[cfg(feature = "async")]
 pub use discovery::{Discovery, DiscoverySource, MetadataError, PeerEvent, PeerInfo};
 #[cfg(feature = "async")]
-pub use reliability::{ReassemblyBuffer, ReliableEndpoint};
+pub use reliability::{ReassemblyBuffer, ReliableEndpoint, Tokens};
 #[cfg(feature = "async")]
 pub use session::{
     EventEntry, SessionBuilder, SessionConfig, SessionEvent, SessionState, SessionStats,
@@ -235,7 +235,8 @@ pub use session::{
 };
 #[cfg(feature = "async")]
 pub use transport::{
-    ChannelTransport, Envelope, SyncTransport, TcpTransport, TransportError, UdpTransport,
+    ChannelTransport, Envelope, SyncTransport, TcpTransport, TransportError, UdpOptions,
+    UdpTransport,
 };
 
 /// ALICE-Sync version

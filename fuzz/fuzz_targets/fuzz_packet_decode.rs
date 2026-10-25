@@ -7,7 +7,7 @@
 
 use alice_sync::protocol::Message;
 use alice_sync::reliability::{
-    fragment_payload, FragmentHeader, PacketHeader, ReassemblyBuffer, ReliableEndpoint,
+    fragment_payload, FragmentHeader, PacketHeader, ReassemblyBuffer, ReliableEndpoint, Tokens,
     FRAGMENT_HEADER_SIZE, HEADER_SIZE,
 };
 use libfuzzer_sys::fuzz_target;
@@ -26,14 +26,22 @@ fuzz_target!(|data: &[u8]| {
         f.copy_from_slice(&data[..FRAGMENT_HEADER_SIZE]);
         let _ = FragmentHeader::from_bytes(&f);
     }
-    let mut ep = ReliableEndpoint::new();
-    let _ = ep.unwrap_incoming(data);
+    let (mut ep, mut te) = (ReliableEndpoint::new(), Tokens::new());
+    let _ = ep.unwrap_incoming(data, &mut te);
     let _ = ep.collect_retransmits();
+    let _ = ep.take_acks();
     let _ = ep.loss_rate();
-    // the endpoint's own packets must round-trip
-    let wrapped = ep.wrap_outgoing(data);
-    let mut peer = ReliableEndpoint::new();
-    let _ = peer.unwrap_incoming(&wrapped);
+    // the endpoint's own packets must round-trip: the link opens and the payload arrives intact
+    let (mut peer, mut tp) = (ReliableEndpoint::new(), Tokens::starting_at(1 << 32));
+    let open = ep.wrap_outgoing(data, &mut te);
+    let accept = peer.unwrap_incoming(&open[0], &mut tp).replies;
+    let sent = ep.unwrap_incoming(&accept[0], &mut te).replies;
+    if data.len() <= usize::from(u16::MAX) {
+        assert_eq!(peer.unwrap_incoming(&sent[0], &mut tp).payload.as_deref(), Some(data));
+    }
+    // the untrusted datagram reaching both ends of an open link
+    let _ = peer.unwrap_incoming(data, &mut tp);
+    let _ = ep.unwrap_incoming(data, &mut te);
 
     let mut garbage = ReassemblyBuffer::new();
     let _ = garbage.feed(data);

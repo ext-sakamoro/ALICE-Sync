@@ -265,48 +265,78 @@ fn golden_crdt() {
 }
 
 pub const GOLDEN_UDP_WIRE: &str =
-    "940261a2380bdf620e1379895861b8068bab97d9d9d7cf4bec8017f65d19a352";
+    "3917218293a200a3769ab9f7cdb06f736390b899b0ba84c2064b95d1157cf4b2";
 
-/// The UDP wire (version 2): the packets of a fixed exchange between two reliability endpoints (data
-/// packets, one lost, acknowledgement-only packets for a near and a far sequence number, a reply that
-/// acknowledges in its header) and the fragments of one message with an id past 2^32, each length-prefixed
+/// The UDP wire (version 2): the packets of a fixed exchange between two reliability endpoints (the open
+/// request and its accept, data packets with one lost, acknowledgement-only packets for a near and a far
+/// sequence number, a receiver that dropped its link answering with a reopen request and the new link) and
+/// the fragments of one message with an id past 2^32, each length-prefixed
 /// (with `async`, the feature that builds `reliability`)
 #[cfg(feature = "async")]
 #[test]
 fn golden_udp_wire() {
-    use alice_sync::reliability::{ack_packet, fragment_payload, ReliableEndpoint};
+    use alice_sync::reliability::{
+        ack_packet, fragment_payload, reopen_packet, Epoch, ReliableEndpoint, Tokens,
+    };
     let mut out = Vec::new();
     let mut put = |p: &[u8]| {
         out.extend_from_slice(&(p.len() as u32).to_le_bytes());
         out.extend_from_slice(p);
     };
-    let mut a = ReliableEndpoint::new();
-    let mut b = ReliableEndpoint::new();
-    let sent: Vec<Vec<u8>> = (0..40u8)
-        .map(|i| a.wrap_outgoing(&[i, i ^ 0x5a, 7]))
-        .collect();
+    let (mut a, mut ta) = (ReliableEndpoint::new(), Tokens::starting_at(3));
+    let (mut b, mut tb) = (ReliableEndpoint::new(), Tokens::starting_at(1 << 40));
+    // the link opens: open, accept, then the payloads that waited for it
+    let mut wire = Vec::new();
+    for i in 0..40u8 {
+        wire.extend(a.wrap_outgoing(&[i, i ^ 0x5a, 7], &mut ta));
+    }
+    assert_eq!(wire.len(), 1, "the open request");
+    put(&wire[0]);
+    let accept = b.unwrap_incoming(&wire[0], &mut tb).replies;
+    put(&accept[0]);
+    let sent = a.unwrap_incoming(&accept[0], &mut ta).replies;
     for (i, p) in sent.iter().enumerate() {
         put(p);
         if i != 3 {
-            b.unwrap_incoming(p);
+            b.unwrap_incoming(p, &mut tb);
         }
     }
     for ack in b.take_acks() {
         put(&ack);
-        a.unwrap_incoming(&ack);
+        a.unwrap_incoming(&ack, &mut ta);
     }
-    b.unwrap_incoming(&sent[3]);
+    b.unwrap_incoming(&sent[3], &mut tb);
     for ack in b.take_acks() {
         put(&ack);
+        a.unwrap_incoming(&ack, &mut ta);
     }
-    let reply = b.wrap_outgoing(b"reply");
-    put(&reply);
-    a.unwrap_incoming(&reply);
-    put(&ack_packet(u64::MAX - 1, 0x8000_0001));
+    // b drops its link: a's next payload is refused with a reopen request, a opens a new link and sends it
+    let mut b2 = ReliableEndpoint::new();
+    let next = a.wrap_outgoing(b"after", &mut ta);
+    put(&next[0]);
+    let mut towards_b = next;
+    while !towards_b.is_empty() {
+        let mut towards_a = Vec::new();
+        for p in towards_b.drain(..) {
+            put(&p);
+            towards_a.extend(b2.unwrap_incoming(&p, &mut tb).replies);
+        }
+        for p in towards_a {
+            put(&p);
+            towards_b.extend(a.unwrap_incoming(&p, &mut ta).replies);
+        }
+    }
+    let e = Epoch {
+        receiver: u64::MAX - 1,
+        sender: 0x8000_0001,
+    };
+    put(&ack_packet(e, u64::MAX - 1, 0x8000_0001));
+    put(&reopen_packet(e));
     let message: Vec<u8> = (0..3000u32).map(|i| (i * 131 % 251) as u8).collect();
     for f in fragment_payload((1 << 32) + 5, &message) {
         put(&f);
     }
     out.extend_from_slice(&a.packets_acked.to_le_bytes());
+    out.extend_from_slice(&b2.stale_frames.to_le_bytes());
     assert_golden(&out, GOLDEN_UDP_WIRE, "UDP wire golden moved");
 }

@@ -11,10 +11,11 @@ use std::time::Duration;
 
 use alice_sync::protocol::{HandshakeRefused, Message};
 use alice_sync::reliability::{
-    ack_packet, classify, PacketError, ReliableEndpoint, ACK_SIZE, HEADER_SIZE, WIRE_MAGIC,
+    ack_packet, classify, Epoch, PacketError, ReliableEndpoint, Tokens, ACK_SIZE, HEADER_SIZE,
+    WIRE_MAGIC,
 };
 use alice_sync::session::{SessionBuilder, SessionEvent};
-use alice_sync::transport::{SyncTransport, TransportError, UdpTransport};
+use alice_sync::transport::{SyncTransport, TransportError, UdpOptions, UdpTransport};
 use alice_sync::{NodeId, WorldHash};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
@@ -157,7 +158,8 @@ fn version_1_packets_are_another_wire() {
                 Err(PacketError::OtherWire),
                 "seq {seq} ack {ack}"
             );
-            assert_eq!(ReliableEndpoint::new().unwrap_incoming(&p), None);
+            let got = ReliableEndpoint::new().unwrap_incoming(&p, &mut Tokens::new());
+            assert_eq!((got.payload, got.replies.len()), (None, 0));
         }
     }
 }
@@ -166,17 +168,33 @@ fn version_1_packets_are_another_wire() {
 #[test]
 fn a_version_1_receiver_never_delivers_this_wire() {
     let payload = hello().to_compact_bytes();
-    let mut new = ReliableEndpoint::new();
     let mut old = v1::RecvTracker::new();
+    let (mut new, mut tn) = (ReliableEndpoint::new(), Tokens::new());
+    let (mut peer, mut tp) = (ReliableEndpoint::new(), Tokens::starting_at(9));
+    let open = new.wrap_outgoing(b"warm-up", &mut tn);
+    let accept = peer.unwrap_incoming(&open[0], &mut tp).replies;
+    new.unwrap_incoming(&accept[0], &mut tn);
+    for p in open.iter().chain(&accept) {
+        assert!(old
+            .unwrap_incoming(p)
+            .is_none_or(|g| Message::from_compact_bytes(&g).is_none()));
+    }
     for _ in 0..64 {
-        let p = new.wrap_outgoing(&payload);
+        let p = new.wrap_outgoing(&payload, &mut tn).remove(0);
         assert_eq!(p.len(), HEADER_SIZE + payload.len());
         if let Some(got) = old.unwrap_incoming(&p) {
             assert_ne!(got, payload);
             assert!(Message::from_compact_bytes(&got).is_none());
         }
     }
-    let a = ack_packet(0, 0);
+    let a = ack_packet(
+        Epoch {
+            receiver: 0,
+            sender: 0,
+        },
+        0,
+        0,
+    );
     assert_eq!(a.len(), ACK_SIZE);
     if let Some(got) = old.unwrap_incoming(&a) {
         assert!(Message::from_compact_bytes(&got).is_none());
@@ -184,6 +202,20 @@ fn a_version_1_receiver_never_delivers_this_wire() {
 }
 
 const WAIT: Duration = Duration::from_secs(10);
+
+/// A transport whose `recv` runs (it takes the accept of its link and sends the data that waited for it)
+fn running(t: UdpTransport) -> std::sync::Arc<UdpTransport> {
+    let t = std::sync::Arc::new(t);
+    let r = t.clone();
+    tokio::spawn(async move {
+        loop {
+            if matches!(r.recv().await, Err(TransportError::Closed)) {
+                return;
+            }
+        }
+    });
+    t
+}
 
 /// A version-1 peer is reported once by the transport, and a peer of this version still gets through
 #[tokio::test]
@@ -204,7 +236,7 @@ async fn the_transport_reports_a_version_1_peer_once() {
         }
         other => panic!("expected WireMismatch, got {other:?}"),
     }
-    let a = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+    let a = running(UdpTransport::bind("127.0.0.1:0").await.unwrap());
     let a_addr = a.local_addr().unwrap();
     a.send_to(&Message::Ack { seq: 4 }, b_addr).await.unwrap();
     match timeout(WAIT, b.recv()).await.expect("delivered") {
@@ -253,9 +285,25 @@ async fn a_malformed_packet_of_this_wire_is_not_a_wire_mismatch() {
     let b_addr = b.local_addr().unwrap();
     let s = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let old = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let mut unknown = ack_packet(1, 0).to_vec();
+    let mut unknown = ack_packet(
+        Epoch {
+            receiver: 1,
+            sender: 1,
+        },
+        1,
+        0,
+    )
+    .to_vec();
     unknown[WIRE_MAGIC.len()] = 9;
-    let mut short = ack_packet(1, 0).to_vec();
+    let mut short = ack_packet(
+        Epoch {
+            receiver: 1,
+            sender: 1,
+        },
+        1,
+        0,
+    )
+    .to_vec();
     short.pop();
     for p in [&unknown, &short] {
         s.send_to(p, b_addr).await.unwrap();
@@ -301,7 +349,7 @@ async fn a_version_1_packet_that_spells_the_prefix_is_another_wire() {
         }
         other => panic!("expected WireMismatch, got {other:?}"),
     }
-    let a = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+    let a = running(UdpTransport::bind("127.0.0.1:0").await.unwrap());
     a.send_to(&Message::Ack { seq: 5 }, b_addr).await.unwrap();
     match timeout(WAIT, b.recv()).await.expect("delivered") {
         Ok(env) => assert!(matches!(env.message, Message::Ack { seq: 5 })),
@@ -313,9 +361,15 @@ async fn a_version_1_packet_that_spells_the_prefix_is_another_wire() {
 /// again when it comes back)
 #[tokio::test]
 async fn other_wire_reports_are_bounded() {
-    let b = UdpTransport::bind_with_peer_limit("127.0.0.1:0", 2)
-        .await
-        .unwrap();
+    let b = UdpTransport::bind_with(
+        "127.0.0.1:0",
+        UdpOptions {
+            max_peers: 2,
+            ..UdpOptions::default()
+        },
+    )
+    .await
+    .unwrap();
     let b_addr = b.local_addr().unwrap();
     let mut olds = Vec::new();
     for _ in 0..3 {

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use alice_sync::protocol::Message;
 use alice_sync::session::{SessionBuilder, SessionEvent};
-use alice_sync::transport::{SyncTransport, TransportError, UdpTransport};
+use alice_sync::transport::{SyncTransport, TransportError, UdpOptions, UdpTransport};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
@@ -247,9 +247,15 @@ async fn interleaved_fragments_of_two_messages_stay_apart() {
 #[tokio::test]
 async fn a_flood_of_source_addresses_is_bounded() {
     let b = Arc::new(
-        UdpTransport::bind_with_peer_limit("127.0.0.1:0", 4)
-            .await
-            .unwrap(),
+        UdpTransport::bind_with(
+            "127.0.0.1:0",
+            UdpOptions {
+                max_peers: 4,
+                ..UdpOptions::default()
+            },
+        )
+        .await
+        .unwrap(),
     );
     let b_addr = b.local_addr().unwrap();
     // b sends to a silent address first: its packet is in flight when the flood pushes it out
@@ -257,33 +263,44 @@ async fn a_flood_of_source_addresses_is_bounded() {
     let dead = silent.local_addr().unwrap();
     b.send_to(&Message::Ack { seq: 1 }, dead).await.unwrap();
     let mut at_b = pump(b.clone());
+    // 12 senders one after another (each opens its link, and its message arrives before the next starts):
+    // b keeps state for at most 4 addresses throughout
+    let (mut got, mut evicted) = (0, false);
     let mut senders = Vec::new();
     for i in 0..12u64 {
-        let s = UdpTransport::bind("127.0.0.1:0").await.unwrap();
+        let s = Arc::new(UdpTransport::bind("127.0.0.1:0").await.unwrap());
         s.send_to(&Message::Ack { seq: 100 + i }, b_addr)
             .await
             .unwrap();
-        senders.push(s);
-    }
-    let (mut got, mut evicted) = (0, false);
-    while got < 12 || !evicted {
-        match timeout(WAIT, at_b.recv())
-            .await
-            .expect("all arrive")
-            .unwrap()
-        {
-            Ok(Message::Ack { .. }) => got += 1,
-            Err(e) => {
-                assert!(
-                    e.contains(&dead.to_string()) && e.contains("abandoned"),
-                    "{e}"
-                );
-                evicted = true;
+        senders.extend([pump(s)]);
+        loop {
+            match timeout(WAIT, at_b.recv())
+                .await
+                .expect("its message arrives")
+                .unwrap()
+            {
+                Ok(Message::Ack { seq }) => {
+                    assert_eq!(seq, 100 + i);
+                    got += 1;
+                    break;
+                }
+                Err(e) => {
+                    assert!(
+                        e.contains(&dead.to_string()) && e.contains("abandoned"),
+                        "{e}"
+                    );
+                    evicted = true;
+                }
+                other => panic!("{other:?}"),
             }
-            other => panic!("{other:?}"),
         }
         assert!(b.peer_count().await <= 4, "state beyond the limit");
     }
+    assert_eq!(got, 12);
+    assert!(
+        evicted,
+        "the packet in flight to the pushed-out peer is reported"
+    );
     drop(silent);
 }
 
@@ -291,9 +308,15 @@ async fn a_flood_of_source_addresses_is_bounded() {
 #[tokio::test]
 async fn the_least_recently_used_peer_is_pushed_out() {
     let b = Arc::new(
-        UdpTransport::bind_with_peer_limit("127.0.0.1:0", 2)
-            .await
-            .unwrap(),
+        UdpTransport::bind_with(
+            "127.0.0.1:0",
+            UdpOptions {
+                max_peers: 2,
+                ..UdpOptions::default()
+            },
+        )
+        .await
+        .unwrap(),
     );
     let silent: Vec<UdpSocket> = futures_bind(3).await;
     let addr: Vec<SocketAddr> = silent.iter().map(|s| s.local_addr().unwrap()).collect();
@@ -323,4 +346,60 @@ async fn futures_bind(n: usize) -> Vec<UdpSocket> {
         v.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     }
     v
+}
+
+/// A peer whose link the receiver pushed out at its limit sends again: the receiver refuses the old link
+/// (counted as a stale frame), the sender opens a new one and the message arrives, not acknowledged as a
+/// repeat of the old link's sequence numbers
+#[tokio::test]
+async fn a_peer_pushed_out_at_the_limit_gets_its_next_message_through() {
+    let b = Arc::new(
+        UdpTransport::bind_with(
+            "127.0.0.1:0",
+            UdpOptions {
+                max_peers: 1,
+                ..UdpOptions::default()
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    let b_addr = b.local_addr().unwrap();
+    let mut at_b = pump(b.clone());
+    let a = Arc::new(UdpTransport::bind("127.0.0.1:0").await.unwrap());
+    let c = Arc::new(UdpTransport::bind("127.0.0.1:0").await.unwrap());
+    let mut from_a = pump(a.clone());
+    let _from_c = pump(c.clone());
+    for seq in 0..10 {
+        a.send_to(&Message::Ack { seq }, b_addr).await.unwrap();
+        assert!(matches!(next(&mut at_b).await, Ok(Message::Ack { seq: s }) if s == seq));
+    }
+    // every one of them is acknowledged before b drops the link
+    timeout(WAIT, async {
+        while a.reliability_stats().await.0 < 10 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("acknowledged");
+    // c takes b's only slot: a's link at b is gone
+    c.send_to(&Message::Ack { seq: 500 }, b_addr).await.unwrap();
+    assert!(matches!(
+        next(&mut at_b).await,
+        Ok(Message::Ack { seq: 500 })
+    ));
+    a.send_to(&Message::Ack { seq: 10 }, b_addr).await.unwrap();
+    let got = next(&mut at_b).await;
+    assert!(matches!(got, Ok(Message::Ack { seq: 10 })), "{got:?}");
+    assert!(
+        b.stale_frames().await >= 1,
+        "the old link's frame was refused"
+    );
+    assert!(from_a.try_recv().is_err(), "a reported no failure");
+}
+
+async fn next(
+    at_b: &mut tokio::sync::mpsc::UnboundedReceiver<Result<Message, String>>,
+) -> Result<Message, String> {
+    timeout(WAIT, at_b.recv()).await.expect("arrives").unwrap()
 }

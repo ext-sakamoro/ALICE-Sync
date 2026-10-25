@@ -140,8 +140,8 @@ fn simd_vector_ops_equal_the_scalar_law_bit_for_bit() {
 mod async_laws {
     use alice_sync::crdt::{CrdtMergeable, GCounter, LwwRegister, PnCounter};
     use alice_sync::reliability::{
-        fragment_payload, FragmentHeader, PacketHeader, ReassemblyBuffer, ReliableEndpoint,
-        RttEstimator, FRAGMENT_HEADER_SIZE, HEADER_SIZE, MAX_PAYLOAD,
+        fragment_payload, Epoch, FragmentHeader, PacketHeader, ReassemblyBuffer, ReliableEndpoint,
+        RttEstimator, Tokens, FRAGMENT_HEADER_SIZE, HEADER_SIZE, MAX_PAYLOAD,
     };
     use std::time::Duration;
 
@@ -187,15 +187,17 @@ mod async_laws {
     #[test]
     fn packet_headers_round_trip_and_fragmentation_is_the_ceiling_law() {
         let h = PacketHeader {
+            epoch: Epoch {
+                receiver: 0x1234,
+                sender: 0xDEAD_BEEF,
+            },
             seq: 0xBEEF_0000_0001,
-            ack: 0x1234,
-            ack_bits: 0xDEAD_BEEF,
             payload_len: 1199,
         };
         let rt = PacketHeader::from_bytes(&h.to_bytes()).unwrap();
         assert_eq!(
-            (rt.seq, rt.ack, rt.ack_bits, rt.payload_len),
-            (h.seq, h.ack, h.ack_bits, h.payload_len)
+            (rt.epoch, rt.seq, rt.payload_len),
+            (h.epoch, h.seq, h.payload_len)
         );
         let f = FragmentHeader {
             message_id: 0xCAFE_0000_0001,
@@ -207,7 +209,7 @@ mod async_laws {
             (rf.message_id, rf.fragment_index, rf.fragment_count),
             (f.message_id, f.fragment_index, f.fragment_count)
         );
-        assert_eq!((HEADER_SIZE, FRAGMENT_HEADER_SIZE), (33, 10));
+        assert_eq!((HEADER_SIZE, FRAGMENT_HEADER_SIZE), (37, 10));
 
         let chunk = MAX_PAYLOAD - FRAGMENT_HEADER_SIZE;
         for len in [
@@ -255,24 +257,34 @@ mod async_laws {
 
     #[test]
     fn reliable_endpoint_loss_rate_and_sequence_law() {
-        let mut a = ReliableEndpoint::new();
-        let mut b = ReliableEndpoint::new();
+        let (mut a, mut ta) = (ReliableEndpoint::new(), Tokens::new());
+        let (mut b, mut tb) = (ReliableEndpoint::new(), Tokens::starting_at(7));
         assert_eq!(a.loss_rate(), 0.0, "no traffic ⇒ 0");
-        // sequence numbers increase by one per outgoing packet
+        // the first payload opens the link; once b accepts, it goes out as data
         let s0 = a.local_seq();
-        let p1 = a.wrap_outgoing(b"one");
-        let p2 = a.wrap_outgoing(b"two");
+        let open = a.wrap_outgoing(b"one", &mut ta);
+        let accept = b.unwrap_incoming(&open[0], &mut tb).replies;
+        let first = a.unwrap_incoming(&accept[0], &mut ta).replies;
+        let p1 = first[0].clone();
+        let p2 = a.wrap_outgoing(b"two", &mut ta).remove(0);
+        // sequence numbers increase by one per outgoing payload
         assert_eq!(a.local_seq(), s0 + 2);
         let h1 = PacketHeader::from_bytes(p1[..HEADER_SIZE].try_into().unwrap()).unwrap();
         let h2 = PacketHeader::from_bytes(p2[..HEADER_SIZE].try_into().unwrap()).unwrap();
         assert_eq!(h2.seq, h1.seq + 1);
+        assert_eq!(
+            (h1.epoch, h2.epoch),
+            (a.epoch().unwrap(), a.epoch().unwrap())
+        );
         assert_eq!(h1.payload_len as usize, 3);
         // the receiver unwraps the payloads intact
-        assert_eq!(b.unwrap_incoming(&p1).as_deref(), Some(&b"one"[..]));
-        assert_eq!(b.unwrap_incoming(&p2).as_deref(), Some(&b"two"[..]));
+        let got =
+            |b: &mut ReliableEndpoint, tb: &mut Tokens, p: &[u8]| b.unwrap_incoming(p, tb).payload;
+        assert_eq!(got(&mut b, &mut tb, &p1).as_deref(), Some(&b"one"[..]));
+        assert_eq!(got(&mut b, &mut tb, &p2).as_deref(), Some(&b"two"[..]));
         // a duplicate is dropped
         assert!(
-            b.unwrap_incoming(&p2).is_none(),
+            got(&mut b, &mut tb, &p2).is_none(),
             "duplicate sequence is rejected"
         );
     }

@@ -4,18 +4,26 @@
 //!
 //! # Design
 //!
-//! - **Sequence numbers**: `u64`, never wrapping (a peer would need 2^64 packets)
+//! - **Links and epochs**: an endpoint's traffic to its peer is a link the peer opens: the sender sends an
+//!   open request with a token (the next value of its own [`Tokens`]), the receiver answers with the link's
+//!   [`Epoch`] (its own next token and the sender's). Data and acknowledgements carry the epoch; a receiver
+//!   delivers only data of the epoch it holds for that address, and a sender takes only acknowledgements of
+//!   its current epoch. A receiver that holds no link of that epoch (it dropped the peer's state, or it
+//!   restarted) answers with a reopen request, and the sender opens a new link and sends what was not
+//!   acknowledged again under the new epoch, so a link that was re-created never has its data acknowledged
+//!   as repeats of the old one
+//! - **Sequence numbers**: `u64`, never wrapping (a peer would need 2^64 packets), counted per endpoint
+//!   across its links
 //! - **ACK bitfield**: 32-bit trailing ACK (covers the 33 packets up to the acknowledged one)
-//! - **Retransmission**: RTT-based adaptive timeout
+//! - **Retransmission**: RTT-based adaptive timeout, also of an open request not yet answered
 //! - **Fragmentation**: MTU-safe split/reassemble for large payloads, with a `u64` message id
-//! - **Receive window**: the last [`RECV_WINDOW`] sequence numbers are remembered, so a retransmission
-//!   that comes after newer packets is still taken once and a repeat is refused
-//! - **Acknowledgement-only packets** ([`ReliableEndpoint::take_acks`]): a receiver acknowledges what it
-//!   got even when it has no data to send; such a packet is its own kind, carries no sequence number and
-//!   is never delivered. A packet received far behind the newest is acknowledged by its own sequence
-//!   number
+//! - **Receive window**: the last [`RECV_WINDOW`] sequence numbers of the link are remembered, so a
+//!   retransmission that comes after newer packets is still taken once and a repeat is refused
+//! - **Acknowledgement-only packets** ([`ReliableEndpoint::take_acks`]): the receiver acknowledges what it
+//!   got; a packet received far behind the newest is acknowledged by its own sequence number
 //! - **Delivery failures** ([`ReliableEndpoint::take_failures`]): a packet that is never acknowledged
-//!   after [`MAX_RETRANSMITS`] tries, or that is pushed out of the send window, is reported, not counted as
+//!   after [`MAX_RETRANSMITS`] tries (an open request never answered included), that is pushed out of the
+//!   send window, or that was in flight when the endpoint was abandoned, is reported, not counted as
 //!   acknowledged
 //!
 //! # Packets (wire version 2)
@@ -24,17 +32,32 @@
 //! `0xff 0xff`), then its kind:
 //!
 //! ```text
-//! data              [magic:10][1][seq:8][ack:8][ack_bits:4][payload_len:2][payload]
-//! acknowledgement   [magic:10][2][ack:8][ack_bits:4]
+//! data              [magic:10][1][epoch:16][seq:8][payload_len:2][payload]
+//! acknowledgement   [magic:10][2][epoch:16][ack:8][ack_bits:4]
+//! open              [magic:10][3][token:8]
+//! accept            [magic:10][4][epoch:16]
+//! reopen            [magic:10][5][epoch:16]
 //! ```
 //!
-//! all integers little-endian, and the datagram is exactly its kind's length (the payload length included).
-//! A packet without the magic is not of this version and is refused by [`classify`] as
-//! [`PacketError::OtherWire`]; the transport reports such a peer. No version-1 packet starts with the magic:
-//! version 1 headers are `[seq:2][ack:2][ack_bits:4][payload_len:2]` with the datagram 10 + payload_len
-//! bytes, so bytes 8 and 9 of the magic (payload length 0xffff) would make a version-1 datagram longer than
-//! UDP carries. A datagram with the magic whose kind is unknown or whose length is not its kind's is
-//! [`PacketError::Malformed`] and is dropped without a report.
+//! An epoch is the receiver's token then the sender's (8 bytes each). All integers little-endian, and the
+//! datagram is exactly its kind's length (the payload length included). A packet without the magic is not
+//! of this version and is refused by [`classify`] as [`PacketError::OtherWire`]; the transport reports such
+//! a peer. No version-1 packet starts with the magic: version 1 headers are
+//! `[seq:2][ack:2][ack_bits:4][payload_len:2]` with the datagram 10 + payload_len bytes, so bytes 8 and 9 of
+//! the magic (payload length 0xffff) would make a version-1 datagram longer than UDP carries. A datagram
+//! with the magic whose kind is unknown or whose length is not its kind's is [`PacketError::Malformed`] and
+//! is dropped without a report.
+//!
+//! # Limits
+//!
+//! - Plain UDP is not authenticated: a datagram forged with a peer's address can open, reopen or reset a
+//!   link. The secure transport authenticates every datagram
+//! - Delivery is at least once across a lost link: a packet the receiver delivered whose acknowledgement
+//!   was lost is sent again under the new epoch when the receiver dropped the link (or restarted) before
+//!   acknowledging it
+//! - Tokens restart with the process. When both peers restart at once while a datagram of the old link is
+//!   still in flight, the new epoch can equal the old one; [`Tokens::starting_at`] takes a caller-chosen
+//!   start (an incarnation number) that keeps the epochs of two incarnations apart
 
 #![allow(
     clippy::missing_const_for_fn,
@@ -62,11 +85,26 @@ pub const KIND_DATA: u8 = 1;
 /// The kind byte of an acknowledgement-only packet
 pub const KIND_ACK: u8 = 2;
 
-/// Header size of a data packet in bytes (magic, kind, seq, ack, ack bits, payload length)
-pub const HEADER_SIZE: usize = M + 1 + 8 + 8 + 4 + 2;
+/// The kind byte of an open request
+pub const KIND_OPEN: u8 = 3;
 
-/// Size of an acknowledgement-only packet in bytes (magic, kind, ack, ack bits)
-pub const ACK_SIZE: usize = M + 1 + 8 + 4;
+/// The kind byte of the answer to an open request
+pub const KIND_ACCEPT: u8 = 4;
+
+/// The kind byte of a reopen request
+pub const KIND_REOPEN: u8 = 5;
+
+/// Header size of a data packet in bytes (magic, kind, epoch, seq, payload length)
+pub const HEADER_SIZE: usize = M + 1 + 16 + 8 + 2;
+
+/// Size of an acknowledgement-only packet in bytes (magic, kind, epoch, ack, ack bits)
+pub const ACK_SIZE: usize = M + 1 + 16 + 8 + 4;
+
+/// Size of an open request in bytes (magic, kind, token)
+pub const OPEN_SIZE: usize = M + 1 + 8;
+
+/// Size of an accept or a reopen request in bytes (magic, kind, epoch)
+pub const EPOCH_PACKET_SIZE: usize = M + 1 + 16;
 
 /// Maximum fragment count per message
 pub const MAX_FRAGMENTS: u8 = 255;
@@ -79,10 +117,70 @@ pub const MAX_RETRANSMITS: u8 = 10;
 
 const RECV_WORDS: usize = (RECV_WINDOW / 64) as usize;
 
+/// A link: the receiver's token and the sender's
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Epoch {
+    /// The token the receiver gave the link when it accepted it
+    pub receiver: u64,
+    /// The token of the sender's open request
+    pub sender: u64,
+}
+
+impl Epoch {
+    fn to_bytes(self) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[..8].copy_from_slice(&self.receiver.to_le_bytes());
+        b[8..].copy_from_slice(&self.sender.to_le_bytes());
+        b
+    }
+
+    fn at(b: &[u8], at: usize) -> Self {
+        Self {
+            receiver: u64_at(b, at),
+            sender: u64_at(b, at + 8),
+        }
+    }
+}
+
+/// The tokens of one transport (every link it opens and every link it accepts takes the next one): never
+/// the same value twice while it lives
+#[derive(Debug, Clone)]
+pub struct Tokens {
+    next: u64,
+}
+
+impl Tokens {
+    /// Tokens from 0
+    #[must_use]
+    pub fn new() -> Self {
+        Self::starting_at(0)
+    }
+
+    /// Tokens from `start`: a caller that numbers its incarnations passes `incarnation << 32` (or any start
+    /// past the tokens of the previous incarnation), so the epochs of two incarnations differ
+    #[must_use]
+    pub fn starting_at(start: u64) -> Self {
+        Self { next: start }
+    }
+
+    /// The next token
+    pub fn take(&mut self) -> u64 {
+        let t = self.next;
+        self.next = self.next.wrapping_add(1);
+        t
+    }
+}
+
+impl Default for Tokens {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A packet the sender stopped trying to deliver
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryFailure {
-    /// Never acknowledged after [`MAX_RETRANSMITS`] retransmissions
+    /// Never acknowledged after [`MAX_RETRANSMITS`] retransmissions (or its link was never opened)
     GaveUp { seq: u64 },
     /// Pushed out of the send window (too many packets in flight) before it was acknowledged
     Evicted { seq: u64 },
@@ -106,8 +204,18 @@ impl core::fmt::Display for DeliveryFailure {
 pub enum Packet<'a> {
     /// A data packet: its header and payload
     Data(PacketHeader, &'a [u8]),
-    /// An acknowledgement-only packet: the newest acknowledged sequence number and the 32 before it
-    Ack { ack: u64, ack_bits: u32 },
+    /// An acknowledgement-only packet: the link, the newest acknowledged sequence number and the 32 before it
+    Ack {
+        epoch: Epoch,
+        ack: u64,
+        ack_bits: u32,
+    },
+    /// An open request with the sender's token
+    Open { token: u64 },
+    /// The answer to an open request: the link's epoch
+    Accept { epoch: Epoch },
+    /// The receiver holds no link of this epoch
+    Reopen { epoch: Epoch },
 }
 
 /// Why a datagram is not a packet of this wire version
@@ -122,12 +230,10 @@ pub enum PacketError {
 /// The header of a data packet
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketHeader {
+    /// The link
+    pub epoch: Epoch,
     /// Sequence number (sender's outgoing counter)
     pub seq: u64,
-    /// Most recent received sequence (remote ack)
-    pub ack: u64,
-    /// Bitfield of the 32 acks before `ack` (bit 0 = ack-1, bit 1 = ack-2, ...)
-    pub ack_bits: u32,
     /// Payload length in bytes
     pub payload_len: u16,
 }
@@ -139,10 +245,9 @@ impl PacketHeader {
         let mut buf = [0u8; HEADER_SIZE];
         buf[..M].copy_from_slice(&WIRE_MAGIC);
         buf[M] = KIND_DATA;
-        buf[M + 1..M + 9].copy_from_slice(&self.seq.to_le_bytes());
-        buf[M + 9..M + 17].copy_from_slice(&self.ack.to_le_bytes());
-        buf[M + 17..M + 21].copy_from_slice(&self.ack_bits.to_le_bytes());
-        buf[M + 21..M + 23].copy_from_slice(&self.payload_len.to_le_bytes());
+        buf[M + 1..M + 17].copy_from_slice(&self.epoch.to_bytes());
+        buf[M + 17..M + 25].copy_from_slice(&self.seq.to_le_bytes());
+        buf[M + 25..M + 27].copy_from_slice(&self.payload_len.to_le_bytes());
         buf
     }
 
@@ -153,10 +258,9 @@ impl PacketHeader {
             return None;
         }
         Some(Self {
-            seq: u64_at(buf, M + 1),
-            ack: u64_at(buf, M + 9),
-            ack_bits: u32_at(buf, M + 17),
-            payload_len: u16::from_le_bytes([buf[M + 21], buf[M + 22]]),
+            epoch: Epoch::at(buf, M + 1),
+            seq: u64_at(buf, M + 17),
+            payload_len: u16::from_le_bytes([buf[M + 25], buf[M + 26]]),
         })
     }
 }
@@ -182,39 +286,80 @@ pub fn classify(packet: &[u8]) -> Result<Packet<'_>, PacketError> {
     if packet.len() <= M || packet[..M] != WIRE_MAGIC {
         return Err(PacketError::OtherWire);
     }
+    let n = packet.len();
     match packet[M] {
-        KIND_DATA if packet.len() >= HEADER_SIZE => {
-            let payload_len = u16::from_le_bytes([packet[M + 21], packet[M + 22]]);
-            if packet.len() != HEADER_SIZE + usize::from(payload_len) {
+        KIND_DATA if n >= HEADER_SIZE => {
+            let payload_len = u16::from_le_bytes([packet[M + 25], packet[M + 26]]);
+            if n != HEADER_SIZE + usize::from(payload_len) {
                 return Err(PacketError::Malformed);
             }
             Ok(Packet::Data(
                 PacketHeader {
-                    seq: u64_at(packet, M + 1),
-                    ack: u64_at(packet, M + 9),
-                    ack_bits: u32_at(packet, M + 17),
+                    epoch: Epoch::at(packet, M + 1),
+                    seq: u64_at(packet, M + 17),
                     payload_len,
                 },
                 &packet[HEADER_SIZE..],
             ))
         }
-        KIND_ACK if packet.len() == ACK_SIZE => Ok(Packet::Ack {
-            ack: u64_at(packet, M + 1),
-            ack_bits: u32_at(packet, M + 9),
+        KIND_ACK if n == ACK_SIZE => Ok(Packet::Ack {
+            epoch: Epoch::at(packet, M + 1),
+            ack: u64_at(packet, M + 17),
+            ack_bits: u32_at(packet, M + 25),
+        }),
+        KIND_OPEN if n == OPEN_SIZE => Ok(Packet::Open {
+            token: u64_at(packet, M + 1),
+        }),
+        KIND_ACCEPT if n == EPOCH_PACKET_SIZE => Ok(Packet::Accept {
+            epoch: Epoch::at(packet, M + 1),
+        }),
+        KIND_REOPEN if n == EPOCH_PACKET_SIZE => Ok(Packet::Reopen {
+            epoch: Epoch::at(packet, M + 1),
         }),
         _ => Err(PacketError::Malformed),
     }
 }
 
-/// The bytes of an acknowledgement-only packet
+/// The bytes of an acknowledgement-only packet of the link `epoch`
 #[must_use]
-pub fn ack_packet(ack: u64, ack_bits: u32) -> [u8; ACK_SIZE] {
+pub fn ack_packet(epoch: Epoch, ack: u64, ack_bits: u32) -> [u8; ACK_SIZE] {
     let mut buf = [0u8; ACK_SIZE];
     buf[..M].copy_from_slice(&WIRE_MAGIC);
     buf[M] = KIND_ACK;
-    buf[M + 1..M + 9].copy_from_slice(&ack.to_le_bytes());
-    buf[M + 9..M + 13].copy_from_slice(&ack_bits.to_le_bytes());
+    buf[M + 1..M + 17].copy_from_slice(&epoch.to_bytes());
+    buf[M + 17..M + 25].copy_from_slice(&ack.to_le_bytes());
+    buf[M + 25..M + 29].copy_from_slice(&ack_bits.to_le_bytes());
     buf
+}
+
+/// The bytes of an open request with the sender's `token`
+#[must_use]
+pub fn open_packet(token: u64) -> [u8; OPEN_SIZE] {
+    let mut buf = [0u8; OPEN_SIZE];
+    buf[..M].copy_from_slice(&WIRE_MAGIC);
+    buf[M] = KIND_OPEN;
+    buf[M + 1..].copy_from_slice(&token.to_le_bytes());
+    buf
+}
+
+fn epoch_packet(kind: u8, epoch: Epoch) -> [u8; EPOCH_PACKET_SIZE] {
+    let mut buf = [0u8; EPOCH_PACKET_SIZE];
+    buf[..M].copy_from_slice(&WIRE_MAGIC);
+    buf[M] = kind;
+    buf[M + 1..].copy_from_slice(&epoch.to_bytes());
+    buf
+}
+
+/// The bytes of the answer to an open request: the link's `epoch`
+#[must_use]
+pub fn accept_packet(epoch: Epoch) -> [u8; EPOCH_PACKET_SIZE] {
+    epoch_packet(KIND_ACCEPT, epoch)
+}
+
+/// The bytes of a reopen request: the receiver holds no link of `epoch`
+#[must_use]
+pub fn reopen_packet(epoch: Epoch) -> [u8; EPOCH_PACKET_SIZE] {
+    epoch_packet(KIND_REOPEN, epoch)
 }
 
 /// Sent packet metadata for ACK tracking
@@ -225,6 +370,8 @@ struct SentPacket {
     payload: Vec<u8>,
     acked: bool,
     retransmit_count: u8,
+    /// whether it went out under the current epoch (a packet waiting for its link is not on the wire)
+    on_wire: bool,
 }
 
 /// Received packet tracking for deduplication: a bit per sequence number of the last [`RECV_WINDOW`]
@@ -314,6 +461,7 @@ impl RecvTracker {
     }
 
     /// Build ack header from current state
+    #[cfg(test)]
     fn ack_header(&self) -> (u64, u32) {
         self.ack_for(self.most_recent)
     }
@@ -388,19 +536,45 @@ impl RttEstimator {
     }
 }
 
-/// Reliability endpoint — one per peer connection.
+/// What a received datagram gave: the payload of a data packet not seen before, and the packets to send
+/// back (an accept, a reopen request, the data of a link just accepted)
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Incoming {
+    /// The payload of a data packet not seen before on the current link
+    pub payload: Option<Vec<u8>>,
+    /// Packets to send to the peer now
+    pub replies: Vec<Vec<u8>>,
+}
+
+/// The link the peer opened to this endpoint
+#[derive(Debug)]
+struct Inbound {
+    epoch: Epoch,
+    tracker: RecvTracker,
+    /// Received sequence numbers to acknowledge by name in the next acknowledgement-only packets
+    acks_due: std::collections::BTreeSet<u64>,
+}
+
+/// Reliability endpoint — one per peer address.
 ///
-/// Handles sequencing, ACK tracking, retransmission, and RTT estimation.
+/// Handles links, sequencing, ACK tracking, retransmission, and RTT estimation. The tokens of the
+/// transport the endpoint belongs to ([`Tokens`]) are passed to the calls that open or accept a link.
 #[derive(Debug)]
 pub struct ReliableEndpoint {
+    /// The token of this endpoint's open request (the current link's, once accepted)
+    token: Option<u64>,
+    /// The link this endpoint sends on, once the peer accepted it
+    epoch: Option<Epoch>,
+    /// When the open request last went out and how many times it was sent again
+    open_sent: Option<(Instant, u8)>,
     /// Outgoing sequence counter
     local_seq: u64,
     /// The next fragment message id
     next_message: u64,
-    /// Sent packets awaiting ACK
+    /// Sent packets awaiting ACK (and packets waiting for their link)
     sent_packets: VecDeque<SentPacket>,
-    /// Receive tracking for dedup + ack generation
-    recv_tracker: RecvTracker,
+    /// The peer's link to this endpoint
+    inbound: Option<Inbound>,
     /// RTT estimator
     pub rtt: RttEstimator,
     /// Maximum unacked packets in flight
@@ -409,30 +583,32 @@ pub struct ReliableEndpoint {
     pub packets_lost: u64,
     /// Packet acked counter
     pub packets_acked: u64,
-    /// Received sequence numbers to acknowledge by name in the next acknowledgement-only packets
-    acks_due: std::collections::BTreeSet<u64>,
+    /// Data packets of a link this endpoint does not hold (dropped, answered with a reopen request)
+    pub stale_frames: u64,
+    /// Acknowledgements and accepts of a link that is not this endpoint's current one (ignored)
+    pub stale_acks: u64,
     /// Packets given up or evicted, not yet taken
     failures: Vec<DeliveryFailure>,
 }
-
-/// The `ack` of a header from an endpoint that has received nothing: with no bits set it acknowledges only
-/// `u64::MAX`, which no endpoint reaches
-const NO_ACK: u64 = u64::MAX;
 
 impl ReliableEndpoint {
     /// Create a new reliability endpoint
     #[must_use]
     pub fn new() -> Self {
         Self {
+            token: None,
+            epoch: None,
+            open_sent: None,
             local_seq: 0,
             next_message: 0,
             sent_packets: VecDeque::with_capacity(256),
-            recv_tracker: RecvTracker::new(),
+            inbound: None,
             rtt: RttEstimator::new(),
             max_in_flight: 256,
             packets_lost: 0,
             packets_acked: 0,
-            acks_due: std::collections::BTreeSet::new(),
+            stale_frames: 0,
+            stale_acks: 0,
             failures: Vec::new(),
         }
     }
@@ -443,6 +619,18 @@ impl ReliableEndpoint {
         self.local_seq
     }
 
+    /// The link this endpoint sends on, once the peer accepted it
+    #[must_use]
+    pub fn epoch(&self) -> Option<Epoch> {
+        self.epoch
+    }
+
+    /// The link the peer opened to this endpoint
+    #[must_use]
+    pub fn inbound_epoch(&self) -> Option<Epoch> {
+        self.inbound.as_ref().map(|i| i.epoch)
+    }
+
     /// A fresh message id for the fragments of one message
     pub fn next_message_id(&mut self) -> u64 {
         let id = self.next_message;
@@ -450,36 +638,41 @@ impl ReliableEndpoint {
         id
     }
 
-    fn header_ack(&self) -> (u64, u32) {
-        if self.recv_tracker.initialized {
-            self.recv_tracker.ack_header()
-        } else {
-            (NO_ACK, 0)
-        }
-    }
-
-    /// Wrap a payload into a reliable data packet (header + payload).
-    ///
-    /// Returns the serialized packet bytes ready for sending.
-    pub fn wrap_outgoing(&mut self, payload: &[u8]) -> Vec<u8> {
-        let seq = self.local_seq;
-        self.local_seq += 1;
-
-        let (ack, ack_bits) = self.header_ack();
-
+    fn data_packet(epoch: Epoch, seq: u64, payload: &[u8]) -> Vec<u8> {
         let header = PacketHeader {
+            epoch,
             seq,
-            ack,
-            ack_bits,
             payload_len: payload.len() as u16,
         };
+        let mut packet = Vec::with_capacity(HEADER_SIZE + payload.len());
+        packet.extend_from_slice(&header.to_bytes());
+        packet.extend_from_slice(payload);
+        packet
+    }
 
+    /// A new open request (a fresh token): the endpoint has no link to send on
+    fn open(&mut self, tokens: &mut Tokens) -> Vec<u8> {
+        let token = tokens.take();
+        self.token = Some(token);
+        self.epoch = None;
+        self.open_sent = Some((crate::clock::now(), 0));
+        open_packet(token).to_vec()
+    }
+
+    /// Take a payload for the peer: the packets to send now, a data packet on an accepted link, an open
+    /// request when the endpoint has none (the payload goes out once the peer accepts), or nothing while an
+    /// open request is in flight.
+    pub fn wrap_outgoing(&mut self, payload: &[u8], tokens: &mut Tokens) -> Vec<Vec<u8>> {
+        let seq = self.local_seq;
+        self.local_seq += 1;
+        let now = crate::clock::now();
         self.sent_packets.push_back(SentPacket {
             seq,
-            send_time: crate::clock::now(),
+            send_time: now,
             payload: payload.to_vec(),
             acked: false,
             retransmit_count: 0,
+            on_wire: self.epoch.is_some(),
         });
 
         // Trim old sent packets: one never acknowledged is reported
@@ -492,37 +685,123 @@ impl ReliableEndpoint {
                 }
             }
         }
-        // this packet's header acknowledges the newest received one and the 32 before it
-        let newest = self.recv_tracker.most_recent;
-        if self.recv_tracker.initialized {
-            self.acks_due
-                .retain(|r| !(*r <= newest && newest - r <= 32));
-        }
 
-        let mut packet = Vec::with_capacity(HEADER_SIZE + payload.len());
-        packet.extend_from_slice(&header.to_bytes());
-        packet.extend_from_slice(payload);
-        packet
+        match self.epoch {
+            Some(epoch) => vec![Self::data_packet(epoch, seq, payload)],
+            None if self.open_sent.is_none() => vec![self.open(tokens)],
+            None => Vec::new(),
+        }
     }
 
-    /// Process an incoming packet of this wire version. Returns the payload of a data packet not seen
-    /// before; `None` for a repeat, an acknowledgement-only packet, or a datagram that is not a packet of
-    /// this version (use [`classify`] to tell those apart).
-    pub fn unwrap_incoming(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
-        match classify(packet).ok()? {
-            Packet::Ack { ack, ack_bits } => {
-                self.process_acks(ack, ack_bits);
-                None
-            }
-            Packet::Data(header, payload) => {
-                self.process_acks(header.ack, header.ack_bits);
-                let fresh = self.recv_tracker.record(header.seq);
-                // a repeat is acknowledged again too: the sender did not see the earlier acknowledgement
-                if fresh || self.recv_tracker.in_window(header.seq) {
-                    self.acks_due.insert(header.seq);
+    /// Process a received datagram (see [`Incoming`]). A datagram that is not a packet of this wire version
+    /// gives nothing (use [`classify`] to tell those apart).
+    pub fn unwrap_incoming(&mut self, packet: &[u8], tokens: &mut Tokens) -> Incoming {
+        let mut out = Incoming::default();
+        let Ok(packet) = classify(packet) else {
+            return out;
+        };
+        match packet {
+            Packet::Data(header, payload) => match self.inbound.as_mut() {
+                Some(inb) if inb.epoch == header.epoch => {
+                    let fresh = inb.tracker.record(header.seq);
+                    // a repeat is acknowledged again too: the sender did not see the earlier acknowledgement
+                    if fresh || inb.tracker.in_window(header.seq) {
+                        inb.acks_due.insert(header.seq);
+                    }
+                    out.payload = fresh.then(|| payload.to_vec());
                 }
-                fresh.then(|| payload.to_vec())
+                _ => {
+                    self.stale_frames += 1;
+                    out.replies.push(reopen_packet(header.epoch).to_vec());
+                }
+            },
+            Packet::Ack {
+                epoch,
+                ack,
+                ack_bits,
+            } => {
+                if self.epoch == Some(epoch) {
+                    self.process_acks(ack, ack_bits);
+                } else {
+                    self.stale_acks += 1;
+                }
             }
+            Packet::Open { token } => {
+                let epoch = match &self.inbound {
+                    // a repeated request (its accept was lost, so no data came on the link): the same link.
+                    // The same token after data came is a sender that started again: a new link
+                    Some(inb) if inb.epoch.sender == token && !inb.tracker.initialized => inb.epoch,
+                    _ => {
+                        let epoch = Epoch {
+                            receiver: tokens.take(),
+                            sender: token,
+                        };
+                        self.inbound = Some(Inbound {
+                            epoch,
+                            tracker: RecvTracker::new(),
+                            acks_due: std::collections::BTreeSet::new(),
+                        });
+                        epoch
+                    }
+                };
+                out.replies.push(accept_packet(epoch).to_vec());
+            }
+            Packet::Accept { epoch } => {
+                if self.epoch.is_none() && self.token == Some(epoch.sender) {
+                    self.epoch = Some(epoch);
+                    self.open_sent = None;
+                    let now = crate::clock::now();
+                    for sent in &mut self.sent_packets {
+                        if !sent.acked && !sent.on_wire {
+                            sent.on_wire = true;
+                            sent.send_time = now;
+                            out.replies
+                                .push(Self::data_packet(epoch, sent.seq, &sent.payload));
+                        }
+                    }
+                } else if self.epoch != Some(epoch) {
+                    self.stale_acks += 1;
+                }
+            }
+            Packet::Reopen { epoch } => {
+                if self.epoch == Some(epoch) {
+                    self.epoch = None;
+                    self.open_sent = None;
+                    // what was not acknowledged goes out again on the new link; each reopen counts as one
+                    // more try, so a peer that keeps refusing the link ends in a reported failure
+                    let mut gave_up = Vec::new();
+                    for sent in &mut self.sent_packets {
+                        if sent.acked {
+                            continue;
+                        }
+                        sent.on_wire = false;
+                        sent.retransmit_count += 1;
+                        if sent.retransmit_count > MAX_RETRANSMITS {
+                            gave_up.push(sent.seq);
+                        }
+                    }
+                    self.give_up(&gave_up);
+                    if self.sent_packets.iter().any(|p| !p.acked) {
+                        out.replies.push(self.open(tokens));
+                    } else {
+                        self.token = None;
+                    }
+                } else {
+                    self.stale_acks += 1;
+                }
+            }
+        }
+        out
+    }
+
+    fn give_up(&mut self, seqs: &[u64]) {
+        if seqs.is_empty() {
+            return;
+        }
+        self.sent_packets.retain(|p| !seqs.contains(&p.seq));
+        for &seq in seqs {
+            self.packets_lost += 1;
+            self.failures.push(DeliveryFailure::GaveUp { seq });
         }
     }
 
@@ -531,7 +810,7 @@ impl ReliableEndpoint {
         let now = crate::clock::now();
 
         for sent in &mut self.sent_packets {
-            if sent.acked || !acknowledges(ack, ack_bits, sent.seq) {
+            if sent.acked || !sent.on_wire || !acknowledges(ack, ack_bits, sent.seq) {
                 continue;
             }
             sent.acked = true;
@@ -549,9 +828,9 @@ impl ReliableEndpoint {
         }
     }
 
-    /// Collect packets that need retransmission (timed out, not yet acked). A packet that has been sent
-    /// [`MAX_RETRANSMITS`] times more without an acknowledgement is dropped and reported
-    /// ([`Self::take_failures`]).
+    /// Collect packets that need retransmission (timed out, not yet acked), and the open request when it
+    /// has not been answered in time. A packet (or an open request) sent [`MAX_RETRANSMITS`] times more
+    /// without an answer is dropped and reported ([`Self::take_failures`]).
     pub fn collect_retransmits(&mut self) -> Vec<Vec<u8>> {
         self.retransmit(false)
     }
@@ -565,12 +844,33 @@ impl ReliableEndpoint {
     fn retransmit(&mut self, all: bool) -> Vec<Vec<u8>> {
         let now = crate::clock::now();
         let rto = self.rtt.rto();
-        let (ack, ack_bits) = self.header_ack();
         let mut retransmits = Vec::new();
+        let Some(epoch) = self.epoch else {
+            // no link yet: the open request is what is sent again
+            if let (Some(token), Some((at, tries))) = (self.token, self.open_sent) {
+                if all || now.duration_since(at) >= rto {
+                    if tries >= MAX_RETRANSMITS {
+                        let waiting: Vec<u64> = self
+                            .sent_packets
+                            .iter()
+                            .filter(|p| !p.acked)
+                            .map(|p| p.seq)
+                            .collect();
+                        self.give_up(&waiting);
+                        self.token = None;
+                        self.open_sent = None;
+                    } else {
+                        self.open_sent = Some((now, tries + 1));
+                        retransmits.push(open_packet(token).to_vec());
+                    }
+                }
+            }
+            return retransmits;
+        };
         let mut gave_up = Vec::new();
 
         for sent in &mut self.sent_packets {
-            if sent.acked {
+            if sent.acked || !sent.on_wire {
                 continue;
             }
             if all || now.duration_since(sent.send_time) >= rto {
@@ -581,41 +881,26 @@ impl ReliableEndpoint {
                     gave_up.push(sent.seq);
                     continue;
                 }
-
-                // Re-wrap with current ack state
-                let header = PacketHeader {
-                    seq: sent.seq,
-                    ack,
-                    ack_bits,
-                    payload_len: sent.payload.len() as u16,
-                };
-
-                let mut packet = Vec::with_capacity(HEADER_SIZE + sent.payload.len());
-                packet.extend_from_slice(&header.to_bytes());
-                packet.extend_from_slice(&sent.payload);
-                retransmits.push(packet);
+                retransmits.push(Self::data_packet(epoch, sent.seq, &sent.payload));
             }
         }
 
-        if !gave_up.is_empty() {
-            self.sent_packets.retain(|p| !gave_up.contains(&p.seq));
-            for seq in gave_up {
-                self.packets_lost += 1;
-                self.failures.push(DeliveryFailure::GaveUp { seq });
-            }
-        }
+        self.give_up(&gave_up);
         retransmits
     }
 
-    /// Acknowledgement-only packets for what was received since the last packet this side sent: one with
-    /// the newest received sequence number, and one per packet received far behind it (each names its own
-    /// sequence number). They carry no sequence number and are not retransmitted
+    /// Acknowledgement-only packets for what was received since the last call: one with the newest
+    /// received sequence number, and one per packet received far behind it (each names its own sequence
+    /// number). They are not retransmitted
     pub fn take_acks(&mut self) -> Vec<Vec<u8>> {
-        let due = std::mem::take(&mut self.acks_due);
-        if !self.recv_tracker.initialized {
+        let Some(inb) = self.inbound.as_mut() else {
+            return Vec::new();
+        };
+        let due = std::mem::take(&mut inb.acks_due);
+        if !inb.tracker.initialized {
             return Vec::new();
         }
-        let newest = self.recv_tracker.most_recent;
+        let newest = inb.tracker.most_recent;
         let near = |r: &u64| *r <= newest && newest - r <= 32;
         let mut refs: Vec<u64> = Vec::new();
         if due.iter().any(near) {
@@ -624,8 +909,8 @@ impl ReliableEndpoint {
         refs.extend(due.iter().copied().filter(|r| !near(r)));
         refs.into_iter()
             .map(|reference| {
-                let (ack, ack_bits) = self.recv_tracker.ack_for(reference);
-                ack_packet(ack, ack_bits).to_vec()
+                let (ack, ack_bits) = inb.tracker.ack_for(reference);
+                ack_packet(inb.epoch, ack, ack_bits).to_vec()
             })
             .collect()
     }
@@ -833,12 +1118,68 @@ impl ReassemblyBuffer {
 mod tests {
     use super::*;
 
+    /// One side of a link: an endpoint and the tokens of its transport
+    struct Side {
+        ep: ReliableEndpoint,
+        tokens: Tokens,
+    }
+
+    impl Side {
+        fn new(start: u64) -> Self {
+            Self {
+                ep: ReliableEndpoint::new(),
+                tokens: Tokens::starting_at(start),
+            }
+        }
+
+        fn take(&mut self, p: &[u8]) -> Incoming {
+            self.ep.unwrap_incoming(p, &mut self.tokens)
+        }
+    }
+
+    /// Carry `packets` from `from` to `to` and every reply back and forth until none is left; the payloads
+    /// delivered to each side
+    fn settle(
+        from: &mut Side,
+        to: &mut Side,
+        packets: Vec<Vec<u8>>,
+    ) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        let (mut at_to, mut at_from) = (Vec::new(), Vec::new());
+        let mut towards_to = packets;
+        let mut towards_from: Vec<Vec<u8>> = Vec::new();
+        while !towards_to.is_empty() || !towards_from.is_empty() {
+            for p in std::mem::take(&mut towards_to) {
+                let r = to.take(&p);
+                at_to.extend(r.payload);
+                towards_from.extend(r.replies);
+            }
+            for p in std::mem::take(&mut towards_from) {
+                let r = from.take(&p);
+                at_from.extend(r.payload);
+                towards_to.extend(r.replies);
+            }
+        }
+        (at_to, at_from)
+    }
+
+    fn send(from: &mut Side, to: &mut Side, payload: &[u8]) -> Vec<Vec<u8>> {
+        let p = from.ep.wrap_outgoing(payload, &mut from.tokens);
+        settle(from, to, p).0
+    }
+
+    fn ack(from: &mut Side, to: &mut Side) {
+        let acks = to.ep.take_acks();
+        settle(to, from, acks);
+    }
+
     #[test]
     fn test_packet_header_roundtrip() {
         let header = PacketHeader {
+            epoch: Epoch {
+                receiver: 7,
+                sender: 0x0123_4567_89AB_CDEF,
+            },
             seq: 0x0123_4567_89AB_CDEF,
-            ack: 5678,
-            ack_bits: 0xDEAD_BEEF,
             payload_len: 100,
         };
         let bytes = header.to_bytes();
@@ -868,27 +1209,63 @@ mod tests {
 
     #[test]
     fn test_classify_refuses_other_wires() {
-        // a version-1 data header: [seq:2][ack:2][ack_bits:4][payload_len:2]
+        let e = Epoch {
+            receiver: 1,
+            sender: 2,
+        };
         let old = [1u8, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0x55];
         assert_eq!(classify(&old), Err(PacketError::OtherWire));
         assert_eq!(classify(b""), Err(PacketError::OtherWire));
-        let mut other_version = ack_packet(3, 0);
+        let mut other_version = ack_packet(e, 3, 0);
         other_version[3] = 1;
         assert_eq!(classify(&other_version), Err(PacketError::OtherWire));
-        let mut unknown_kind = ack_packet(3, 0);
+        let mut unknown_kind = ack_packet(e, 3, 0);
         unknown_kind[M] = 9;
         assert_eq!(classify(&unknown_kind), Err(PacketError::Malformed));
+        for p in [
+            ack_packet(e, 3, 0).to_vec(),
+            open_packet(4).to_vec(),
+            accept_packet(e).to_vec(),
+            reopen_packet(e).to_vec(),
+        ] {
+            assert!(classify(&p).is_ok());
+            assert_eq!(classify(&p[..p.len() - 1]), Err(PacketError::Malformed));
+            let longer = [&p[..], &[0u8]].concat();
+            assert_eq!(
+                classify(&longer),
+                Err(PacketError::Malformed),
+                "a trailing byte"
+            );
+        }
+    }
+
+    #[test]
+    fn test_the_kinds_round_trip() {
+        let e = Epoch {
+            receiver: 0x1_0000_0000,
+            sender: u64::MAX,
+        };
         assert_eq!(
-            classify(&ack_packet(3, 0)[..ACK_SIZE - 1]),
-            Err(PacketError::Malformed)
+            classify(&ack_packet(e, 5, 0b101)),
+            Ok(Packet::Ack {
+                epoch: e,
+                ack: 5,
+                ack_bits: 0b101
+            })
         );
+        assert_eq!(classify(&open_packet(9)), Ok(Packet::Open { token: 9 }));
+        assert_eq!(classify(&accept_packet(e)), Ok(Packet::Accept { epoch: e }));
+        assert_eq!(classify(&reopen_packet(e)), Ok(Packet::Reopen { epoch: e }));
     }
 
     #[test]
     fn test_data_carries_its_payload() {
-        let mut ep = ReliableEndpoint::new();
-        let p = ep.wrap_outgoing(b"abc");
-        assert!(matches!(classify(&p), Ok(Packet::Data(_, b"abc"))));
+        let e = Epoch {
+            receiver: 1,
+            sender: 2,
+        };
+        let p = ReliableEndpoint::data_packet(e, 0, b"abc");
+        assert!(matches!(classify(&p), Ok(Packet::Data(h, b"abc")) if h.epoch == e));
         assert_eq!(classify(&p[..p.len() - 1]), Err(PacketError::Malformed));
         let longer = [&p[..], &[0u8]].concat();
         assert_eq!(
@@ -896,61 +1273,206 @@ mod tests {
             Err(PacketError::Malformed),
             "a trailing byte"
         );
-        let ack_longer = [&ack_packet(3, 0)[..], &[0u8]].concat();
-        assert_eq!(classify(&ack_longer), Err(PacketError::Malformed));
-        let empty = ep.wrap_outgoing(b"");
+        let empty = ReliableEndpoint::data_packet(e, 0, b"");
         assert!(matches!(classify(&empty), Ok(Packet::Data(_, b""))));
     }
 
+    /// The first payload opens the link: open, accept, then the data, which arrives once
     #[test]
-    fn test_ack_packet_has_no_seq() {
-        let a = ack_packet(0x1_0000_0000, 0b101);
-        assert_eq!(a.len(), ACK_SIZE);
-        assert_eq!(
-            classify(&a),
-            Ok(Packet::Ack {
-                ack: 0x1_0000_0000,
-                ack_bits: 0b101
-            })
-        );
+    fn test_the_first_payload_opens_the_link() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        let first = a.ep.wrap_outgoing(b"hello", &mut a.tokens);
+        assert_eq!(first.len(), 1);
+        assert_eq!(classify(&first[0]), Ok(Packet::Open { token: 0 }));
+        // a second payload waits for the same link
+        assert!(a.ep.wrap_outgoing(b"again", &mut a.tokens).is_empty());
+        let (at_b, _) = settle(&mut a, &mut b, first);
+        assert_eq!(at_b, vec![b"hello".to_vec(), b"again".to_vec()]);
+        let e = Epoch {
+            receiver: 100,
+            sender: 0,
+        };
+        assert_eq!((a.ep.epoch(), b.ep.inbound_epoch()), (Some(e), Some(e)));
+        // now data goes out directly
+        let next = a.ep.wrap_outgoing(b"third", &mut a.tokens);
+        assert!(matches!(classify(&next[0]), Ok(Packet::Data(h, _)) if h.epoch == e));
+        ack(&mut a, &mut b);
+        assert_eq!(a.ep.packets_acked, 2);
     }
 
+    /// A lost accept: the open request is sent again, and the repeat gets the same link
     #[test]
-    fn test_reliable_endpoint_basic() {
-        let mut sender = ReliableEndpoint::new();
-        let mut receiver = ReliableEndpoint::new();
-
-        let packet = sender.wrap_outgoing(b"hello");
-        assert_eq!(packet.len(), HEADER_SIZE + 5);
-        assert_eq!(receiver.unwrap_incoming(&packet).unwrap(), b"hello");
-
-        let reply = receiver.wrap_outgoing(b"ack");
-        assert_eq!(sender.unwrap_incoming(&reply).unwrap(), b"ack");
-        assert_eq!(sender.packets_acked, 1);
-    }
-
-    #[test]
-    fn test_first_header_acknowledges_nothing() {
-        let mut a = ReliableEndpoint::new();
-        let mut b = ReliableEndpoint::new();
-        let first = a.wrap_outgoing(b"x");
-        // b sends before receiving anything: its header must not acknowledge a's seq 0
-        let early = b.wrap_outgoing(b"y");
-        a.unwrap_incoming(&early).unwrap();
-        assert_eq!(a.packets_acked, 0);
-        b.unwrap_incoming(&first).unwrap();
-        a.unwrap_incoming(&b.wrap_outgoing(b"z")).unwrap();
-        assert_eq!(a.packets_acked, 1);
+    fn test_a_lost_accept_gets_the_same_link() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        let open = a.ep.wrap_outgoing(b"x", &mut a.tokens);
+        let lost = b.take(&open[0]);
+        let again = a.ep.collect_retransmits_now();
+        assert_eq!(again, open);
+        let r = b.take(&again[0]);
+        assert_eq!(r.replies, lost.replies, "the same accept");
+        let (at_b, _) = settle(&mut b, &mut a, r.replies);
+        assert!(at_b.is_empty());
+        assert_eq!(b.ep.inbound_epoch(), a.ep.epoch());
     }
 
     #[test]
     fn test_duplicate_rejection() {
-        let mut sender = ReliableEndpoint::new();
-        let mut receiver = ReliableEndpoint::new();
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        assert_eq!(send(&mut a, &mut b, b"once"), vec![b"once".to_vec()]);
+        let again = a.ep.collect_retransmits_now();
+        assert_eq!(again.len(), 1);
+        assert_eq!(b.take(&again[0]).payload, None);
+    }
 
-        let packet = sender.wrap_outgoing(b"once");
-        assert!(receiver.unwrap_incoming(&packet).is_some());
-        assert!(receiver.unwrap_incoming(&packet).is_none());
+    /// The receiver dropped its link (the transport's peer limit) and the sender keeps its own: the next data
+    /// is refused with a reopen request, the sender opens a new link and the payload arrives, not acked as a
+    /// repeat of the old link's sequence numbers
+    #[test]
+    fn test_a_receiver_that_dropped_the_link_gets_the_data() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        for i in 0..10u8 {
+            assert_eq!(send(&mut a, &mut b, &[i]), vec![vec![i]]);
+        }
+        ack(&mut a, &mut b);
+        // the receiver's state for a is gone; its tokens move on
+        b.ep = ReliableEndpoint::new();
+        assert_eq!(
+            send(&mut a, &mut b, b"new message"),
+            vec![b"new message".to_vec()]
+        );
+        assert_eq!(b.ep.stale_frames, 1);
+        assert_ne!(a.ep.epoch().unwrap().receiver, 100);
+        ack(&mut a, &mut b);
+        assert_eq!(a.ep.packets_acked, 11);
+        assert!(a.ep.take_failures().is_empty());
+    }
+
+    /// The sender dropped its link and starts again (or its process restarted): the receiver gives the new
+    /// open request a new link, and the first new data (sequence number 0 again) arrives
+    #[test]
+    fn test_a_sender_that_started_again_gets_its_data_through() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        for i in 0..10u8 {
+            send(&mut a, &mut b, &[i]);
+        }
+        ack(&mut a, &mut b);
+        // a restarted process: a new endpoint and tokens from the start again
+        a = Side::new(0);
+        assert_eq!(
+            send(&mut a, &mut b, b"after restart"),
+            vec![b"after restart".to_vec()]
+        );
+        ack(&mut a, &mut b);
+        assert_eq!(a.ep.packets_acked, 1);
+    }
+
+    /// A restarted receiver (no state, tokens from the start): a delayed data packet of the old link is
+    /// refused, the reopen request makes the sender open a new link (its token moved on, so the epoch
+    /// differs from the old one although the receiver's token is the same again) and the payload arrives
+    #[test]
+    fn test_a_restarted_receiver_refuses_a_delayed_old_frame() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        send(&mut a, &mut b, b"before");
+        ack(&mut a, &mut b);
+        let old = a.ep.epoch().unwrap();
+        let delayed = a.ep.wrap_outgoing(b"in flight", &mut a.tokens);
+        b = Side::new(100);
+        let r = b.take(&delayed[0]);
+        assert_eq!(r.payload, None, "the old link's frame is not delivered");
+        assert_eq!(b.ep.stale_frames, 1);
+        let (_, at_b) = settle(&mut b, &mut a, r.replies);
+        assert_eq!(at_b, vec![b"in flight".to_vec()]);
+        let new = a.ep.epoch().unwrap();
+        assert_eq!(
+            new.receiver, old.receiver,
+            "the restarted receiver's tokens start the same"
+        );
+        assert_ne!(new, old);
+        // the old frame again (delayed twice) is still refused
+        assert_eq!(b.take(&delayed[0]).payload, None);
+    }
+
+    /// A restarted sender: a delayed data packet of the sender's old link reaching the receiver after the
+    /// new link was accepted is refused (its epoch is not the receiver's current one)
+    #[test]
+    fn test_a_delayed_frame_from_before_a_sender_restart_is_refused() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        send(&mut a, &mut b, b"before");
+        let delayed = a.ep.wrap_outgoing(b"old", &mut a.tokens);
+        a = Side::new(0);
+        assert_eq!(send(&mut a, &mut b, b"new"), vec![b"new".to_vec()]);
+        let r = b.take(&delayed[0]);
+        assert_eq!(r.payload, None);
+        assert_eq!(b.ep.stale_frames, 1);
+    }
+
+    /// Both ends restart, the sender with tokens past its previous incarnation's: a delayed data packet of
+    /// the old link has the same receiver token as the new link but not the same sender token, and is refused
+    #[test]
+    fn test_both_restarted_the_sender_token_keeps_the_links_apart() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        for i in 0..6u8 {
+            send(&mut a, &mut b, &[i]);
+        }
+        let delayed = a.ep.wrap_outgoing(b"old", &mut a.tokens); // seq 6 of the old link
+        let (mut a, mut b) = (Side::new(1 << 32), Side::new(100));
+        assert_eq!(send(&mut a, &mut b, b"new"), vec![b"new".to_vec()]);
+        let (old, new) = (Epoch::at(&delayed[0], M + 1), a.ep.epoch().unwrap());
+        assert_eq!(old.receiver, new.receiver);
+        assert_ne!(old.sender, new.sender);
+        assert_eq!(
+            b.take(&delayed[0]).payload,
+            None,
+            "the old link's packet is refused"
+        );
+        assert_eq!(b.ep.stale_frames, 1);
+    }
+
+    /// An acknowledgement of another link (a stale one) is ignored and counted
+    #[test]
+    fn test_a_stale_ack_is_ignored() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        send(&mut a, &mut b, b"x");
+        let e = a.ep.epoch().unwrap();
+        let stale = Epoch {
+            receiver: e.receiver + 1,
+            ..e
+        };
+        a.take(&ack_packet(stale, 0, 0));
+        assert_eq!((a.ep.packets_acked, a.ep.stale_acks), (0, 1));
+        a.take(&ack_packet(e, 0, 0));
+        assert_eq!(a.ep.packets_acked, 1);
+    }
+
+    /// A reopen request for a link that is not the sender's current one is ignored
+    #[test]
+    fn test_a_stale_reopen_is_ignored() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        send(&mut a, &mut b, b"x");
+        let e = a.ep.epoch().unwrap();
+        let r = a.take(&reopen_packet(Epoch { sender: 99, ..e }));
+        assert!(r.replies.is_empty());
+        assert_eq!(a.ep.epoch(), Some(e));
+    }
+
+    /// An open request never answered: after MAX_RETRANSMITS more tries every waiting payload is given up
+    #[test]
+    fn test_an_open_never_answered_gives_up() {
+        let mut a = Side::new(0);
+        a.ep.wrap_outgoing(b"one", &mut a.tokens);
+        a.ep.wrap_outgoing(b"two", &mut a.tokens);
+        let mut sent = 0;
+        for _ in 0..20 {
+            sent += a.ep.collect_retransmits_now().len();
+        }
+        assert_eq!(sent, usize::from(MAX_RETRANSMITS));
+        assert_eq!(
+            a.ep.take_failures(),
+            vec![
+                DeliveryFailure::GaveUp { seq: 0 },
+                DeliveryFailure::GaveUp { seq: 1 }
+            ]
+        );
     }
 
     #[test]
@@ -1062,19 +1584,16 @@ mod tests {
     #[test]
     fn test_endpoint_past_u16_and_u32() {
         for base in [(1u64 << 16) - 2, (1u64 << 32) - 2] {
-            let mut a = ReliableEndpoint::new();
-            let mut b = ReliableEndpoint::new();
-            a.local_seq = base;
-            let ps: Vec<_> = (0..4u8).map(|i| a.wrap_outgoing(&[i])).collect();
-            for (i, p) in ps.iter().enumerate() {
-                assert_eq!(b.unwrap_incoming(p), Some(vec![i as u8]));
+            let (mut a, mut b) = (Side::new(0), Side::new(100));
+            a.ep.local_seq = base;
+            for i in 0..4u8 {
+                assert_eq!(send(&mut a, &mut b, &[i]), vec![vec![i]]);
             }
-            assert_eq!(b.unwrap_incoming(&ps[0]), None);
-            for ack in b.take_acks() {
-                a.unwrap_incoming(&ack);
-            }
-            assert_eq!(a.packets_acked, 4);
-            assert!(a.sent_packets.is_empty());
+            let again = a.ep.collect_retransmits_now();
+            assert!(again.iter().all(|p| b.take(p).payload.is_none()));
+            ack(&mut a, &mut b);
+            assert_eq!(a.ep.packets_acked, 4);
+            assert!(a.ep.sent_packets.is_empty());
         }
     }
 
@@ -1102,44 +1621,41 @@ mod tests {
         assert!(t.record(2001 - RECV_WINDOW));
     }
 
-    /// What a data packet's header acknowledges is not acknowledged again by an acknowledgement-only one
-    #[test]
-    fn test_data_header_covers_the_due_acks() {
-        let mut a = ReliableEndpoint::new();
-        let mut b = ReliableEndpoint::new();
-        b.unwrap_incoming(&a.wrap_outgoing(b"x")).unwrap();
-        let reply = b.wrap_outgoing(b"y");
-        assert!(b.take_acks().is_empty());
-        a.unwrap_incoming(&reply).unwrap();
-        assert_eq!(a.packets_acked, 1);
-    }
-
     /// A repeat is acknowledged again: the sender did not see the first acknowledgement
     #[test]
     fn test_a_repeat_is_acknowledged_again() {
-        let mut a = ReliableEndpoint::new();
-        let mut b = ReliableEndpoint::new();
-        let p = a.wrap_outgoing(b"x");
-        b.unwrap_incoming(&p).unwrap();
-        assert_eq!(b.take_acks().len(), 1);
-        assert_eq!(b.unwrap_incoming(&p), None);
-        let again = b.take_acks();
-        assert_eq!(again.len(), 1);
-        a.unwrap_incoming(&again[0]);
-        assert_eq!(a.packets_acked, 1);
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        send(&mut a, &mut b, b"x");
+        assert_eq!(b.ep.take_acks().len(), 1);
+        let again = a.ep.collect_retransmits_now();
+        assert_eq!(b.take(&again[0]).payload, None);
+        let acks = b.ep.take_acks();
+        assert_eq!(acks.len(), 1);
+        a.take(&acks[0]);
+        assert_eq!(a.ep.packets_acked, 1);
     }
 
     /// A packet is sent [`MAX_RETRANSMITS`] more times, then given up
     #[test]
     fn test_retransmits_then_gives_up() {
-        let mut a = ReliableEndpoint::new();
-        a.wrap_outgoing(b"void");
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        send(&mut a, &mut b, b"x");
+        b.ep = ReliableEndpoint::new();
+        let _ = b;
+        a.ep.wrap_outgoing(b"void", &mut a.tokens);
         let mut sent = 0;
         for _ in 0..20 {
-            sent += a.collect_retransmits_now().len();
+            sent += a.ep.collect_retransmits_now().len();
         }
-        assert_eq!(sent, usize::from(MAX_RETRANSMITS));
-        assert_eq!(a.take_failures(), vec![DeliveryFailure::GaveUp { seq: 0 }]);
+        // the first packet and "void" are each sent MAX_RETRANSMITS more times
+        assert_eq!(sent, 2 * usize::from(MAX_RETRANSMITS));
+        assert_eq!(
+            a.ep.take_failures(),
+            vec![
+                DeliveryFailure::GaveUp { seq: 0 },
+                DeliveryFailure::GaveUp { seq: 1 }
+            ]
+        );
     }
 
     #[test]
