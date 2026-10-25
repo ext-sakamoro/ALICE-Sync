@@ -141,7 +141,7 @@ mod async_laws {
     use alice_sync::crdt::{CrdtMergeable, GCounter, LwwRegister, PnCounter};
     use alice_sync::reliability::{
         fragment_payload, FragmentHeader, PacketHeader, ReassemblyBuffer, ReliableEndpoint,
-        RttEstimator, HEADER_SIZE, MAX_PAYLOAD,
+        RttEstimator, FRAGMENT_HEADER_SIZE, HEADER_SIZE, MAX_PAYLOAD,
     };
     use std::time::Duration;
 
@@ -187,18 +187,18 @@ mod async_laws {
     #[test]
     fn packet_headers_round_trip_and_fragmentation_is_the_ceiling_law() {
         let h = PacketHeader {
-            seq: 0xBEEF,
+            seq: 0xBEEF_0000_0001,
             ack: 0x1234,
             ack_bits: 0xDEAD_BEEF,
             payload_len: 1199,
         };
-        let rt = PacketHeader::from_bytes(&h.to_bytes());
+        let rt = PacketHeader::from_bytes(&h.to_bytes()).unwrap();
         assert_eq!(
             (rt.seq, rt.ack, rt.ack_bits, rt.payload_len),
             (h.seq, h.ack, h.ack_bits, h.payload_len)
         );
         let f = FragmentHeader {
-            message_id: 0xCAFE,
+            message_id: 0xCAFE_0000_0001,
             fragment_index: 7,
             fragment_count: 9,
         };
@@ -207,9 +207,9 @@ mod async_laws {
             (rf.message_id, rf.fragment_index, rf.fragment_count),
             (f.message_id, f.fragment_index, f.fragment_count)
         );
-        assert_eq!(HEADER_SIZE, 10);
+        assert_eq!((HEADER_SIZE, FRAGMENT_HEADER_SIZE), (27, 10));
 
-        let chunk = MAX_PAYLOAD - 4;
+        let chunk = MAX_PAYLOAD - FRAGMENT_HEADER_SIZE;
         for len in [
             0usize,
             1usize,
@@ -222,7 +222,7 @@ mod async_laws {
         ] {
             let payload: Vec<u8> = (0..len).map(|i| (i * 131 % 251) as u8).collect();
             let frags = fragment_payload(0x42, &payload);
-            // oracle: one datagram if it fits, else ⌈len / (MAX_PAYLOAD − 4)⌉ fragments
+            // oracle: one datagram if it fits, else ⌈len / (MAX_PAYLOAD − FRAGMENT_HEADER_SIZE)⌉ fragments
             let expected = if len <= MAX_PAYLOAD {
                 1
             } else {
@@ -262,10 +262,10 @@ mod async_laws {
         let s0 = a.local_seq();
         let p1 = a.wrap_outgoing(b"one");
         let p2 = a.wrap_outgoing(b"two");
-        assert_eq!(a.local_seq(), s0.wrapping_add(2));
-        let h1 = PacketHeader::from_bytes(p1[..HEADER_SIZE].try_into().unwrap());
-        let h2 = PacketHeader::from_bytes(p2[..HEADER_SIZE].try_into().unwrap());
-        assert_eq!(h2.seq, h1.seq.wrapping_add(1));
+        assert_eq!(a.local_seq(), s0 + 2);
+        let h1 = PacketHeader::from_bytes(p1[..HEADER_SIZE].try_into().unwrap()).unwrap();
+        let h2 = PacketHeader::from_bytes(p2[..HEADER_SIZE].try_into().unwrap()).unwrap();
+        assert_eq!(h2.seq, h1.seq + 1);
         assert_eq!(h1.payload_len as usize, 3);
         // the receiver unwraps the payloads intact
         assert_eq!(b.unwrap_incoming(&p1).as_deref(), Some(&b"one"[..]));

@@ -13,15 +13,17 @@
 //! # Hex form
 //!
 //! ```text
-//! bc5f1786af86ae3bd7176dfa46bc0d95b44d618776daeb6019aaccb843390264
+//! a964b354942cd6ab6e81d4a4b55560e79a70609b792bb3998ba1cbe0bd490868
 //! ```
 //!
 //! # Entries
 //!
 //! [`SYNC_SEMANTICS_PINS`]: one entry per golden (`"fixed"`, `"world"`,
-//! `"crdt"`, `"receive"`, the SHA-256 recorded in `tests/determinism_golden.rs`;
-//! `"receive"` is the world a node builds from events of several peers received
-//! out of order, ALICE-Law G13), plus one
+//! `"crdt"`, `"receive"`, `"udp-wire"`, the SHA-256 recorded in
+//! `tests/determinism_golden.rs`; `"receive"` is the world a node builds from
+//! events of several peers received out of order, ALICE-Law G13; `"udp-wire"` is
+//! the encoding of the UDP transport's packets, so a peer of another wire version
+//! is refused at Hello), plus one
 //! per bridged Law-bearing crate: `"alice-physics"` (its
 //! `PHYSICS_SEMANTICS_ID`, the `physics` bridge) and `"alice-analytics"` (its
 //! `SEMANTICS_ID`, the `analytics` bridge), at the versions this release
@@ -74,7 +76,7 @@ pub(crate) const fn hex32(s: &str) -> [u8; 32] {
 }
 
 /// The pins folded into [`SYNC_SEMANTICS_ID`], as `(name, digest)`.
-pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 6] = [
+pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     (
         "fixed",
         hex32("dc65b542978e3eb841faee4a7202f7416cee5cd6ce4fdd64cebc18a97ba31f9d"),
@@ -92,6 +94,10 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 6] = [
         hex32("b0f4dd9b848374e314f1d88ae220e926d8a3d05d49d08b3a77d8d9673bb2b242"),
     ),
     (
+        "udp-wire",
+        hex32("a794c39249a6a2b492111b3601742eeb8471b2c7dbfa083e6be987adaefce763"),
+    ),
+    (
         "alice-physics",
         hex32("a3f7eb247574fcbac11839aeaf64f1bae826721f2a2e12e8b30fd22db70612c1"),
     ),
@@ -104,7 +110,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 6] = [
 /// The semantics identifier of this crate: the fold of
 /// [`SYNC_SEMANTICS_PINS`] (see the module documentation).
 pub const SYNC_SEMANTICS_ID: [u8; 32] =
-    hex32("bc5f1786af86ae3bd7176dfa46bc0d95b44d618776daeb6019aaccb843390264");
+    hex32("a964b354942cd6ab6e81d4a4b55560e79a70609b792bb3998ba1cbe0bd490868");
 
 /// Earlier values of [`SYNC_SEMANTICS_ID`] whose pinned bits this release
 /// still reproduces (none yet: this is the first identifier).

@@ -4,25 +4,31 @@
 //!
 //! # Design
 //!
-//! - **Sequence numbers**: `u16` wrapping (65536 cycle)
-//! - **ACK bitfield**: 32-bit trailing ACK (covers last 33 packets)
+//! - **Sequence numbers**: `u64`, never wrapping (a peer would need 2^64 packets)
+//! - **ACK bitfield**: 32-bit trailing ACK (covers the 33 packets up to the acknowledged one)
 //! - **Retransmission**: RTT-based adaptive timeout
-//! - **Fragmentation**: MTU-safe split/reassemble for large payloads
+//! - **Fragmentation**: MTU-safe split/reassemble for large payloads, with a `u64` message id
 //! - **Receive window**: the last [`RECV_WINDOW`] sequence numbers are remembered, so a retransmission
 //!   that comes after newer packets is still taken once and a repeat is refused
 //! - **Acknowledgement-only packets** ([`ReliableEndpoint::take_acks`]): a receiver acknowledges what it
-//!   got even when it has no data to send; such a packet has an empty payload, takes no sequence number
-//!   and is never delivered (an older peer decodes it as nothing and still reads its acknowledgements).
-//!   A packet received far behind the newest is acknowledged by its own sequence number
+//!   got even when it has no data to send; such a packet is its own kind, carries no sequence number and
+//!   is never delivered. A packet received far behind the newest is acknowledged by its own sequence
+//!   number
 //! - **Delivery failures** ([`ReliableEndpoint::take_failures`]): a packet that is never acknowledged
 //!   after [`MAX_RETRANSMITS`] tries, or that is pushed out of the send window, is reported, not counted as
 //!   acknowledged
 //!
-//! # Packet Header (10 bytes)
+//! # Packets (wire version 2)
+//!
+//! Every packet starts with [`WIRE_MAGIC`] (4 bytes, the last one the version), then its kind:
 //!
 //! ```text
-//! [seq:2][ack:2][ack_bits:4][payload_len:2]
+//! data              [magic:4][1][seq:8][ack:8][ack_bits:4][payload_len:2][payload]
+//! acknowledgement   [magic:4][2][ack:8][ack_bits:4]
 //! ```
+//!
+//! all integers little-endian. A packet without the magic is not of this version (an older peer's)
+//! and is refused by [`classify`]; the transport reports such a peer.
 
 #![allow(
     clippy::missing_const_for_fn,
@@ -38,14 +44,26 @@ use std::time::{Duration, Instant};
 /// Maximum payload per UDP datagram (conservative MTU - IP/UDP headers)
 pub const MAX_PAYLOAD: usize = 1200;
 
-/// Reliability header size in bytes
-pub const HEADER_SIZE: usize = 10;
+/// The first bytes of every packet of this wire version: `AS`, a zero byte, the version (2)
+pub const WIRE_MAGIC: [u8; 4] = *b"AS\x00\x02";
+
+/// The kind byte of a data packet
+pub const KIND_DATA: u8 = 1;
+
+/// The kind byte of an acknowledgement-only packet
+pub const KIND_ACK: u8 = 2;
+
+/// Header size of a data packet in bytes (magic, kind, seq, ack, ack bits, payload length)
+pub const HEADER_SIZE: usize = 4 + 1 + 8 + 8 + 4 + 2;
+
+/// Size of an acknowledgement-only packet in bytes (magic, kind, ack, ack bits)
+pub const ACK_SIZE: usize = 4 + 1 + 8 + 4;
 
 /// Maximum fragment count per message
 pub const MAX_FRAGMENTS: u8 = 255;
 
 /// How many sequence numbers, the newest received one included, the receiver remembers
-pub const RECV_WINDOW: u16 = 1024;
+pub const RECV_WINDOW: u64 = 1024;
 
 /// How many times an unacknowledged packet is sent again before it is reported as given up
 pub const MAX_RETRANSMITS: u8 = 10;
@@ -56,9 +74,9 @@ const RECV_WORDS: usize = (RECV_WINDOW / 64) as usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryFailure {
     /// Never acknowledged after [`MAX_RETRANSMITS`] retransmissions
-    GaveUp { seq: u16 },
+    GaveUp { seq: u64 },
     /// Pushed out of the send window (too many packets in flight) before it was acknowledged
-    Evicted { seq: u16 },
+    Evicted { seq: u64 },
 }
 
 impl core::fmt::Display for DeliveryFailure {
@@ -70,47 +88,127 @@ impl core::fmt::Display for DeliveryFailure {
     }
 }
 
-/// Packet header on the wire
-#[derive(Debug, Clone, Copy)]
+/// What a received datagram is
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Packet<'a> {
+    /// A data packet: its header and payload
+    Data(PacketHeader, &'a [u8]),
+    /// An acknowledgement-only packet: the newest acknowledged sequence number and the 32 before it
+    Ack { ack: u64, ack_bits: u32 },
+}
+
+/// Why a datagram is not a packet of this wire version
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacketError {
+    /// It does not start with [`WIRE_MAGIC`]: another wire version (an older peer)
+    OtherWire,
+    /// It starts with the magic but is shorter than its kind's header, or its kind is unknown
+    Malformed,
+}
+
+/// The header of a data packet
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketHeader {
     /// Sequence number (sender's outgoing counter)
-    pub seq: u16,
+    pub seq: u64,
     /// Most recent received sequence (remote ack)
-    pub ack: u16,
-    /// Bitfield of previous 32 acks (bit 0 = ack-1, bit 1 = ack-2, ...)
+    pub ack: u64,
+    /// Bitfield of the 32 acks before `ack` (bit 0 = ack-1, bit 1 = ack-2, ...)
     pub ack_bits: u32,
     /// Payload length in bytes
     pub payload_len: u16,
 }
 
 impl PacketHeader {
-    /// Serialize to 10 bytes (little-endian)
+    /// The bytes of a data packet's header
     #[must_use]
     pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut buf = [0u8; HEADER_SIZE];
-        buf[0..2].copy_from_slice(&self.seq.to_le_bytes());
-        buf[2..4].copy_from_slice(&self.ack.to_le_bytes());
-        buf[4..8].copy_from_slice(&self.ack_bits.to_le_bytes());
-        buf[8..10].copy_from_slice(&self.payload_len.to_le_bytes());
+        buf[0..4].copy_from_slice(&WIRE_MAGIC);
+        buf[4] = KIND_DATA;
+        buf[5..13].copy_from_slice(&self.seq.to_le_bytes());
+        buf[13..21].copy_from_slice(&self.ack.to_le_bytes());
+        buf[21..25].copy_from_slice(&self.ack_bits.to_le_bytes());
+        buf[25..27].copy_from_slice(&self.payload_len.to_le_bytes());
         buf
     }
 
-    /// Deserialize from 10 bytes
+    /// Read a data packet's header (`None` without the magic or the data kind)
     #[must_use]
-    pub fn from_bytes(buf: &[u8; HEADER_SIZE]) -> Self {
-        Self {
-            seq: u16::from_le_bytes([buf[0], buf[1]]),
-            ack: u16::from_le_bytes([buf[2], buf[3]]),
-            ack_bits: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
-            payload_len: u16::from_le_bytes([buf[8], buf[9]]),
+    pub fn from_bytes(buf: &[u8; HEADER_SIZE]) -> Option<Self> {
+        if buf[..4] != WIRE_MAGIC || buf[4] != KIND_DATA {
+            return None;
         }
+        Some(Self {
+            seq: u64_at(buf, 5),
+            ack: u64_at(buf, 13),
+            ack_bits: u32_at(buf, 21),
+            payload_len: u16::from_le_bytes([buf[25], buf[26]]),
+        })
     }
+}
+
+fn u64_at(b: &[u8], at: usize) -> u64 {
+    let mut a = [0u8; 8];
+    a.copy_from_slice(&b[at..at + 8]);
+    u64::from_le_bytes(a)
+}
+
+fn u32_at(b: &[u8], at: usize) -> u32 {
+    let mut a = [0u8; 4];
+    a.copy_from_slice(&b[at..at + 4]);
+    u32::from_le_bytes(a)
+}
+
+/// Read a datagram as a packet of this wire version
+///
+/// # Errors
+/// [`PacketError::OtherWire`] without the magic, [`PacketError::Malformed`] for a short packet or an
+/// unknown kind
+pub fn classify(packet: &[u8]) -> Result<Packet<'_>, PacketError> {
+    if packet.len() < 5 || packet[..4] != WIRE_MAGIC {
+        return Err(PacketError::OtherWire);
+    }
+    match packet[4] {
+        KIND_DATA if packet.len() >= HEADER_SIZE => {
+            let payload_len = u16::from_le_bytes([packet[25], packet[26]]);
+            let end = HEADER_SIZE + usize::from(payload_len);
+            if packet.len() < end {
+                return Err(PacketError::Malformed);
+            }
+            Ok(Packet::Data(
+                PacketHeader {
+                    seq: u64_at(packet, 5),
+                    ack: u64_at(packet, 13),
+                    ack_bits: u32_at(packet, 21),
+                    payload_len,
+                },
+                &packet[HEADER_SIZE..end],
+            ))
+        }
+        KIND_ACK if packet.len() >= ACK_SIZE => Ok(Packet::Ack {
+            ack: u64_at(packet, 5),
+            ack_bits: u32_at(packet, 13),
+        }),
+        _ => Err(PacketError::Malformed),
+    }
+}
+
+/// The bytes of an acknowledgement-only packet
+#[must_use]
+pub fn ack_packet(ack: u64, ack_bits: u32) -> [u8; ACK_SIZE] {
+    let mut buf = [0u8; ACK_SIZE];
+    buf[0..4].copy_from_slice(&WIRE_MAGIC);
+    buf[4] = KIND_ACK;
+    buf[5..13].copy_from_slice(&ack.to_le_bytes());
+    buf[13..17].copy_from_slice(&ack_bits.to_le_bytes());
+    buf
 }
 
 /// Sent packet metadata for ACK tracking
 #[derive(Debug)]
 struct SentPacket {
-    seq: u16,
+    seq: u64,
     send_time: Instant,
     payload: Vec<u8>,
     acked: bool,
@@ -121,7 +219,7 @@ struct SentPacket {
 #[derive(Debug)]
 struct RecvTracker {
     /// Most recent received sequence
-    most_recent: u16,
+    most_recent: u64,
     /// slot `seq % RECV_WINDOW` is set when `seq`, within the window, has been received
     seen: [u64; RECV_WORDS],
     /// Whether we have received any packet yet
@@ -137,44 +235,43 @@ impl RecvTracker {
         }
     }
 
-    const fn slot(seq: u16) -> (usize, u64) {
+    const fn slot(seq: u64) -> (usize, u64) {
         let i = seq % RECV_WINDOW;
         ((i / 64) as usize, 1 << (i % 64))
     }
 
-    fn has(&self, seq: u16) -> bool {
+    fn has(&self, seq: u64) -> bool {
         let (w, b) = Self::slot(seq);
         self.seen[w] & b != 0
     }
 
-    fn set(&mut self, seq: u16) {
+    fn set(&mut self, seq: u64) {
         let (w, b) = Self::slot(seq);
         self.seen[w] |= b;
     }
 
     /// Whether `seq` lies in the window ending at the newest received sequence number
-    fn in_window(&self, seq: u16) -> bool {
-        let back = seq_diff(self.most_recent, seq);
-        (0..i32::from(RECV_WINDOW)).contains(&back)
+    fn in_window(&self, seq: u64) -> bool {
+        self.initialized && seq <= self.most_recent && self.most_recent - seq < RECV_WINDOW
     }
 
     /// Record a received sequence number. Returns `false` if it was received before or is older than the
     /// window.
-    fn record(&mut self, seq: u16) -> bool {
+    fn record(&mut self, seq: u64) -> bool {
         if !self.initialized {
             self.most_recent = seq;
             self.initialized = true;
             self.set(seq);
             return true;
         }
-        let diff = seq_diff(seq, self.most_recent);
-        if diff > 0 {
+        if seq > self.most_recent {
             // newer: the slots the window moves over held sequence numbers that have now left it
-            if diff >= i32::from(RECV_WINDOW) {
+            let diff = seq - self.most_recent;
+            if diff >= RECV_WINDOW {
                 self.seen = [0; RECV_WORDS];
             } else {
                 for k in 1..=diff {
-                    let (w, b) = Self::slot(self.most_recent.wrapping_add(k as u16));
+                    let (w, b) = Self::slot(self.most_recent + k);
                     self.seen[w] &= !b;
                 }
             }
@@ -189,12 +286,14 @@ impl RecvTracker {
         true
     }
 
-    /// The acknowledgement header with `reference` as its newest acknowledged sequence number: bit `i`
-    /// stands for `reference - 1 - i`
-    fn ack_header_for(&self, reference: u16) -> (u16, u32) {
+    /// The acknowledgement with `reference` as its newest acknowledged sequence number: bit `i` stands
+    /// for `reference - 1 - i`
+    fn ack_for(&self, reference: u64) -> (u64, u32) {
         let mut bits = 0u32;
-        for i in 0..32u16 {
-            let seq = reference.wrapping_sub(1 + i);
+        for i in 0..32u64 {
+            let Some(seq) = reference.checked_sub(1 + i) else {
+                break;
+            };
             if self.in_window(seq) && self.has(seq) {
                 bits |= 1 << i;
             }
@@ -203,9 +302,17 @@ impl RecvTracker {
     }
 
     /// Build ack header from current state
-    fn ack_header(&self) -> (u16, u32) {
-        self.ack_header_for(self.most_recent)
+    fn ack_header(&self) -> (u64, u32) {
+        self.ack_for(self.most_recent)
     }
+}
+
+/// Whether `seq` is acknowledged by the acknowledgement `(ack, ack_bits)`
+fn acknowledges(ack: u64, ack_bits: u32, seq: u64) -> bool {
+    if seq == ack {
+        return true;
+    }
+    seq < ack && ack - seq <= 32 && ack_bits & (1 << (ack - seq - 1)) != 0
 }
 
 /// RTT estimator (exponential moving average)
@@ -275,7 +382,9 @@ impl RttEstimator {
 #[derive(Debug)]
 pub struct ReliableEndpoint {
     /// Outgoing sequence counter
-    local_seq: u16,
+    local_seq: u64,
+    /// The next fragment message id
+    next_message: u64,
     /// Sent packets awaiting ACK
     sent_packets: VecDeque<SentPacket>,
     /// Receive tracking for dedup + ack generation
@@ -289,10 +398,14 @@ pub struct ReliableEndpoint {
     /// Packet acked counter
     pub packets_acked: u64,
     /// Received sequence numbers to acknowledge by name in the next acknowledgement-only packets
-    acks_due: std::collections::BTreeSet<u16>,
+    acks_due: std::collections::BTreeSet<u64>,
     /// Packets given up or evicted, not yet taken
     failures: Vec<DeliveryFailure>,
 }
+
+/// The `ack` of a header from an endpoint that has received nothing: with no bits set it acknowledges only
+/// `u64::MAX`, which no endpoint reaches
+const NO_ACK: u64 = u64::MAX;
 
 impl ReliableEndpoint {
     /// Create a new reliability endpoint
@@ -300,6 +413,7 @@ impl ReliableEndpoint {
     pub fn new() -> Self {
         Self {
             local_seq: 0,
+            next_message: 0,
             sent_packets: VecDeque::with_capacity(256),
             recv_tracker: RecvTracker::new(),
             rtt: RttEstimator::new(),
@@ -311,20 +425,35 @@ impl ReliableEndpoint {
         }
     }
 
-    /// Current outgoing sequence number (for fragment message IDs)
+    /// The sequence number the next data packet takes
     #[must_use]
-    pub fn local_seq(&self) -> u16 {
+    pub fn local_seq(&self) -> u64 {
         self.local_seq
     }
 
-    /// Wrap a payload into a reliable packet (header + payload).
+    /// A fresh message id for the fragments of one message
+    pub fn next_message_id(&mut self) -> u64 {
+        let id = self.next_message;
+        self.next_message += 1;
+        id
+    }
+
+    fn header_ack(&self) -> (u64, u32) {
+        if self.recv_tracker.initialized {
+            self.recv_tracker.ack_header()
+        } else {
+            (NO_ACK, 0)
+        }
+    }
+
+    /// Wrap a payload into a reliable data packet (header + payload).
     ///
     /// Returns the serialized packet bytes ready for sending.
     pub fn wrap_outgoing(&mut self, payload: &[u8]) -> Vec<u8> {
         let seq = self.local_seq;
-        self.local_seq = self.local_seq.wrapping_add(1);
+        self.local_seq += 1;
 
-        let (ack, ack_bits) = self.recv_tracker.ack_header();
+        let (ack, ack_bits) = self.header_ack();
 
         let header = PacketHeader {
             seq,
@@ -353,8 +482,10 @@ impl ReliableEndpoint {
         }
         // this packet's header acknowledges the newest received one and the 32 before it
         let newest = self.recv_tracker.most_recent;
-        self.acks_due
-            .retain(|r| !(0..33).contains(&seq_diff(newest, *r)));
+        if self.recv_tracker.initialized {
+            self.acks_due
+                .retain(|r| !(*r <= newest && newest - r <= 32));
+        }
 
         let mut packet = Vec::with_capacity(HEADER_SIZE + payload.len());
         packet.extend_from_slice(&header.to_bytes());
@@ -362,68 +493,41 @@ impl ReliableEndpoint {
         packet
     }
 
-    /// Process an incoming packet. Returns the payload if not a duplicate.
-    ///
-    /// Also processes ACK information from the remote peer.
+    /// Process an incoming packet of this wire version. Returns the payload of a data packet not seen
+    /// before; `None` for a repeat, an acknowledgement-only packet, or a datagram that is not a packet of
+    /// this version (use [`classify`] to tell those apart).
     pub fn unwrap_incoming(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
-        if packet.len() < HEADER_SIZE {
-            return None;
+        match classify(packet).ok()? {
+            Packet::Ack { ack, ack_bits } => {
+                self.process_acks(ack, ack_bits);
+                None
+            }
+            Packet::Data(header, payload) => {
+                self.process_acks(header.ack, header.ack_bits);
+                let fresh = self.recv_tracker.record(header.seq);
+                // a repeat is acknowledged again too: the sender did not see the earlier acknowledgement
+                if fresh || self.recv_tracker.in_window(header.seq) {
+                    self.acks_due.insert(header.seq);
+                }
+                fresh.then(|| payload.to_vec())
+            }
         }
-
-        let header_bytes: [u8; HEADER_SIZE] = packet[..HEADER_SIZE].try_into().ok()?;
-        let header = PacketHeader::from_bytes(&header_bytes);
-
-        let payload_end = HEADER_SIZE + header.payload_len as usize;
-        if packet.len() < payload_end {
-            return None; // truncated
-        }
-
-        // Process ACKs from remote
-        self.process_acks(header.ack, header.ack_bits);
-
-        // an acknowledgement-only packet carries no data and takes no sequence number
-        if header.payload_len == 0 {
-            return None;
-        }
-
-        let fresh = self.recv_tracker.record(header.seq);
-        // a repeat is acknowledged again too: the sender did not see the earlier acknowledgement
-        if fresh || self.recv_tracker.in_window(header.seq) {
-            self.acks_due.insert(header.seq);
-        }
-        if !fresh {
-            return None; // duplicate or too old
-        }
-
-        Some(packet[HEADER_SIZE..payload_end].to_vec())
     }
 
-    /// Process ACK information from a received packet header
-    fn process_acks(&mut self, ack: u16, ack_bits: u32) {
+    /// Process ACK information from a received packet
+    fn process_acks(&mut self, ack: u64, ack_bits: u32) {
         let now = crate::clock::now();
 
         for sent in &mut self.sent_packets {
-            if sent.acked {
+            if sent.acked || !acknowledges(ack, ack_bits, sent.seq) {
                 continue;
             }
-
-            let diff = seq_diff(ack, sent.seq);
-            let is_acked = if diff == 0 {
-                true
-            } else if diff > 0 && diff <= 32 {
-                ack_bits & (1 << (diff - 1)) != 0
-            } else {
-                false
-            };
-
-            if is_acked {
-                sent.acked = true;
-                self.packets_acked += 1;
-                // Update RTT only for first transmission (not retransmits)
-                if sent.retransmit_count == 0 {
-                    let rtt = now.duration_since(sent.send_time);
-                    self.rtt.update(rtt);
-                }
+            sent.acked = true;
+            self.packets_acked += 1;
+            // Update RTT only for first transmission (not retransmits)
+            if sent.retransmit_count == 0 {
+                let rtt = now.duration_since(sent.send_time);
+                self.rtt.update(rtt);
             }
         }
 
@@ -449,6 +553,7 @@ impl ReliableEndpoint {
     fn retransmit(&mut self, all: bool) -> Vec<Vec<u8>> {
         let now = crate::clock::now();
         let rto = self.rtt.rto();
+        let (ack, ack_bits) = self.header_ack();
         let mut retransmits = Vec::new();
         let mut gave_up = Vec::new();
 
@@ -466,7 +571,6 @@ impl ReliableEndpoint {
                 }
 
                 // Re-wrap with current ack state
-                let (ack, ack_bits) = self.recv_tracker.ack_header();
                 let header = PacketHeader {
                     seq: sent.seq,
                     ack,
@@ -493,28 +597,23 @@ impl ReliableEndpoint {
 
     /// Acknowledgement-only packets for what was received since the last packet this side sent: one with
     /// the newest received sequence number, and one per packet received far behind it (each names its own
-    /// sequence number). They take no sequence number and are not retransmitted
+    /// sequence number). They carry no sequence number and are not retransmitted
     pub fn take_acks(&mut self) -> Vec<Vec<u8>> {
         let due = std::mem::take(&mut self.acks_due);
+        if !self.recv_tracker.initialized {
+            return Vec::new();
+        }
         let newest = self.recv_tracker.most_recent;
-        let mut refs: Vec<u16> = Vec::new();
-        if due.iter().any(|r| (0..33).contains(&seq_diff(newest, *r))) {
+        let near = |r: &u64| *r <= newest && newest - r <= 32;
+        let mut refs: Vec<u64> = Vec::new();
+        if due.iter().any(near) {
             refs.push(newest);
         }
-        refs.extend(
-            due.into_iter()
-                .filter(|r| !(0..33).contains(&seq_diff(newest, *r))),
-        );
+        refs.extend(due.iter().copied().filter(|r| !near(r)));
         refs.into_iter()
             .map(|reference| {
-                let (ack, ack_bits) = self.recv_tracker.ack_header_for(reference);
-                let header = PacketHeader {
-                    seq: self.local_seq.wrapping_sub(1),
-                    ack,
-                    ack_bits,
-                    payload_len: 0,
-                };
-                header.to_bytes().to_vec()
+                let (ack, ack_bits) = self.recv_tracker.ack_for(reference);
+                ack_packet(ack, ack_bits).to_vec()
             })
             .collect()
     }
@@ -546,49 +645,50 @@ impl Default for ReliableEndpoint {
 // Fragment / Reassemble
 // ============================================================================
 
-/// Fragment header (3 bytes, prepended to each fragment payload)
+/// Fragment header (10 bytes, prepended to each fragment payload)
 ///
 /// ```text
-/// [message_id:2][fragment_index:1 (high 4 bits = total, low 4 bits = index)]
+/// [message_id:8][fragment_count:1][fragment_index:1]
 /// ```
-/// Supports up to 15 fragments per message (~18 KB with 1200 MTU).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FragmentHeader {
-    pub message_id: u16,
+    pub message_id: u64,
     pub fragment_count: u8,
     pub fragment_index: u8,
 }
 
+/// Bytes of a [`FragmentHeader`]
+pub const FRAGMENT_HEADER_SIZE: usize = 10;
+
 impl FragmentHeader {
-    /// Serialize to 4 bytes
+    /// Serialize to 10 bytes
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 4] {
-        [
-            self.message_id.to_le_bytes()[0],
-            self.message_id.to_le_bytes()[1],
-            self.fragment_count,
-            self.fragment_index,
-        ]
+    pub fn to_bytes(&self) -> [u8; FRAGMENT_HEADER_SIZE] {
+        let mut b = [0u8; FRAGMENT_HEADER_SIZE];
+        b[..8].copy_from_slice(&self.message_id.to_le_bytes());
+        b[8] = self.fragment_count;
+        b[9] = self.fragment_index;
+        b
     }
 
-    /// Deserialize from 4 bytes
+    /// Deserialize from 10 bytes
     #[must_use]
-    pub fn from_bytes(buf: &[u8; 4]) -> Self {
+    pub fn from_bytes(buf: &[u8; FRAGMENT_HEADER_SIZE]) -> Self {
         Self {
-            message_id: u16::from_le_bytes([buf[0], buf[1]]),
-            fragment_count: buf[2],
-            fragment_index: buf[3],
+            message_id: u64_at(buf, 0),
+            fragment_count: buf[8],
+            fragment_index: buf[9],
         }
     }
 }
 
 /// Fragment a large payload into MTU-safe chunks.
 ///
-/// Each fragment includes a 4-byte fragment header.
-/// Returns empty vec if payload fits in a single packet.
+/// Each fragment includes a [`FRAGMENT_HEADER_SIZE`]-byte fragment header.
+/// Returns the payload whole if it fits in a single packet.
 #[must_use]
-pub fn fragment_payload(message_id: u16, payload: &[u8]) -> Vec<Vec<u8>> {
-    let max_frag_payload = MAX_PAYLOAD - 4; // subtract fragment header
+pub fn fragment_payload(message_id: u64, payload: &[u8]) -> Vec<Vec<u8>> {
+    let max_frag_payload = MAX_PAYLOAD - FRAGMENT_HEADER_SIZE;
 
     if payload.len() <= MAX_PAYLOAD {
         // No fragmentation needed — return single unfragmented payload
@@ -605,7 +705,7 @@ pub fn fragment_payload(message_id: u16, payload: &[u8]) -> Vec<Vec<u8>> {
             fragment_count: fragment_count as u8,
             fragment_index: i as u8,
         };
-        let mut frag = Vec::with_capacity(4 + chunk.len());
+        let mut frag = Vec::with_capacity(FRAGMENT_HEADER_SIZE + chunk.len());
         frag.extend_from_slice(&header.to_bytes());
         frag.extend_from_slice(chunk);
         fragments.push(frag);
@@ -621,11 +721,11 @@ type FragmentEntry = (u8, Vec<Option<Vec<u8>>>);
 #[derive(Debug)]
 pub struct ReassemblyBuffer {
     /// Pending messages: `message_id` → (`fragment_count`, received fragments)
-    pending: std::collections::BTreeMap<u16, FragmentEntry>,
+    pending: std::collections::BTreeMap<u64, FragmentEntry>,
     /// Timeout for incomplete messages
     timeout: Duration,
     /// Creation time for each pending message
-    timestamps: std::collections::BTreeMap<u16, Instant>,
+    timestamps: std::collections::BTreeMap<u64, Instant>,
 }
 
 impl Default for ReassemblyBuffer {
@@ -647,13 +747,14 @@ impl ReassemblyBuffer {
     /// Feed a fragment. Returns the complete reassembled payload if all
     /// fragments have been received.
     pub fn feed(&mut self, fragment: &[u8]) -> Option<Vec<u8>> {
-        if fragment.len() < 4 {
+        if fragment.len() < FRAGMENT_HEADER_SIZE {
             return None;
         }
 
-        let header_bytes: [u8; 4] = fragment[..4].try_into().ok()?;
+        let header_bytes: [u8; FRAGMENT_HEADER_SIZE] =
+            fragment[..FRAGMENT_HEADER_SIZE].try_into().ok()?;
         let header = FragmentHeader::from_bytes(&header_bytes);
-        let payload = &fragment[4..];
+        let payload = &fragment[FRAGMENT_HEADER_SIZE..];
 
         let entry = self.pending.entry(header.message_id).or_insert_with(|| {
             (
@@ -690,7 +791,7 @@ impl ReassemblyBuffer {
     pub fn gc(&mut self) {
         let now = crate::clock::now();
         let timeout = self.timeout;
-        let expired: Vec<u16> = self
+        let expired: Vec<u64> = self
             .timestamps
             .iter()
             .filter(|(_, t)| now.duration_since(**t) > timeout)
@@ -703,21 +804,6 @@ impl ReassemblyBuffer {
     }
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Signed sequence difference handling u16 wrap-around.
-/// Returns positive if `a` is ahead of `b`.
-fn seq_diff(a: u16, b: u16) -> i32 {
-    let diff = a.wrapping_sub(b) as i16;
-    diff as i32
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,17 +811,56 @@ mod tests {
     #[test]
     fn test_packet_header_roundtrip() {
         let header = PacketHeader {
-            seq: 1234,
+            seq: 0x0123_4567_89AB_CDEF,
             ack: 5678,
             ack_bits: 0xDEAD_BEEF,
             payload_len: 100,
         };
         let bytes = header.to_bytes();
-        let restored = PacketHeader::from_bytes(&bytes);
-        assert_eq!(restored.seq, 1234);
-        assert_eq!(restored.ack, 5678);
-        assert_eq!(restored.ack_bits, 0xDEAD_BEEF);
-        assert_eq!(restored.payload_len, 100);
+        assert_eq!(&bytes[..4], &WIRE_MAGIC);
+        assert_eq!(bytes[4], KIND_DATA);
+        assert_eq!(PacketHeader::from_bytes(&bytes), Some(header));
+    }
+
+    #[test]
+    fn test_classify_refuses_other_wires() {
+        // a version-1 data header: [seq:2][ack:2][ack_bits:4][payload_len:2]
+        let old = [1u8, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0x55];
+        assert_eq!(classify(&old), Err(PacketError::OtherWire));
+        assert_eq!(classify(b""), Err(PacketError::OtherWire));
+        let mut other_version = ack_packet(3, 0);
+        other_version[3] = 1;
+        assert_eq!(classify(&other_version), Err(PacketError::OtherWire));
+        let mut unknown_kind = ack_packet(3, 0);
+        unknown_kind[4] = 9;
+        assert_eq!(classify(&unknown_kind), Err(PacketError::Malformed));
+        assert_eq!(
+            classify(&ack_packet(3, 0)[..ACK_SIZE - 1]),
+            Err(PacketError::Malformed)
+        );
+    }
+
+    #[test]
+    fn test_data_carries_its_payload() {
+        let mut ep = ReliableEndpoint::new();
+        let p = ep.wrap_outgoing(b"abc");
+        assert!(matches!(classify(&p), Ok(Packet::Data(_, b"abc"))));
+        assert_eq!(classify(&p[..p.len() - 1]), Err(PacketError::Malformed));
+        let empty = ep.wrap_outgoing(b"");
+        assert!(matches!(classify(&empty), Ok(Packet::Data(_, b""))));
+    }
+
+    #[test]
+    fn test_ack_packet_has_no_seq() {
+        let a = ack_packet(0x1_0000_0000, 0b101);
+        assert_eq!(a.len(), ACK_SIZE);
+        assert_eq!(
+            classify(&a),
+            Ok(Packet::Ack {
+                ack: 0x1_0000_0000,
+                ack_bits: 0b101
+            })
+        );
     }
 
     #[test]
@@ -743,21 +868,27 @@ mod tests {
         let mut sender = ReliableEndpoint::new();
         let mut receiver = ReliableEndpoint::new();
 
-        // Sender sends a packet
         let packet = sender.wrap_outgoing(b"hello");
-        assert!(packet.len() >= HEADER_SIZE + 5);
+        assert_eq!(packet.len(), HEADER_SIZE + 5);
+        assert_eq!(receiver.unwrap_incoming(&packet).unwrap(), b"hello");
 
-        // Receiver processes it
-        let payload = receiver.unwrap_incoming(&packet).unwrap();
-        assert_eq!(payload, b"hello");
-
-        // Receiver sends an ACK-bearing packet back
-        let ack_packet = receiver.wrap_outgoing(b"ack");
-        let ack_payload = sender.unwrap_incoming(&ack_packet).unwrap();
-        assert_eq!(ack_payload, b"ack");
-
-        // Sender should have 1 acked packet
+        let reply = receiver.wrap_outgoing(b"ack");
+        assert_eq!(sender.unwrap_incoming(&reply).unwrap(), b"ack");
         assert_eq!(sender.packets_acked, 1);
+    }
+
+    #[test]
+    fn test_first_header_acknowledges_nothing() {
+        let mut a = ReliableEndpoint::new();
+        let mut b = ReliableEndpoint::new();
+        let first = a.wrap_outgoing(b"x");
+        // b sends before receiving anything: its header must not acknowledge a's seq 0
+        let early = b.wrap_outgoing(b"y");
+        a.unwrap_incoming(&early).unwrap();
+        assert_eq!(a.packets_acked, 0);
+        b.unwrap_incoming(&first).unwrap();
+        a.unwrap_incoming(&b.wrap_outgoing(b"z")).unwrap();
+        assert_eq!(a.packets_acked, 1);
     }
 
     #[test]
@@ -767,15 +898,18 @@ mod tests {
 
         let packet = sender.wrap_outgoing(b"once");
         assert!(receiver.unwrap_incoming(&packet).is_some());
-        assert!(receiver.unwrap_incoming(&packet).is_none()); // duplicate
+        assert!(receiver.unwrap_incoming(&packet).is_none());
     }
 
     #[test]
-    fn test_seq_wrap_around() {
-        assert_eq!(seq_diff(0, 65535), 1); // 0 is 1 ahead of 65535
-        assert_eq!(seq_diff(65535, 0), -1); // 65535 is 1 behind 0
-        assert_eq!(seq_diff(100, 100), 0);
-        assert_eq!(seq_diff(105, 100), 5);
+    fn test_acknowledges() {
+        assert!(acknowledges(100, 0, 100));
+        assert!(acknowledges(100, 1, 99));
+        assert!(!acknowledges(100, 1, 98));
+        assert!(acknowledges(100, 1 << 31, 68));
+        assert!(!acknowledges(100, u32::MAX, 67));
+        assert!(!acknowledges(100, u32::MAX, 101));
+        assert!(acknowledges(5, 0b1_0000, 0));
     }
 
     #[test]
@@ -785,7 +919,6 @@ mod tests {
         assert!(rtt.srtt() <= Duration::from_millis(100));
         rtt.update(Duration::from_millis(60));
         rtt.update(Duration::from_millis(55));
-        // RTO should be reasonable
         assert!(rtt.rto() < Duration::from_secs(1));
     }
 
@@ -793,16 +926,15 @@ mod tests {
     fn test_fragment_small_payload() {
         let fragments = fragment_payload(1, b"small");
         assert_eq!(fragments.len(), 1);
-        assert_eq!(fragments[0], b"small"); // no fragment header for single
+        assert_eq!(fragments[0], b"small");
     }
 
     #[test]
     fn test_fragment_large_payload() {
-        let data = vec![0xABu8; 3000]; // larger than MAX_PAYLOAD
+        let data = vec![0xABu8; 3000];
         let fragments = fragment_payload(42, &data);
         assert!(fragments.len() > 1);
 
-        // Reassemble
         let mut reasm = ReassemblyBuffer::new();
         let mut result = None;
         for frag in &fragments {
@@ -814,10 +946,28 @@ mod tests {
     }
 
     #[test]
+    fn test_fragment_ids_past_u16_do_not_collide() {
+        let a = vec![1u8; 3000];
+        let b = vec![2u8; 3000];
+        let fa = fragment_payload(7, &a);
+        let fb = fragment_payload(7 + (1 << 16), &b);
+        let mut reasm = ReassemblyBuffer::new();
+        assert!(reasm.feed(&fa[0]).is_none());
+        assert!(reasm.feed(&fb[0]).is_none());
+        let mut got = Vec::new();
+        for f in fa[1..].iter().chain(&fb[1..]) {
+            if let Some(m) = reasm.feed(f) {
+                got.push(m);
+            }
+        }
+        assert_eq!(got, vec![a, b]);
+    }
+
+    #[test]
     fn test_reassembly_out_of_order() {
         let data = vec![0xCDu8; 3000];
         let mut fragments = fragment_payload(7, &data);
-        fragments.reverse(); // out of order
+        fragments.reverse();
 
         let mut reasm = ReassemblyBuffer::new();
         let mut result = None;
@@ -832,21 +982,112 @@ mod tests {
     #[test]
     fn test_recv_tracker_ordering() {
         let mut tracker = RecvTracker::new();
-
-        // First packet
         assert!(tracker.record(1));
         assert_eq!(tracker.most_recent, 1);
-
-        // Sequential
         assert!(tracker.record(2));
         assert!(tracker.record(3));
         assert_eq!(tracker.most_recent, 3);
-
-        // Out of order (older)
-        assert!(tracker.record(0)); // This should set bit for seq 0
-
-        // Duplicate
+        assert!(tracker.record(0));
         assert!(!tracker.record(2));
+    }
+
+    /// Sequence numbers past 2^16 and 2^32 are neither repeats of small ones nor older than them
+    #[test]
+    fn test_recv_tracker_past_u16_and_u32() {
+        for base in [(1u64 << 16) - 3, (1u64 << 32) - 3] {
+            let mut t = RecvTracker::new();
+            for s in base..base + 6 {
+                assert!(t.record(s), "{s}");
+            }
+            assert_eq!(t.most_recent, base + 5);
+            assert!(!t.record(base + 1), "repeat across the boundary");
+            assert!(!t.record(base - (RECV_WINDOW - 4)), "older than the window");
+            let (ack, bits) = t.ack_header();
+            assert_eq!((ack, bits & 0b1_1111), (base + 5, 0b1_1111));
+        }
+    }
+
+    #[test]
+    fn test_endpoint_past_u16_and_u32() {
+        for base in [(1u64 << 16) - 2, (1u64 << 32) - 2] {
+            let mut a = ReliableEndpoint::new();
+            let mut b = ReliableEndpoint::new();
+            a.local_seq = base;
+            let ps: Vec<_> = (0..4u8).map(|i| a.wrap_outgoing(&[i])).collect();
+            for (i, p) in ps.iter().enumerate() {
+                assert_eq!(b.unwrap_incoming(p), Some(vec![i as u8]));
+            }
+            assert_eq!(b.unwrap_incoming(&ps[0]), None);
+            for ack in b.take_acks() {
+                a.unwrap_incoming(&ack);
+            }
+            assert_eq!(a.packets_acked, 4);
+            assert!(a.sent_packets.is_empty());
+        }
+    }
+
+    /// A sequence number exactly the window behind the newest shares its slot: it is never acknowledged
+    #[test]
+    fn test_ack_far_behind_ignores_the_slot_of_the_newest() {
+        let mut t = RecvTracker::new();
+        assert!(t.record(1100));
+        assert!(t.record(100));
+        let (ack, bits) = t.ack_for(100);
+        assert_eq!(
+            (ack, bits),
+            (100, 0),
+            "76 = 1100 - RECV_WINDOW was never received"
+        );
+    }
+
+    /// A sequence number older than the window is refused although its slot is free
+    #[test]
+    fn test_older_than_the_window_with_a_free_slot() {
+        let mut t = RecvTracker::new();
+        assert!(t.record(2000));
+        assert!(!t.record(100));
+        assert!(!t.record(2000 - RECV_WINDOW));
+        assert!(t.record(2001 - RECV_WINDOW));
+    }
+
+    /// What a data packet's header acknowledges is not acknowledged again by an acknowledgement-only one
+    #[test]
+    fn test_data_header_covers_the_due_acks() {
+        let mut a = ReliableEndpoint::new();
+        let mut b = ReliableEndpoint::new();
+        b.unwrap_incoming(&a.wrap_outgoing(b"x")).unwrap();
+        let reply = b.wrap_outgoing(b"y");
+        assert!(b.take_acks().is_empty());
+        a.unwrap_incoming(&reply).unwrap();
+        assert_eq!(a.packets_acked, 1);
+    }
+
+    /// A repeat is acknowledged again: the sender did not see the first acknowledgement
+    #[test]
+    fn test_a_repeat_is_acknowledged_again() {
+        let mut a = ReliableEndpoint::new();
+        let mut b = ReliableEndpoint::new();
+        let p = a.wrap_outgoing(b"x");
+        b.unwrap_incoming(&p).unwrap();
+        assert_eq!(b.take_acks().len(), 1);
+        assert_eq!(b.unwrap_incoming(&p), None);
+        let again = b.take_acks();
+        assert_eq!(again.len(), 1);
+        a.unwrap_incoming(&again[0]);
+        assert_eq!(a.packets_acked, 1);
+    }
+
+    /// A packet is sent [`MAX_RETRANSMITS`] more times, then given up
+    #[test]
+    fn test_retransmits_then_gives_up() {
+        let mut a = ReliableEndpoint::new();
+        a.wrap_outgoing(b"void");
+        let mut sent = 0;
+        for _ in 0..20 {
+            sent += a.collect_retransmits_now().len();
+        }
+        assert_eq!(sent, usize::from(MAX_RETRANSMITS));
+        assert_eq!(a.take_failures(), vec![DeliveryFailure::GaveUp { seq: 0 }]);
     }
 
     #[test]

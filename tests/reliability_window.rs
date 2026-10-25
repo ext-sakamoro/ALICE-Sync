@@ -31,7 +31,7 @@ fn a_retransmission_far_behind_the_newest_is_taken_once() {
 fn a_packet_older_than_the_receive_window_is_refused() {
     let mut a = ReliableEndpoint::new();
     let mut b = ReliableEndpoint::new();
-    let n = usize::from(RECV_WINDOW) + 2;
+    let n = RECV_WINDOW + 2;
     let packets: Vec<Vec<u8>> = (0..n).map(|i| a.wrap_outgoing(&i.to_le_bytes())).collect();
     for p in &packets[1..] {
         b.unwrap_incoming(p);

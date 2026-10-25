@@ -8,7 +8,7 @@
 use alice_sync::protocol::Message;
 use alice_sync::reliability::{
     fragment_payload, FragmentHeader, PacketHeader, ReassemblyBuffer, ReliableEndpoint,
-    HEADER_SIZE,
+    FRAGMENT_HEADER_SIZE, HEADER_SIZE,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -16,12 +16,14 @@ fuzz_target!(|data: &[u8]| {
     if data.len() >= HEADER_SIZE {
         let mut h = [0u8; HEADER_SIZE];
         h.copy_from_slice(&data[..HEADER_SIZE]);
-        let hdr = PacketHeader::from_bytes(&h);
-        let _ = PacketHeader::from_bytes(&hdr.to_bytes());
+        if let Some(hdr) = PacketHeader::from_bytes(&h) {
+            assert_eq!(PacketHeader::from_bytes(&hdr.to_bytes()), Some(hdr));
+        }
     }
-    if data.len() >= 4 {
-        let mut f = [0u8; 4];
-        f.copy_from_slice(&data[..4]);
+    let _ = alice_sync::reliability::classify(data);
+    if data.len() >= FRAGMENT_HEADER_SIZE {
+        let mut f = [0u8; FRAGMENT_HEADER_SIZE];
+        f.copy_from_slice(&data[..FRAGMENT_HEADER_SIZE]);
         let _ = FragmentHeader::from_bytes(&f);
     }
     let mut ep = ReliableEndpoint::new();
@@ -39,7 +41,7 @@ fuzz_target!(|data: &[u8]| {
     // fragments of the input reassemble to the input, in any order (fresh
     // buffer: a garbage fragment sharing the message id would poison it)
     let mut buf = ReassemblyBuffer::new();
-    let frags = fragment_payload(u16::from(data.first().copied().unwrap_or(0)), data);
+    let frags = fragment_payload(u64::from(data.first().copied().unwrap_or(0)), data);
     let mut out = None;
     for f in frags.iter().rev() {
         if let Some(o) = buf.feed(f) {

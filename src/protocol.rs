@@ -30,6 +30,12 @@ pub enum HandshakeRefused {
         /// The sending peer.
         peer: std::net::SocketAddr,
     },
+    /// A UDP datagram that is not a packet of this build's wire version
+    /// (an older peer's): reported once per peer, and its datagrams are dropped
+    WireMismatch {
+        /// The sending peer.
+        peer: std::net::SocketAddr,
+    },
 }
 
 impl std::fmt::Display for HandshakeRefused {
@@ -38,6 +44,9 @@ impl std::fmt::Display for HandshakeRefused {
             Self::SemanticsMismatch { peer, mismatch } => write!(f, "peer {peer}: {mismatch}"),
             Self::NotHandshaken { peer } => {
                 write!(f, "peer {peer}: message before an accepted Hello")
+            }
+            Self::WireMismatch { peer } => {
+                write!(f, "peer {peer}: a packet of another wire version")
             }
         }
     }

@@ -263,3 +263,50 @@ fn golden_crdt() {
     }
     assert_golden(&out, GOLDEN_CRDT, "CRDT merge golden moved");
 }
+
+pub const GOLDEN_UDP_WIRE: &str =
+    "a794c39249a6a2b492111b3601742eeb8471b2c7dbfa083e6be987adaefce763";
+
+/// The UDP wire (version 2): the packets of a fixed exchange between two reliability endpoints (data
+/// packets, one lost, acknowledgement-only packets for a near and a far sequence number, a reply that
+/// acknowledges in its header) and the fragments of one message with an id past 2^32, each length-prefixed
+/// (with `async`, the feature that builds `reliability`)
+#[cfg(feature = "async")]
+#[test]
+fn golden_udp_wire() {
+    use alice_sync::reliability::{ack_packet, fragment_payload, ReliableEndpoint};
+    let mut out = Vec::new();
+    let mut put = |p: &[u8]| {
+        out.extend_from_slice(&(p.len() as u32).to_le_bytes());
+        out.extend_from_slice(p);
+    };
+    let mut a = ReliableEndpoint::new();
+    let mut b = ReliableEndpoint::new();
+    let sent: Vec<Vec<u8>> = (0..40u8)
+        .map(|i| a.wrap_outgoing(&[i, i ^ 0x5a, 7]))
+        .collect();
+    for (i, p) in sent.iter().enumerate() {
+        put(p);
+        if i != 3 {
+            b.unwrap_incoming(p);
+        }
+    }
+    for ack in b.take_acks() {
+        put(&ack);
+        a.unwrap_incoming(&ack);
+    }
+    b.unwrap_incoming(&sent[3]);
+    for ack in b.take_acks() {
+        put(&ack);
+    }
+    let reply = b.wrap_outgoing(b"reply");
+    put(&reply);
+    a.unwrap_incoming(&reply);
+    put(&ack_packet(u64::MAX - 1, 0x8000_0001));
+    let message: Vec<u8> = (0..3000u32).map(|i| (i * 131 % 251) as u8).collect();
+    for f in fragment_payload((1 << 32) + 5, &message) {
+        put(&f);
+    }
+    out.extend_from_slice(&a.packets_acked.to_le_bytes());
+    assert_golden(&out, GOLDEN_UDP_WIRE, "UDP wire golden moved");
+}

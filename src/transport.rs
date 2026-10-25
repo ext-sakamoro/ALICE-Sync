@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use crate::protocol::Message;
 use crate::reliability::{
-    DeliveryFailure, ReassemblyBuffer, ReliableEndpoint, HEADER_SIZE, MAX_PAYLOAD,
+    DeliveryFailure, PacketError, ReassemblyBuffer, ReliableEndpoint, HEADER_SIZE, MAX_PAYLOAD,
 };
 
 /// Received envelope: payload + source address
@@ -136,10 +136,14 @@ struct PeerLink {
 /// what was received (also when this side sends nothing else) and retransmits what was not acknowledged; a
 /// packet that is never acknowledged, or that is pushed out of the send window, is returned from `recv` as
 /// [`TransportError::Undelivered`] (a session reports it as [`crate::session::SessionEvent::DeliveryFailed`]).
+/// A datagram that is not a packet of this wire version is dropped; the first from each address is returned
+/// as [`TransportError::Handshake`] with [`crate::protocol::HandshakeRefused::WireMismatch`].
 pub struct UdpTransport {
     socket: UdpSocket,
     peers: tokio::sync::Mutex<std::collections::BTreeMap<SocketAddr, PeerLink>>,
     failures: tokio::sync::Mutex<std::collections::VecDeque<(SocketAddr, DeliveryFailure)>>,
+    /// Peers already reported as sending another wire version
+    other_wire: tokio::sync::Mutex<std::collections::BTreeSet<SocketAddr>>,
 }
 
 impl UdpTransport {
@@ -150,6 +154,7 @@ impl UdpTransport {
             socket,
             peers: tokio::sync::Mutex::new(std::collections::BTreeMap::new()),
             failures: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
+            other_wire: tokio::sync::Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 
@@ -229,7 +234,7 @@ impl SyncTransport for UdpTransport {
             let packets: Vec<Vec<u8>> = if payload.len() <= MAX_PAYLOAD - HEADER_SIZE {
                 vec![link.reliability.wrap_outgoing(&payload)]
             } else {
-                let msg_id = link.reliability.local_seq();
+                let msg_id = link.reliability.next_message_id();
                 crate::reliability::fragment_payload(msg_id, &payload)
                     .iter()
                     .map(|frag| link.reliability.wrap_outgoing(frag))
@@ -260,6 +265,14 @@ impl SyncTransport for UdpTransport {
                 }
             };
             let packet = &buf[..len];
+            if crate::reliability::classify(packet) == Err(PacketError::OtherWire) {
+                if self.other_wire.lock().await.insert(from) {
+                    return Err(TransportError::Handshake(
+                        crate::protocol::HandshakeRefused::WireMismatch { peer: from },
+                    ));
+                }
+                continue;
+            }
             let complete = {
                 let mut peers = self.peers.lock().await;
                 let link = peers.entry(from).or_default();

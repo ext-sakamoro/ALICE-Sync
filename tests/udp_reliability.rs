@@ -182,3 +182,62 @@ async fn two_peers_keep_their_own_reliability_state() {
         }
     }
 }
+
+/// hold back the third packet towards `b` until the one after it
+fn third_late(to_b: bool, k: usize) -> u8 {
+    if to_b && k == 2 {
+        3
+    } else {
+        0
+    }
+}
+
+fn big(tag: i16) -> Message {
+    use alice_sync::{Event, EventKind};
+    Message::Events {
+        events: (0..230u32)
+            .map(|i| {
+                Event::new(EventKind::Motion {
+                    entity: 0x0100_0000 + i * 7919,
+                    delta: [tag, (i * 97) as i16, -(i as i16) * 31],
+                })
+            })
+            .collect(),
+        checkpoints: Vec::new(),
+    }
+}
+
+/// Two fragmented messages whose fragments interleave each arrive whole: each message has its own id
+#[tokio::test]
+async fn interleaved_fragments_of_two_messages_stay_apart() {
+    let a = Arc::new(UdpTransport::bind("127.0.0.1:0").await.unwrap());
+    let b = Arc::new(UdpTransport::bind("127.0.0.1:0").await.unwrap());
+    let r = relay(b.local_addr().unwrap(), third_late).await;
+    let _from_a = pump(a.clone());
+    let mut at_b = pump(b.clone());
+    // three fragments each: the held-back third is the last of the first message
+    assert_eq!(
+        alice_sync::reliability::fragment_payload(0, &big(1).to_compact_bytes()).len(),
+        3
+    );
+    a.send_to(&big(1), r).await.unwrap();
+    a.send_to(&big(2), r).await.unwrap();
+    let mut tags = BTreeSet::new();
+    while tags.len() < 2 {
+        match timeout(WAIT, at_b.recv())
+            .await
+            .expect("both arrive")
+            .unwrap()
+        {
+            Ok(m @ Message::Events { .. }) => {
+                let bytes = m.to_compact_bytes();
+                let tag = [1, 2]
+                    .into_iter()
+                    .find(|t| big(*t).to_compact_bytes() == bytes)
+                    .expect("one of the two messages, whole");
+                assert!(tags.insert(tag), "{tag} came twice");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
