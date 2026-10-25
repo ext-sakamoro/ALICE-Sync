@@ -129,6 +129,9 @@ step "ci.yml / test: Shared files equal ALICE-Law's table"
 python3 scripts/test_shared_files.py
 scripts/shared_files.sh
 
+step "ci.yml / test: G11 table matches the declared gates"
+scripts/g11_table.sh
+
 step "ci.yml / actionlint: actionlint"
 actionlint .github/workflows/*.yml
 
