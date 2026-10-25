@@ -727,23 +727,20 @@ impl ReliableEndpoint {
                 }
             }
             Packet::Open { token } => {
-                let epoch = match &self.inbound {
-                    // a repeated request (its accept was lost, so no data came on the link): the same link.
-                    // The same token after data came is a sender that started again: a new link
-                    Some(inb) if inb.epoch.sender == token && !inb.tracker.initialized => inb.epoch,
-                    _ => {
-                        let epoch = Epoch {
-                            receiver: tokens.take(),
-                            sender: token,
-                        };
-                        self.inbound = Some(Inbound {
-                            epoch,
-                            tracker: RecvTracker::new(),
-                            acks_due: std::collections::BTreeSet::new(),
-                        });
-                        epoch
-                    }
+                // every open request gets a new link, also one that repeats the current link's token: a
+                // repeated request (its accept was lost) and a sender that started again with the same token
+                // look alike, and only a new receiver token keeps a data packet of the older link from being
+                // taken on the new one. A sender that already took the earlier accept is refused once and
+                // opens again
+                let epoch = Epoch {
+                    receiver: tokens.take(),
+                    sender: token,
                 };
+                self.inbound = Some(Inbound {
+                    epoch,
+                    tracker: RecvTracker::new(),
+                    acks_due: std::collections::BTreeSet::new(),
+                });
                 out.replies.push(accept_packet(epoch).to_vec());
             }
             Packet::Accept { epoch } => {
@@ -1300,19 +1297,67 @@ mod tests {
         assert_eq!(a.ep.packets_acked, 2);
     }
 
-    /// A lost accept: the open request is sent again, and the repeat gets the same link
+    /// A lost accept: the open request is sent again and gets a new link; the payload arrives
     #[test]
-    fn test_a_lost_accept_gets_the_same_link() {
+    fn test_a_lost_accept_costs_a_round_not_the_data() {
         let (mut a, mut b) = (Side::new(0), Side::new(100));
         let open = a.ep.wrap_outgoing(b"x", &mut a.tokens);
         let lost = b.take(&open[0]);
         let again = a.ep.collect_retransmits_now();
         assert_eq!(again, open);
         let r = b.take(&again[0]);
-        assert_eq!(r.replies, lost.replies, "the same accept");
-        let (at_b, _) = settle(&mut b, &mut a, r.replies);
-        assert!(at_b.is_empty());
+        assert_ne!(r.replies, lost.replies, "a new link");
+        let (_, at_b) = settle(&mut b, &mut a, r.replies);
+        assert_eq!(at_b, vec![b"x".to_vec()]);
         assert_eq!(b.ep.inbound_epoch(), a.ep.epoch());
+    }
+
+    /// The first accept arrives late, after the repeated open request got a new link: the sender takes the
+    /// first, its data is refused once, it opens again and the payload arrives once
+    #[test]
+    fn test_a_late_first_accept_is_refused_once_and_the_data_arrives() {
+        let (mut a, mut b) = (Side::new(0), Side::new(100));
+        let open = a.ep.wrap_outgoing(b"x", &mut a.tokens);
+        let late = b.take(&open[0]).replies;
+        let again = a.ep.collect_retransmits_now();
+        let newer = b.take(&again[0]).replies;
+        let (_, at_b) = settle(&mut b, &mut a, [late, newer].concat());
+        assert_eq!(at_b, vec![b"x".to_vec()]);
+        ack(&mut a, &mut b);
+        assert_eq!(a.ep.packets_acked, 1);
+        assert!(a.ep.take_failures().is_empty());
+    }
+
+    /// A sender restarts with the same first token within one round trip of its first send: the earlier
+    /// incarnation's data packet, delivered before the new one's, is not taken on the new link, and the new
+    /// incarnation's payload arrives
+    #[test]
+    fn test_a_restart_within_a_round_trip_keeps_the_incarnations_apart() {
+        for old_first in [true, false] {
+            let (mut a, mut b) = (Side::new(0), Side::new(100));
+            let open = a.ep.wrap_outgoing(b"old", &mut a.tokens);
+            let accept = b.take(&open[0]).replies;
+            let old = a.take(&accept[0]).replies; // held in flight
+            let mut a = Side::new(0);
+            let open = a.ep.wrap_outgoing(b"new", &mut a.tokens);
+            let accept = b.take(&open[0]).replies;
+            let new = a.take(&accept[0]).replies; // held in flight too
+            let (first, second) = if old_first {
+                (&old, &new)
+            } else {
+                (&new, &old)
+            };
+            let mut delivered = Vec::new();
+            for p in first.iter().chain(second) {
+                let r = b.take(p);
+                delivered.extend(r.payload);
+                settle(&mut b, &mut a, r.replies);
+            }
+            assert_eq!(delivered, vec![b"new".to_vec()], "old first: {old_first}");
+            assert_eq!(b.ep.stale_frames, 1);
+            ack(&mut a, &mut b);
+            assert_eq!(a.ep.packets_acked, 1);
+        }
     }
 
     #[test]
