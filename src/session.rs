@@ -139,9 +139,11 @@ pub enum SessionState {
 pub struct SessionStats {
     /// Total ticks processed
     pub ticks: u64,
-    /// Total messages sent
+    /// Total messages sent (Sync messages, and blocks of application bytes sent with
+    /// [`SyncSession::send_bytes`])
     pub messages_sent: u64,
-    /// Total messages received
+    /// Total messages received (Sync messages, and blocks of application bytes received with
+    /// [`SyncSession::recv_frame`])
     pub messages_received: u64,
     /// Total bytes sent
     pub bytes_sent: u64,

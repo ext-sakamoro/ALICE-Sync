@@ -144,6 +144,7 @@ pub trait SyncTransport: Send + Sync {
 
 /// What [`SyncTransport::recv_frame`] received
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Frame {
     /// A Sync message
     Message(Envelope),
