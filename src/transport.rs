@@ -111,8 +111,60 @@ pub trait SyncTransport: Send + Sync {
         }
     }
 
+    /// Send application bytes to a specific peer; the receiver gets them as [`Frame::Bytes`] from
+    /// [`Self::recv_frame`] and never decodes them as a Sync message
+    ///
+    /// The default refuses: a transport that cannot carry bytes beside Sync messages returns
+    /// [`TransportError::Io`] of kind [`std::io::ErrorKind::Unsupported`] and sends nothing.
+    fn send_bytes_to(
+        &self,
+        bytes: &[u8],
+        addr: SocketAddr,
+    ) -> impl std::future::Future<Output = TransportResult<()>> + Send {
+        let _ = (bytes, addr);
+        async {
+            Err(TransportError::Io(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "this transport does not carry application bytes",
+            )))
+        }
+    }
+
+    /// Receive the next Sync message or block of application bytes, in the order they arrived
+    ///
+    /// The default is [`Self::recv`] (a transport without bytes only ever returns
+    /// [`Frame::Message`]).
+    fn recv_frame(&self) -> impl std::future::Future<Output = TransportResult<Frame>> + Send {
+        async { self.recv().await.map(Frame::Message) }
+    }
+
     /// Local bound address
     fn local_addr(&self) -> TransportResult<SocketAddr>;
+}
+
+/// What [`SyncTransport::recv_frame`] received
+#[derive(Debug, Clone)]
+pub enum Frame {
+    /// A Sync message
+    Message(Envelope),
+    /// Application bytes, as sent with [`SyncTransport::send_bytes_to`]
+    Bytes {
+        /// The bytes
+        bytes: Vec<u8>,
+        /// Source peer address
+        from: SocketAddr,
+    },
+}
+
+impl Frame {
+    /// The peer the frame came from
+    #[must_use]
+    pub const fn from(&self) -> SocketAddr {
+        match self {
+            Self::Message(envelope) => envelope.from,
+            Self::Bytes { from, .. } => *from,
+        }
+    }
 }
 
 // ============================================================================

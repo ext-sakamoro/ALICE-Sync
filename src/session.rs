@@ -31,7 +31,7 @@ use crate::discovery::Discovery;
 use crate::input_sync::{InputFrame, LockstepSession, RollbackAction, RollbackSession, SyncResult};
 use crate::protocol::{HandshakeRefused, Message};
 use crate::semantics::{check_semantics_against, IdStatus, PREVIOUS_SYNC_SEMANTICS_IDS};
-use crate::transport::{Envelope, SyncTransport, TransportError};
+use crate::transport::{Envelope, Frame, SyncTransport, TransportError};
 use crate::{NodeId, WorldHash};
 
 /// Synchronization mode
@@ -394,7 +394,14 @@ impl PeerGate {
                     Err(HandshakeRefused::SemanticsMismatch { peer, mismatch })
                 }
             }
-        } else if self.verified.read().await.contains_key(&peer) {
+        } else {
+            self.handshaken(peer).await
+        }
+    }
+
+    /// Whether `peer`'s Hello has been accepted: bytes to or from any other peer are refused
+    async fn handshaken(&self, peer: SocketAddr) -> Result<(), HandshakeRefused> {
+        if self.verified.read().await.contains_key(&peer) {
             Ok(())
         } else {
             Err(HandshakeRefused::NotHandshaken { peer })
@@ -487,6 +494,10 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
 
     /// Receive the next message from any peer.
     ///
+    /// Sync messages only: application bytes the transport received before the message are
+    /// passed over by the transport's [`SyncTransport::recv`] (the secure transport counts them
+    /// in `SecureTransport::skipped_bytes_count`); [`Self::recv_frame`] returns both.
+    ///
     /// # Errors
     ///
     /// [`TransportError::Handshake`] when the message is refused: a Hello
@@ -503,6 +514,48 @@ impl<T: SyncTransport + 'static> SyncSession<T> {
         let mut stats = self.stats.write().await;
         stats.messages_received += 1;
         Ok(envelope)
+    }
+
+    /// Receive the next Sync message or block of application bytes from any peer, in the order
+    /// the transport received them, under the same handshake as [`Self::recv`].
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Handshake`] when the frame is refused: a Hello whose semantics
+    /// identifier is neither this build's nor a verified earlier one, or any other message or any
+    /// bytes from a peer before its accepted Hello (ALICE-Law G7). The transport's own errors
+    /// otherwise.
+    pub async fn recv_frame(&self) -> Result<Frame, TransportError> {
+        let frame = self.transport.recv_frame().await?;
+        match &frame {
+            Frame::Message(envelope) => self.gate.admit(envelope).await,
+            Frame::Bytes { from, .. } => self.gate.handshaken(*from).await,
+        }
+        .map_err(TransportError::Handshake)?;
+        self.discovery.peer_seen(&frame.from()).await;
+        let mut stats = self.stats.write().await;
+        stats.messages_received += 1;
+        Ok(frame)
+    }
+
+    /// Send application bytes to a peer whose Hello this session has accepted; the peer's
+    /// session receives them from [`Self::recv_frame`].
+    ///
+    /// # Errors
+    ///
+    /// [`TransportError::Handshake`] ([`HandshakeRefused::NotHandshaken`]) when no Hello of
+    /// `peer` has been accepted (nothing is sent); the transport's errors otherwise, among them
+    /// [`TransportError::Io`] of kind [`std::io::ErrorKind::Unsupported`] from a transport
+    /// that cannot carry bytes.
+    pub async fn send_bytes(&self, peer: SocketAddr, bytes: &[u8]) -> Result<(), TransportError> {
+        self.gate
+            .handshaken(peer)
+            .await
+            .map_err(TransportError::Handshake)?;
+        self.transport.send_bytes_to(bytes, peer).await?;
+        let mut stats = self.stats.write().await;
+        stats.messages_sent += 1;
+        Ok(())
     }
 
     /// How the peer's accepted Hello identifier relates to this build
@@ -1203,6 +1256,55 @@ mod tests {
 
         let stats = session_a.stats().await;
         assert_eq!(stats.messages_sent, 1);
+    }
+
+    // a transport without bytes: send_bytes is refused before an accepted Hello and, after it, by the
+    // transport's explicit Unsupported (never a silent Ok); recv_frame gives the Hello as a message and
+    // refuses anything else before it
+    #[tokio::test]
+    async fn bytes_on_a_transport_that_cannot_carry_them() {
+        let (a, b) = ChannelTransport::pair();
+        let addr_a = a.local_addr().unwrap();
+        let addr_b = b.local_addr().unwrap();
+        let session_a = SessionBuilder::new()
+            .node_id(1)
+            .discovery(false)
+            .tick_rate(0)
+            .build(a);
+        let session_b = SessionBuilder::new()
+            .node_id(2)
+            .discovery(false)
+            .tick_rate(0)
+            .build(b);
+
+        match session_b.send_bytes(addr_a, b"x").await {
+            Err(TransportError::Handshake(HandshakeRefused::NotHandshaken { peer })) => {
+                assert_eq!(peer, addr_a);
+            }
+            other => panic!("expected NotHandshaken, got {other:?}"),
+        }
+        session_a
+            .transport()
+            .send_to(&Message::Bye, addr_b)
+            .await
+            .unwrap();
+        match session_b.recv_frame().await {
+            Err(TransportError::Handshake(HandshakeRefused::NotHandshaken { peer })) => {
+                assert_eq!(peer, addr_a);
+            }
+            other => panic!("expected NotHandshaken, got {other:?}"),
+        }
+
+        session_a.handshake(addr_b, WorldHash(1)).await.unwrap();
+        match session_b.recv_frame().await.unwrap() {
+            Frame::Message(env) => assert!(matches!(env.message, Message::Hello { .. })),
+            other => panic!("expected the Hello, got {other:?}"),
+        }
+        match session_b.send_bytes(addr_a, b"x").await {
+            Err(TransportError::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::Unsupported),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        assert_eq!(session_b.stats().await.messages_sent, 0);
     }
 
     #[tokio::test]
