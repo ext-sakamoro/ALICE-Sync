@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::protocol::Message;
-use crate::transport::{Envelope, SyncTransport, TransportError, TransportResult};
+use crate::transport::{Envelope, Frame, SyncTransport, TransportError, TransportResult};
 use alice_channel::{
     AsyncRecvHalf, AsyncSecureChannel, AsyncSendHalf, ChannelError, Credential, PeerPolicy,
     MAX_PAYLOAD,
@@ -568,6 +568,25 @@ impl<P: PeerPolicy + Send + Sync + 'static> SyncTransport for SecureTransport<P>
                 }
             }
         }
+    }
+
+    async fn send_bytes_to(&self, bytes: &[u8], addr: SocketAddr) -> TransportResult<()> {
+        self.send_framed(KIND_BYTES, bytes, addr).await
+    }
+
+    /// The next received Sync message or block of application bytes (nothing is passed over)
+    async fn recv_frame(&self) -> TransportResult<Frame> {
+        let v = self.recv_verified().await?;
+        Ok(match v.body {
+            Body::Message(message) => Frame::Message(Envelope {
+                message,
+                from: v.from,
+            }),
+            Body::Bytes(bytes) => Frame::Bytes {
+                bytes,
+                from: v.from,
+            },
+        })
     }
 
     fn local_addr(&self) -> TransportResult<SocketAddr> {
