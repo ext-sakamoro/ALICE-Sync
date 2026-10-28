@@ -5,6 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- CI (ALICE-Law G11): `.github/shared-files-pin` / `.github/g11-table-pin` を ALICE-Law 5f6679d に上げ、共有の写し 8 つをその表の目標の bytes にした (eol.yml / public-text.yml / gen_clippy_canary_calls.py / id_move_check.py / shared_files.sh と各試験、ALICE-Analytics と ALICE-DetMath の main と同じ bytes)
 - `SyncSession::send_bytes` / `SyncSession::recv_frame`: session の handshake の下で application bytes を送受する Hello を受け入れていない peer への送信と、その peer からの bytes と Hello 以外の message は `HandshakeRefused::NotHandshaken` で断る 受信は 1 本の loop で、bytes と Sync message を届いた順に `transport::Frame` で返す `recv` は従来どおり Sync message だけを返し、secure transport は飛ばした bytes を `skipped_bytes_count` で数える `SessionStats` の `messages_sent` / `messages_received` は bytes の塊も 1 件と数える `transport::Frame` は `#[non_exhaustive]`
 - `SyncTransport::send_bytes_to` / `SyncTransport::recv_frame` (既定の実装つき): bytes を運べない transport の `send_bytes_to` は種類 `Unsupported` の `TransportError::Io` を返して何も送らない、`recv_frame` は `recv` を `Frame::Message` で返す `SecureTransport` は両方を channel の `KIND_BYTES` で実装する wire と Hello の符号化は同じ
 - `WorldSoA::to_state` / `WorldSoA::from_state`、`WorldStorage::entity_at`、`Converge::with_limits`、`persist::decode_state_strict`、`persist::FormatStatus`、`persist::LEGACY_FORMAT_VERSIONS`

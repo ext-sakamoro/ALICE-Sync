@@ -110,6 +110,15 @@ class Render(unittest.TestCase):
         # a non-generic method keeps the bare path form
         self.assertEqual(gen.statement("disallowed-methods", "f64::sin"), "let _ = f64::sin;")
 
+    def test_methods_of_generic_types_are_named_through_the_type(self):
+        for owner, named in gen.GENERIC_TYPES.items():
+            self.assertTrue(named.startswith(f"{owner}::<") and named.endswith(">"), named)
+            self.assertEqual(gen.statement("disallowed-methods", f"{owner}::norm"),
+                             f"let _ = {named}::norm;")
+        # a path that only shares a prefix with a generic type keeps the bare form
+        self.assertEqual(gen.statement("disallowed-methods", "num_complex::ComplexFloat::abs"),
+                         "let _ = num_complex::ComplexFloat::abs;")
+
     def test_skip_rows_name_the_reason(self):
         skips = {r.split("\t")[1]: r.split("\t")[3] for r in self.rows if r.split("\t")[2] == "skip"}
         self.assertEqual(set(skips), {"my_crate::inner::f", "local_dep::f", "nowhere::f", "nowhere::T"})

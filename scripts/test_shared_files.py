@@ -85,6 +85,71 @@ class SharedFiles(unittest.TestCase):
         (self.tree / ".github/shared-files-pin").write_text("rev main\n", encoding="utf-8")
         self.assertEqual(self.run_script(str(self.tree))[0], 2)
 
+    def write_pin(self, name: str, visibility: str | None) -> None:
+        """The committed pin with another repository name and, if given, a visibility line."""
+        pin = self.tree / ".github/shared-files-pin"
+        lines = [l for l in pin.read_text(encoding="utf-8").splitlines()
+                 if not l.startswith(("name ", "visibility "))]
+        lines.insert(0, f"name {name}")
+        if visibility is not None:
+            lines.append(f"visibility {visibility}")
+        pin.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def private_tree(self) -> Path:
+        """A private repository's tree: only the copies of uniform rows every crate that runs this
+        check carries (SHARED_PROBES), at the committed bytes."""
+        tree = Path(self.tmp.name) / "private"
+        for rel in SHARED_PROBES:
+            src = self.tree / rel
+            if src.is_file():
+                (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(src, tree / rel)
+        return tree
+
+    def test_a_private_repository_compares_its_copies_with_the_rows(self):
+        # a name the table never lists: the private mode compares each table path present
+        self.write_pin("ALICE-PrivateProbe", "private")
+        code, out = self.run_script(str(self.private_tree()))
+        self.assertEqual(code, 0, out)
+        self.assertIn("private copy, the row's bytes", out)
+        self.assertRegex(out, r"copies [1-9][0-9]*, pending [0-9]+, 0 finding")
+
+    def test_a_flipped_byte_fails_in_the_private_mode_too(self):
+        self.write_pin("ALICE-PrivateProbe", "private")
+        tree = self.private_tree()
+        rel = next(r for r in SHARED_PROBES if (tree / r).is_file())
+        f = tree / rel
+        data = bytearray(f.read_bytes())
+        data[-1] ^= 1
+        f.write_bytes(bytes(data))
+        code, out = self.run_script(str(tree))
+        self.assertEqual(code, 1, out)
+        self.assertIn(rel, out)
+
+    def test_a_listed_public_repository_cannot_use_the_private_mode(self):
+        # the table lists this repository, so the private mode would dodge its rows: refused
+        name = next(l.split()[1] for l in (ROOT / ".github/shared-files-pin").read_text(encoding="utf-8").splitlines()
+                    if l.startswith("name "))
+        self.write_pin(name, "private")
+        code, out = self.run_script(str(self.tree))
+        self.assertEqual(code, 2, out)
+
+    def test_an_unknown_visibility_fails(self):
+        self.write_pin("ALICE-PrivateProbe", "secret")
+        self.assertEqual(self.run_script(str(self.tree))[0], 2)
+
+    def test_a_visibility_line_without_a_value_fails(self):
+        # a bare `visibility` line must not read as public
+        self.write_pin("ALICE-PrivateProbe", "")
+        self.assertEqual(self.run_script(str(self.private_tree()))[0], 2)
+
+    def test_the_private_mode_comparing_nothing_fails(self):
+        self.write_pin("ALICE-PrivateProbe", "private")
+        empty = Path(self.tmp.name) / "empty"
+        empty.mkdir()
+        (empty / "README.md").write_text("nothing shared\n", encoding="utf-8")
+        self.assertEqual(self.run_script(str(empty))[0], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

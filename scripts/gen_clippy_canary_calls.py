@@ -13,7 +13,8 @@ A method is planted as a bare path reference (`let _ = <path>;`), which clippy
 flags once whatever the method's arity. A generic function cannot be named
 without its type arguments (E0282), so the paths in GENERIC_PLANTS are planted
 with the turbofish given there instead; clippy resolves the turbofish path to
-the same disallowed method. A type is planted as a `use` item
+the same disallowed method. A method of a generic type in GENERIC_TYPES is named through
+the type with its type arguments (`Complex::<f32>::norm`). A type is planted as a `use` item
 (`#[allow(unused_imports)] use <path> as CanaryType;`), which clippy flags once
 whatever the type's generic parameters.
 
@@ -87,9 +88,21 @@ GENERIC_PLANTS = {
 }
 
 
+# generic types: a method of one is named through the type with its type arguments
+# (`Complex::<f32>::norm`); clippy resolves it to the same disallowed method
+GENERIC_TYPES = {
+    "num_complex::Complex": "num_complex::Complex::<f32>",
+}
+
+
 def statement(key: str, path: str) -> str:
     if key == "disallowed-methods":
-        return GENERIC_PLANTS.get(path, f"let _ = {path};")
+        if path in GENERIC_PLANTS:
+            return GENERIC_PLANTS[path]
+        owner, _, method = path.rpartition("::")
+        if owner in GENERIC_TYPES:
+            return f"let _ = {GENERIC_TYPES[owner]}::{method};"
+        return f"let _ = {path};"
     return f"#[allow(unused_imports)] use {path} as CanaryType;"
 
 
