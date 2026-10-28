@@ -146,6 +146,7 @@ reference_repo = "ALICE-DB"
 [G11]
 status = "pass"
 evidence = [
+    "ALICE-Law's scripts/g11_self_check.py at the pinned revision (the table, its rows, the copies and the manifest; 0 own copies off target) in CI (`.github/workflows/ci.yml#- name: G11 self-check (ALICE-Law at the pinned revision)`) and `scripts/preflight.sh`",
     "scripts/test_entropy_guard.py",
     "scripts/test_public_text.py",
     ".github/workflows/ci.yml entropy-guard job",
