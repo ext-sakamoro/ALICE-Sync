@@ -127,6 +127,16 @@ class Render(unittest.TestCase):
         self.assertEqual(skips["nowhere::f"], "nowhere is not in Cargo.lock: the canary crate cannot depend on it")
         self.assertTrue(all(skips.values()))
 
+    def test_a_git_source_is_plantable(self):
+        lock = LOCK + ('\n[[package]]\nname = "dep-g"\nversion = "0.6.0"\n'
+                       f'source = "git+https://example.invalid/dep-g?rev=aaaaaaa#{"a" * 40}"\n')
+        self.assertIsNone(gen.skip_reason("dep_g::Key::generate", cc.lock_packages(lock), set()))
+
+    def test_a_declared_path_source_is_plantable_and_an_undeclared_one_is_not(self):
+        lock = cc.lock_packages(LOCK)
+        self.assertIsNone(gen.skip_reason("local_dep::f", lock, set(), {"local_dep": "/r/local-dep"}))
+        self.assertIn("without a registry source", gen.skip_reason("local_dep::f", lock, set(), {}))
+
     def test_hyphen_and_underscore_are_equivalent(self):
         self.assertIsNone(gen.skip_reason("dep_a::x", cc.lock_packages(LOCK), set()))
         self.assertIsNone(gen.skip_reason("dep-a::x", cc.lock_packages(LOCK), set()))
@@ -144,6 +154,18 @@ class Render(unittest.TestCase):
 
 
 class Main(unittest.TestCase):
+    def test_a_path_dependency_the_root_manifest_declares_is_planted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = repo(d)
+            (root / "Cargo.toml").write_text(CARGO + '\n[dependencies]\nlocal-dep = { path = "../local-dep" }\n',
+                                             encoding="utf-8")
+            rc, _, err = run(["--root", str(root)])
+            self.assertEqual(rc, 0, err)
+            text = (root / "scripts" / "clippy_canary_calls.tsv").read_text(encoding="utf-8")
+        row = [line for line in body(text) if "\tlocal_dep::f\t" in line]
+        self.assertEqual(len(row), 1, text)
+        self.assertNotIn("\tskip\t", row[0])
+
     def test_write_then_check_passes(self):
         with tempfile.TemporaryDirectory() as d:
             root = repo(d)

@@ -5,8 +5,9 @@ plants) from clippy.toml.
 One row per entry of `disallowed-methods` and `disallowed-types`, in clippy.toml
 order. Other keys (`disallowed-macros`, ...) are not read. An entry is planted
 when its first path segment is std, core, alloc or a primitive type, or names
-an external crate locked in the repository's Cargo.lock (registry source; '-'
-and '_' are equivalent). Every other entry becomes a skip row with the reason
+an external crate the canary crate can depend on as the repository's Cargo.lock
+resolves it (a registry or git source, or a path the root Cargo.toml declares;
+'-' and '_' are equivalent). Every other entry becomes a skip row with the reason
 it cannot be planted.
 
 A method is planted as a bare path reference (`let _ = <path>;`), which clippy
@@ -62,14 +63,14 @@ def own_crates(root: Path) -> set[str]:
     return names
 
 
-def skip_reason(path: str, lock: dict, own: set[str]) -> str | None:
+def skip_reason(path: str, lock: dict, own: set[str], paths: dict[str, str] | None = None) -> str | None:
     """None when the path can be planted, else why it cannot."""
     crate = cc.first_segment(path)
     if crate in cc.BUILTIN_ROOTS:
         return None
     if cc.norm(crate) in own:
         return f"{crate} is this repository's own crate: the canary crate does not build it"
-    if cc.registry_version(lock, crate) is not None:
+    if cc.dependency_line(lock, crate, paths) is not None:
         return None
     if cc.norm(crate) in lock:
         return (f"{crate} is in Cargo.lock without a registry source: "
@@ -106,13 +107,14 @@ def statement(key: str, path: str) -> str:
     return f"#[allow(unused_imports)] use {path} as CanaryType;"
 
 
-def render(entries: dict[str, list[str]], lock: dict, own: set[str]) -> tuple[str, int, int]:
+def render(entries: dict[str, list[str]], lock: dict, own: set[str],
+           paths: dict[str, str] | None = None) -> tuple[str, int, int]:
     """(file text, planted count, skipped count)"""
     lines: list[str] = []
     planted = skipped = 0
     for key in cc.KEYS:
         for path in entries.get(key, []):
-            reason = skip_reason(path, lock, own)
+            reason = skip_reason(path, lock, own, paths)
             if reason is None:
                 lines.append(f"{key}\t{path}\t{statement(key, path)}")
                 planted += 1
@@ -133,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     entries = cc.clippy_toml_entries((args.root / "clippy.toml").read_text(encoding="utf-8"))
     lock_file = args.root / "Cargo.lock"
     lock = cc.lock_packages(lock_file.read_text(encoding="utf-8")) if lock_file.exists() else {}
-    text, planted, skipped = render(entries, lock, own_crates(args.root))
+    text, planted, skipped = render(entries, lock, own_crates(args.root), cc.path_dependencies(args.root))
     if planted == 0:
         print(f"gen_clippy_canary_calls: compared nothing: no plantable entry among {skipped} "
               "disallowed-methods / disallowed-types entries of clippy.toml", file=sys.stderr)
