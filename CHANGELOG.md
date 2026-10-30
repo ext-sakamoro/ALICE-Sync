@@ -34,6 +34,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
 ### Changed
+- CI (ALICE-Law G11): 共有の `scripts/gated_tests.py` と試験を ALICE-Law の表の計画した bytes で入れ、機能で gate された試験 file がどれも CI と preflight の `cargo test` で走ることを検査する (この repository の設定は `scripts/gated_tests.toml`)
 - CI (ALICE-Law G9 / G11): 識別子の移動の検査器 (`scripts/id_move_check.py` と試験) を共有の新しい bytes にし、新しく足した associated const を受けるようにした 他の共有の file も ALICE-Law 40973a8a の表が計画した bytes にし、shared-files と G11 の表の pin を上げた
 - `.github/shared-files-pin` / `.github/g11-table-pin`: ALICE-Law d856000a に上げる (共有の file の表で `scripts/id_move_check.py` の目標が今の bytes になった版、G11 の self-check は pass のまま) `scripts/id_move_check.py` / `scripts/test_id_move_check.py`: 共有の版 (ALICE-Analytics の main と同じ bytes) に揃える 公開を止めている間は版が動かなくても、CHANGELOG の `[Unreleased]` の `**Breaking:**` の項目が両方の値を名指せば識別子の移動を告知したものとし、試験の件数を色の escape を除いて数える
 - 依存: alice-channel の pin を 0c9ebcbd から 5829dde0、alice-identity を 68b8141a から 55be1372、alice-sign を 8a1b00d8 から bb79209e に上げ、依存の木の alice-sign を 1 版にした

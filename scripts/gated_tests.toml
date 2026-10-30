@@ -1,0 +1,11 @@
+# Configuration of scripts/gated_tests.py (the script is shared between repositories; this file is not)
+mode = "run"
+ignored = "run"
+
+[[cover]]
+name = "ci"
+globs = [".github/workflows/ci.yml"]
+
+[[cover]]
+name = "preflight"
+globs = ["scripts/preflight.sh"]
