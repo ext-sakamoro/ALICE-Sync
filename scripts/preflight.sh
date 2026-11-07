@@ -40,6 +40,8 @@ step "ci.yml / fmt: run"
 
 step "ci.yml / clippy: Identifier moves (tests, then against the published release)"
 # text files are LF in the index and the working tree (.github/workflows/eol.yml, shared by the ALICE crates)
+python3 scripts/test_workflow_pipefail.py
+python3 scripts/workflow_pipefail.py
 python3 scripts/test_check_eol.py
 python3 scripts/check_eol.py
 CARGO_TERM_COLOR=always python3 scripts/test_id_move_check.py

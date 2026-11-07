@@ -34,6 +34,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
 ### Changed
+- CI: `scripts/workflow_pipefail.py` (試験 `scripts/test_workflow_pipefail.py`、他の repo と同じ中身) が、pipe する `run` step が pipefail で走るかを全 workflow で確かめる 該当の step を `shell: bash` にした
 - CI: toolchain の action を上流の master から届く commit に固定した 固定していた sha は上流の branch の書き換えで届かなくなっていた
 - CI: 共有の `scripts/semver_gate.py`、`scripts/test_semver_gate.py`、`scripts/release_baseline.py`、`scripts/test_release_baseline.py` の subprocess に `encoding="utf-8"` を明示した (text mode は既定で locale の符号化で読むため) ALICE-Law の pin を今の版へ移した
 - 依存: alice-channel の pin を 5829dde0 から 3ee365d6 に上げる (alice-crypto が main の ed065ad になる、封の bytes と識別子は変わらない)
