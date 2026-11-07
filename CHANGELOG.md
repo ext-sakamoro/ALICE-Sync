@@ -34,6 +34,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
 ### Changed
+- CI: 共有の `scripts/semver_gate.py`、`scripts/test_semver_gate.py`、`scripts/release_baseline.py`、`scripts/test_release_baseline.py` の subprocess に `encoding="utf-8"` を明示した (text mode は既定で locale の符号化で読むため) ALICE-Law の pin を今の版へ移した
 - 依存: alice-channel の pin を 5829dde0 から 3ee365d6 に上げる (alice-crypto が main の ed065ad になる、封の bytes と識別子は変わらない)
 - CI (ALICE-Law G11): 共有の `scripts/gated_tests.py` と試験を ALICE-Law の表の計画した bytes で入れ、機能で gate された試験 file がどれも CI と preflight の `cargo test` で走ることを検査する (この repository の設定は `scripts/gated_tests.toml`)
 - CI (ALICE-Law G9 / G11): 識別子の移動の検査器 (`scripts/id_move_check.py` と試験) を共有の新しい bytes にし、新しく足した associated const を受けるようにした 他の共有の file も ALICE-Law 40973a8a の表が計画した bytes にし、shared-files と G11 の表の pin を上げた
