@@ -28,13 +28,13 @@ alice-auth = { version = "0.5.1", optional = true, default-features = false, fea
 alice-codec = { version = "0.1.3", optional = true, default-features = false, features = ["std"] }
 alice-analytics = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 mdns-sd = { version = "0.11", optional = true }
-# the secure transport: the channel (feature secure-transport), taken by git at a full commit of its
-# public repository
-alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", rev = "3ee365d63d360cd4b2c70c897f917a5e997cd0f1", features = ["async"], optional = true }
+# the secure transport: the channel (feature secure-transport)
+alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", branch = "main", features = ["async"], optional = true }
 # signed events (authorship) and the secure transport: the device certificates and the checkpoint
-# signatures; Ed25519 and SHA-256 from alice-sign, both by git at a full commit
-alice-identity = { version = "1.2.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", rev = "55be13728aef680ff9b3de56dcd234a578ee7db9" }
-alice-sign = { version = "0.1", git = "https://github.com/ext-sakamoro/ALICE-Sign", rev = "bb79209e376ec3989bf721f48d5894032a221e8b" }
+# signatures; Ed25519 and SHA-256 from alice-sign (ALICE repositories taken by git from main, as their
+# other consumers take them, so a build with downstream consumers links one copy of each; the lock is the pin)
+alice-identity = { version = "1.2.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", branch = "main" }
+alice-sign = { version = "0.1", git = "https://github.com/ext-sakamoro/ALICE-Sign", branch = "main" }
 
 [dev-dependencies]
 criterion = "0.5"
