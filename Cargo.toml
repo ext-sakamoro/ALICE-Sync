@@ -1,6 +1,6 @@
 [package]
 name = "alice-sync"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.88"  # alice-auth 0.5.1 が 1.88 要求、CI msrv job で実 compile
 authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
@@ -24,10 +24,10 @@ numpy = { version = "0.28", optional = true }
 # bridge 系 sibling は全て crates.io 公開済なので version 依存 (2026-09-17:
 # CI の manifest-only stub は version 0.1.0 固定で ^1 / ^0.5 等を満たせず 09-14 から red)
 alice-physics = { git = "https://github.com/ext-sakamoro/ALICE-Physics", branch = "main", version = "4", optional = true }
-alice-db = { version = "0.2.0-beta.2", optional = true }
-alice-cache = { version = "0.2", optional = true }
-alice-auth = { version = "0.5.1", optional = true, default-features = false, features = ["std"] }
-alice-codec = { version = "0.1.3", optional = true, default-features = false, features = ["std"] }
+alice-db = { version = "0.6.0", git = "https://github.com/ext-sakamoro/ALICE-DB", branch = "main", optional = true }
+alice-cache = { version = "0.2", git = "https://github.com/ext-sakamoro/ALICE-Cache", branch = "main", optional = true }
+alice-auth = { version = "0.6.0", git = "https://github.com/ext-sakamoro/ALICE-Auth", branch = "main", optional = true, default-features = false, features = ["std"] }
+alice-codec = { version = "0.2.0", git = "https://github.com/ext-sakamoro/ALICE-Codec", branch = "main", optional = true, default-features = false, features = ["std"] }
 alice-analytics = { git = "https://github.com/ext-sakamoro/ALICE-Analytics", branch = "main", version = "0.7", optional = true, default-features = false, features = ["std"] }
 mdns-sd = { version = "0.11", optional = true }
 # the secure transport: the channel (feature secure-transport)

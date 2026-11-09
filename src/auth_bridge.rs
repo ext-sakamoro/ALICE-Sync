@@ -4,7 +4,19 @@
 //! Each sync node has an identity; events can be signed to prevent spoofing.
 
 use crate::{Event, NodeId};
-use alice_auth::{ok, verify, AliceId, AliceSig, Identity};
+use alice_auth::{ok, verify, AliceId, AliceSig, Identity, SignError};
+
+/// The domain tag every event signature covers first: a signature is over
+/// `EVENT_SIGNING_TAG ‖ event_bytes`, so it cannot be replayed as a signature of another format,
+/// and event bytes that happen to start with alice-auth's reserved prefix still sign.
+pub const EVENT_SIGNING_TAG: &[u8] = b"alice-sync/event/v1";
+
+fn tagged(event_bytes: &[u8]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(EVENT_SIGNING_TAG.len() + event_bytes.len());
+    m.extend_from_slice(EVENT_SIGNING_TAG);
+    m.extend_from_slice(event_bytes);
+    m
+}
 
 /// Authenticated sync node that signs outgoing events.
 pub struct AuthenticatedNode {
@@ -24,7 +36,7 @@ pub struct AuthenticatedNode {
 pub struct SignedEvent {
     /// Serialized event bytes.
     pub event_bytes: Vec<u8>,
-    /// Ed25519 signature over `event_bytes`.
+    /// Ed25519 signature over [`EVENT_SIGNING_TAG`] followed by `event_bytes`.
     pub signature: AliceSig,
     /// Signer's public identity.
     pub signer: AliceId,
@@ -65,23 +77,31 @@ impl AuthenticatedNode {
         self.identity.id()
     }
 
-    /// Sign an event's compact bytes.
-    pub fn sign_event(&mut self, event: &Event) -> SignedEvent {
-        let event_bytes = event.to_compact_bytes();
-        let signature = self.identity.sign(&event_bytes);
+    /// Sign an event's compact bytes under [`EVENT_SIGNING_TAG`].
+    ///
+    /// # Errors
+    ///
+    /// A [`SignError`] from the identity (the tagged message never starts with alice-auth's
+    /// reserved prefix, so this is for errors that crate may add).
+    pub fn sign_event(&mut self, event: &Event) -> Result<SignedEvent, SignError> {
+        self.sign_bytes(event.to_compact_bytes())
+    }
+
+    fn sign_bytes(&mut self, event_bytes: Vec<u8>) -> Result<SignedEvent, SignError> {
+        let signature = self.identity.sign(&tagged(&event_bytes))?;
         self.signed_count += 1;
-        SignedEvent {
+        Ok(SignedEvent {
             event_bytes,
             signature,
             signer: self.identity.id(),
-        }
+        })
     }
 
     /// Verify a signed event from a peer.
     ///
     /// Returns `true` if the signature is valid.
     pub fn verify_event(&mut self, signed: &SignedEvent) -> bool {
-        let valid = ok(&signed.signer, &signed.event_bytes, &signed.signature);
+        let valid = ok(&signed.signer, &tagged(&signed.event_bytes), &signed.signature);
         if valid {
             self.verified_count += 1;
         } else {
@@ -109,7 +129,7 @@ impl AuthenticatedNode {
 /// Verify a signed event without owning a node (standalone verification).
 #[must_use]
 pub fn verify_signed_event(signed: &SignedEvent) -> bool {
-    verify(&signed.signer, &signed.event_bytes, &signed.signature).is_ok()
+    verify(&signed.signer, &tagged(&signed.event_bytes), &signed.signature).is_ok()
 }
 
 #[cfg(test)]
@@ -128,7 +148,7 @@ mod tests {
         });
 
         // Alice signs
-        let signed = alice.sign_event(&event);
+        let signed = alice.sign_event(&event).unwrap();
         assert_eq!(alice.signed_count, 1);
 
         // Bob verifies
@@ -147,7 +167,7 @@ mod tests {
             pos: [0, 0, 0],
         });
 
-        let mut signed = alice.sign_event(&event);
+        let mut signed = alice.sign_event(&event).unwrap();
 
         // Tamper with event bytes
         if !signed.event_bytes.is_empty() {
@@ -170,7 +190,7 @@ mod tests {
             delta: [1, 0, 0],
         });
 
-        let signed = alice.sign_event(&event);
+        let signed = alice.sign_event(&event).unwrap();
 
         // Bob expects it from Eve, but it's from Alice
         assert!(!bob.verify_from(&signed, &eve.public_id()));
@@ -200,7 +220,48 @@ mod tests {
             delta: [10, 20, 30],
         });
 
-        let signed = node.sign_event(&event);
+        let signed = node.sign_event(&event).unwrap();
         assert!(verify_signed_event(&signed));
+    }
+
+    /// The old format (a signature over the event bytes without the tag) is refused, by the node
+    /// and by the standalone check.
+    #[test]
+    fn untagged_signature_is_refused() {
+        let seed = [7u8; 32];
+        let mut bob = AuthenticatedNode::new(NodeId(2)).unwrap();
+        let event = Event::new(EventKind::Motion {
+            entity: 9,
+            delta: [1, 2, 3],
+        });
+        let bytes = event.to_compact_bytes();
+        let raw = Identity::from_seed(&seed).sign(&bytes).unwrap();
+        let old = SignedEvent {
+            event_bytes: bytes.clone(),
+            signature: raw,
+            signer: Identity::from_seed(&seed).id(),
+        };
+        assert!(!bob.verify_event(&old));
+        assert!(!verify_signed_event(&old));
+        // the same node signing the same event now verifies
+        let mut alice = AuthenticatedNode::from_seed(NodeId(1), &seed);
+        let new = alice.sign_event(&event).unwrap();
+        assert_eq!(new.event_bytes, bytes);
+        assert!(bob.verify_event(&new));
+        assert_ne!(new.signature, old.signature);
+    }
+
+    /// Event bytes that start with alice-auth's reserved prefix still sign and verify (the tag
+    /// comes first).
+    #[test]
+    fn bytes_under_the_reserved_prefix_still_sign() {
+        let mut alice = AuthenticatedNode::from_seed(NodeId(1), &[3u8; 32]);
+        let mut bob = AuthenticatedNode::new(NodeId(2)).unwrap();
+        let mut bytes = alice_auth::RESERVED_PREFIX.to_vec();
+        bytes.extend_from_slice(b"payload");
+        let signed = alice.sign_bytes(bytes).unwrap();
+        assert!(bob.verify_event(&signed));
+        assert!(verify_signed_event(&signed));
+        assert_eq!(&EVENT_SIGNING_TAG[..], b"alice-sync/event/v1");
     }
 }
