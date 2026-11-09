@@ -163,6 +163,7 @@ pub mod ffi;
 pub mod fixed_point;
 pub mod input_sync;
 mod keyed;
+pub mod match_sync;
 pub mod node;
 pub mod persist;
 #[cfg(feature = "physics")]
