@@ -83,7 +83,7 @@ python3 scripts/clippy_canary.py
 
 step "ci.yml / test: Build (no default features)"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"; cargo build --lib --no-default-features )
-( deps="$(cargo tree -e normal --no-default-features --prefix none --format '{p}')"; grep -q '^alice-sync ' <<<"${deps}" || { echo "cargo tree listed no alice-sync"; exit 1; }; if grep -q '^bincode ' <<<"${deps}"; then echo "bincode is linked without the default features"; exit 1; fi; grep -q '^bincode ' <<<"$(cargo tree -e normal --prefix none --format '{p}')" || { echo "the default build lost bincode"; exit 1; } )
+( for flags in --no-default-features "" --all-features; do deps="$(cargo tree -e normal ${flags} --prefix none --format '{p}')"; grep -q '^alice-sync ' <<<"${deps}" || { echo "cargo tree ${flags} listed no alice-sync"; exit 1; }; if grep -q '^bincode ' <<<"${deps}"; then echo "bincode is linked (${flags:-default features})"; exit 1; fi; done )
 
 step "ci.yml / msrv: Check (default + all native features)"
 (

@@ -130,16 +130,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build (no default features)
         run: cargo build --lib --no-default-features
-      # without the default features (the bincode forms of Event and Message) the library links no
-      # bincode: a consumer that needs only the order key takes it with default-features = false
-      - name: No bincode without the default features
+      # the crate links no bincode in any build (RUSTSEC-2025-0141): Event and Message have one
+      # encoding, bitcode; a consumer that needs only the order key takes default-features = false
+      - name: No bincode in any build
         shell: bash
         run: |
           set -euo pipefail
-          deps="$(cargo tree -e normal --no-default-features --prefix none --format '{p}')"
-          grep -q '^alice-sync ' <<<"${deps}" || { echo "::error::cargo tree listed no alice-sync"; exit 1; }
-          if grep -q '^bincode ' <<<"${deps}"; then echo "::error::bincode is linked without the default features"; exit 1; fi
-          grep -q '^bincode ' <<<"$(cargo tree -e normal --prefix none --format '{p}')" || { echo "::error::the default build lost bincode"; exit 1; }
+          for flags in --no-default-features "" --all-features; do
+            deps="$(cargo tree -e normal ${flags} --prefix none --format '{p}')"
+            grep -q '^alice-sync ' <<<"${deps}" || { echo "::error::cargo tree ${flags} listed no alice-sync"; exit 1; }
+            if grep -q '^bincode ' <<<"${deps}"; then echo "::error::bincode is linked (${flags:-default features})"; exit 1; fi
+          done
       # scripts/run_tests.sh fails the step when no test ran or when a named golden, identifier
       # or order test binary ran none (a feature or target mismatch would otherwise pass as an
       # empty run); the full suite still runs
