@@ -1,0 +1,13 @@
+# ALICE-Sync: the call sites scripts/entropy_guard.py allows in src/ (exact counts; an entry that matches nothing fails)
+
+[[allow]]
+path = "src/clock.rs"
+pattern = "Instant::now"
+count = 1
+reason = "the one monotonic clock read of the transport layer (retransmit timers, round-trip samples, fragment expiry, peer liveness); no event, world hash or wire byte is computed from it"
+
+[[allow]]
+path = "src/keyed.rs"
+pattern = "RandomState"
+count = 3
+reason = "the one keyed lookup table (src/keyed.rs keyed_map: the use, the KeyedMap alias and the constructor): a SipHash key drawn per table, so a peer cannot pick colliding entity ids; the key changes only where entries sit, never a lookup's answer, and every ordered output goes through keyed::sorted; tests/keyed_lookup.rs worlds_with_different_keys_store_the_same_bytes_and_hash shows stored bytes and world hashes equal under two keys"
