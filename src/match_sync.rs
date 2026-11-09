@@ -78,6 +78,10 @@ impl DigestLog {
     }
 
     /// Record (or, after a rollback, replace) this peer's digest for `frame`.
+    ///
+    /// Record only frames whose inputs are all confirmed (and send the other peer only those): the
+    /// first mismatch is reported once, so a predicted frame's digest, compared before a late input
+    /// rolls it back, reports a desync that is not one.
     pub fn local(&mut self, frame: u64, digest: u64) -> Option<Report> {
         self.local.insert(frame, digest);
         self.check(frame)
