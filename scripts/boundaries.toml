@@ -3,6 +3,7 @@
 # peer's semantics identifier and names its mismatch test; `local: <reason>`
 # says why no Law-bearing value from another producer crosses it.
 [boundary]
+"decode::converge.rs::Key::from_bytes" = "local: an order key is three integers (Lamport time, origin, sequence), no Law-bearing value; the length is checked"
 "decode::event.rs::Event::from_bytes" = "local: events hold integers as the sender supplied them and reach a session inside Message, after its Hello was accepted"
 "decode::event.rs::Event::from_compact_bytes" = "local: events hold integers as the sender supplied them and reach a session inside Message, after its Hello was accepted"
 "decode::input_sync.rs::InputFrame::from_bytes" = "local: player input integers, received by a session whose peers were checked at the handshake"

@@ -69,6 +69,9 @@ pub struct Key {
     pub seq: u64,
 }
 
+/// The length of [`Key::to_bytes`]: timestamp (8) ‖ origin (16) ‖ sequence (8)
+pub const KEY_BYTES: usize = 32;
+
 impl Key {
     /// The key of an event
     #[must_use]
@@ -78,6 +81,31 @@ impl Key {
             origin: event.origin,
             seq: event.seq.0,
         }
+    }
+
+    /// The key as 32 bytes: timestamp (u64 big-endian) ‖ origin (16 bytes) ‖ sequence (u64 big-endian). The bytes
+    /// of two keys compare (lexicographically) as the keys do, so a store ordered by bytes keeps them in key order.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; KEY_BYTES] {
+        let mut b = [0u8; KEY_BYTES];
+        b[..8].copy_from_slice(&self.timestamp.to_be_bytes());
+        b[8..24].copy_from_slice(&self.origin.0);
+        b[24..].copy_from_slice(&self.seq.to_be_bytes());
+        b
+    }
+
+    /// The key whose [`Key::to_bytes`] is `bytes`; `None` unless `bytes` is exactly [`KEY_BYTES`] long.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let b: &[u8; KEY_BYTES] = bytes.try_into().ok()?;
+        let (ts, rest) = b.split_first_chunk::<8>()?;
+        let (origin, seq) = rest.split_first_chunk::<16>()?;
+        let seq: [u8; 8] = seq.try_into().ok()?;
+        Some(Self {
+            timestamp: u64::from_be_bytes(*ts),
+            origin: Origin(*origin),
+            seq: u64::from_be_bytes(seq),
+        })
     }
 }
 
