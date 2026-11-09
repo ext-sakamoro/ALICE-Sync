@@ -174,9 +174,16 @@ pub struct InputBuffer {
     pub player_id: u8,
     /// Stored inputs, ordered by frame
     inputs: VecDeque<InputFrame>,
+    /// Whether the input stored at the same index was confirmed (received), not predicted
+    confirmed: VecDeque<bool>,
     /// Lowest frame number in the buffer
     base_frame: u64,
-    /// Last confirmed (received from network) frame
+    /// First frame of the session; the confirmed prefix is counted from here
+    start_frame: Option<u64>,
+    /// End of the contiguous run of confirmed frames that begins at `start_frame`
+    contiguous_end: Option<u64>,
+    /// Last frame of the contiguous confirmed run that starts at the session's first frame
+    /// (`0` while that run is empty; use [`InputBuffer::is_confirmed`] to test a single frame)
     pub confirmed_frame: u64,
     /// Last predicted frame (local extrapolation)
     pub predicted_frame: u64,
@@ -189,34 +196,61 @@ impl InputBuffer {
         Self {
             player_id,
             inputs: VecDeque::with_capacity(128),
-            base_frame: 1,
+            confirmed: VecDeque::with_capacity(128),
+            base_frame: 0,
+            start_frame: None,
+            contiguous_end: None,
             confirmed_frame: 0,
             predicted_frame: 0,
         }
     }
 
-    /// Add a confirmed input (received from network or local).
-    ///
-    /// Returns `true` if the input was accepted (not a duplicate or too old).
-    pub fn add_confirmed(&mut self, input: InputFrame) -> bool {
-        if input.frame <= self.confirmed_frame {
-            return false; // duplicate or too old
+    /// Set the session's first frame if it is not set yet (the confirmed prefix starts here).
+    pub fn set_start_frame(&mut self, frame: u64) {
+        if self.start_frame.is_none() {
+            self.start_frame = Some(frame);
+            self.advance_contiguous();
         }
+    }
 
-        // Grow buffer to accommodate the frame
-        while self.base_frame + self.inputs.len() as u64 <= input.frame {
-            // Fill gaps with empty inputs (will be overwritten or predicted)
+    /// Grow the buffer so that `frame` has a slot (new slots are empty and unconfirmed).
+    fn grow_to(&mut self, frame: u64) {
+        while self.base_frame + self.inputs.len() as u64 <= frame {
             self.inputs.push_back(InputFrame::new(
                 self.base_frame + self.inputs.len() as u64,
                 self.player_id,
             ));
+            self.confirmed.push_back(false);
         }
+    }
 
-        let idx = (input.frame - self.base_frame) as usize;
-        if idx < self.inputs.len() {
-            self.inputs[idx] = input;
+    /// Extend the contiguous confirmed run as far as the stored flags allow.
+    fn advance_contiguous(&mut self) {
+        let Some(start) = self.start_frame else {
+            return;
+        };
+        let mut next = self.contiguous_end.map_or(start, |e| e + 1);
+        while self.is_confirmed(next) {
+            self.contiguous_end = Some(next);
+            next += 1;
         }
-        self.confirmed_frame = self.confirmed_frame.max(input.frame);
+        self.confirmed_frame = self.contiguous_end.unwrap_or(0);
+    }
+
+    /// Add a confirmed input (received from network or local).
+    ///
+    /// Inputs may arrive in any order. Returns `true` if the input was accepted, `false` if that
+    /// frame was already confirmed (duplicate) or has been trimmed away.
+    pub fn add_confirmed(&mut self, input: InputFrame) -> bool {
+        if input.frame < self.base_frame || self.is_confirmed(input.frame) {
+            return false;
+        }
+        self.set_start_frame(input.frame);
+        self.grow_to(input.frame);
+        let idx = (input.frame - self.base_frame) as usize;
+        self.inputs[idx] = input;
+        self.confirmed[idx] = true;
+        self.advance_contiguous();
         true
     }
 
@@ -237,26 +271,24 @@ impl InputBuffer {
     /// This is the simplest prediction strategy. For better prediction,
     /// games can implement momentum-based or intent-based prediction.
     pub fn predict(&mut self, frame: u64) -> InputFrame {
-        // Use last confirmed input as prediction
-        let prediction = if let Some(last) = self.get(self.confirmed_frame) {
-            let mut predicted = *last;
-            predicted.frame = frame;
-            predicted
-        } else {
-            InputFrame::new(frame, self.player_id)
-        };
+        if frame < self.base_frame {
+            return InputFrame::new(frame, self.player_id);
+        }
+        if self.is_confirmed(frame) {
+            return self.inputs[(frame - self.base_frame) as usize];
+        }
+        // Repeat the latest confirmed input before `frame`
+        let mut prediction = InputFrame::new(frame, self.player_id);
+        let upto = ((frame - self.base_frame) as usize).min(self.inputs.len());
+        if let Some(i) = (0..upto).rev().find(|&i| self.confirmed[i]) {
+            prediction = self.inputs[i];
+            prediction.frame = frame;
+        }
 
         // Store prediction in buffer so add_remote_input can compare later
-        while self.base_frame + self.inputs.len() as u64 <= frame {
-            self.inputs.push_back(InputFrame::new(
-                self.base_frame + self.inputs.len() as u64,
-                self.player_id,
-            ));
-        }
+        self.grow_to(frame);
         let idx = (frame - self.base_frame) as usize;
-        if idx < self.inputs.len() {
-            self.inputs[idx] = prediction;
-        }
+        self.inputs[idx] = prediction;
 
         self.predicted_frame = self.predicted_frame.max(frame);
         prediction
@@ -265,14 +297,19 @@ impl InputBuffer {
     /// Check if input is confirmed for a specific frame.
     #[inline]
     #[must_use]
-    pub const fn is_confirmed(&self, frame: u64) -> bool {
-        frame <= self.confirmed_frame
+    pub fn is_confirmed(&self, frame: u64) -> bool {
+        frame >= self.base_frame
+            && self
+                .confirmed
+                .get((frame - self.base_frame) as usize)
+                .is_some_and(|&c| c)
     }
 
     /// Trim inputs older than the given frame to free memory.
     pub fn trim_before(&mut self, frame: u64) {
         while self.base_frame < frame && !self.inputs.is_empty() {
             self.inputs.pop_front();
+            self.confirmed.pop_front();
             self.base_frame += 1;
         }
     }
@@ -482,6 +519,10 @@ pub struct RollbackSession {
     snapshots: VecDeque<(u64, Vec<u8>)>,
     /// Checksum history: (frame, checksum)
     checksums: VecDeque<(u64, u64)>,
+    /// Whether any frame has been simulated yet (`predicted_frame` is only meaningful then)
+    simulated_any: bool,
+    /// Local input delay in frames (0 = local input applies on the frame it is given)
+    input_delay: u64,
 }
 
 impl RollbackSession {
@@ -503,7 +544,72 @@ impl RollbackSession {
             max_rollback,
             snapshots: VecDeque::with_capacity(max_rollback as usize + 2),
             checksums: VecDeque::with_capacity(128),
+            simulated_any: false,
+            input_delay: 0,
         }
+    }
+
+    /// Create a rollback session whose local input is applied `input_delay` frames after it is
+    /// given. The session starts at frame 0, and frames `0..input_delay` are pre-confirmed with an
+    /// empty input for every player, so each peer only sends the stamped inputs returned by
+    /// [`RollbackSession::add_local_input_delayed`].
+    pub fn with_input_delay(
+        player_count: u8,
+        local_player: u8,
+        max_rollback: u64,
+        input_delay: u64,
+    ) -> Self {
+        let mut s = Self::new(player_count, local_player, max_rollback);
+        s.input_delay = input_delay;
+        for buf in &mut s.buffers {
+            buf.set_start_frame(0);
+            for f in 0..input_delay {
+                buf.add_confirmed(InputFrame::new(f, buf.player_id));
+            }
+        }
+        s.update_confirmed_frame();
+        s
+    }
+
+    /// Local input delay in frames.
+    #[inline]
+    #[must_use]
+    pub const fn input_delay(&self) -> u64 {
+        self.input_delay
+    }
+
+    /// Add the local input given while simulating frame `input.frame`.
+    ///
+    /// The input is stamped for frame `input.frame + input_delay` and stored as confirmed.
+    /// Returns the inputs to simulate frame `input.frame` (local = the input given
+    /// `input_delay` frames earlier, remote = confirmed or predicted) and the stamped input,
+    /// which is what must be sent to the other peers.
+    pub fn add_local_input_delayed(&mut self, input: InputFrame) -> (Vec<InputFrame>, InputFrame) {
+        let frame = input.frame;
+        let mut stamped = input;
+        stamped.frame = frame + self.input_delay;
+        stamped.player_id = self.local_player;
+        self.buffers[self.local_player as usize].add_confirmed(stamped);
+        (self.collect_for_frame(frame), stamped)
+    }
+
+    /// Inputs for simulating `frame`: confirmed where available, predicted otherwise.
+    fn collect_for_frame(&mut self, frame: u64) -> Vec<InputFrame> {
+        for buf in &mut self.buffers {
+            buf.set_start_frame(frame);
+        }
+        let mut inputs = Vec::with_capacity(self.player_count as usize);
+        for buf in &mut self.buffers {
+            inputs.push(buf.predict(frame));
+        }
+        self.predicted_frame = if self.simulated_any {
+            self.predicted_frame.max(frame)
+        } else {
+            frame
+        };
+        self.simulated_any = true;
+        self.update_confirmed_frame();
+        inputs
     }
 
     /// Add local player's input and get the inputs for the next predicted frame.
@@ -516,20 +622,11 @@ impl RollbackSession {
     /// Panics if a confirmed input buffer returns `None` for the current frame.
     pub fn add_local_input(&mut self, input: InputFrame) -> Vec<InputFrame> {
         let frame = input.frame;
-        self.buffers[self.local_player as usize].add_confirmed(input);
-
-        // Collect inputs for this frame: confirmed or predicted
-        let mut inputs = Vec::with_capacity(self.player_count as usize);
-        for (i, buf) in self.buffers.iter_mut().enumerate() {
-            if i == self.local_player as usize || buf.is_confirmed(frame) {
-                inputs.push(*buf.get(frame).unwrap());
-            } else {
-                inputs.push(buf.predict(frame));
-            }
+        for buf in &mut self.buffers {
+            buf.set_start_frame(frame);
         }
-
-        self.predicted_frame = self.predicted_frame.max(frame);
-        inputs
+        self.buffers[self.local_player as usize].add_confirmed(input);
+        self.collect_for_frame(frame)
     }
 
     /// Add a remote player's confirmed input.
@@ -546,8 +643,13 @@ impl RollbackSession {
             return RollbackAction::None;
         }
 
+        // A frame that is already confirmed (duplicate) changes nothing
+        if self.buffers[pid].is_confirmed(frame) {
+            return RollbackAction::None;
+        }
+
         // Check if this input differs from what we predicted
-        let needs_rollback = if frame <= self.predicted_frame {
+        let needs_rollback = if self.simulated_any && frame <= self.predicted_frame {
             // We already simulated past this frame — check if prediction was correct
             self.buffers[pid]
                 .get(frame)
@@ -573,8 +675,17 @@ impl RollbackSession {
 
     /// Save a state snapshot for potential rollback.
     pub fn save_snapshot(&mut self, frame: u64, state: Vec<u8>, checksum: u64) {
-        self.snapshots.push_back((frame, state));
-        self.checksums.push_back((frame, checksum));
+        // A re-simulated frame replaces its earlier (mispredicted) snapshot and checksum
+        if let Some(slot) = self.snapshots.iter_mut().find(|(f, _)| *f == frame) {
+            slot.1 = state;
+        } else {
+            self.snapshots.push_back((frame, state));
+        }
+        if let Some(slot) = self.checksums.iter_mut().find(|(f, _)| *f == frame) {
+            slot.1 = checksum;
+        } else {
+            self.checksums.push_back((frame, checksum));
+        }
 
         // Trim old snapshots beyond rollback window
         let min_frame = self.confirmed_frame.saturating_sub(1);

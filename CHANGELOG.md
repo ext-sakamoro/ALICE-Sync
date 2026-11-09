@@ -7,6 +7,8 @@ All notable changes to ALICE-Sync will be documented in this file.
 ### Added
 - feature `bincode-codec` (既定で有効): `Event` / `Message` の bincode の形 (`to_bytes` / `from_bytes`) をこの feature の下に置いた 既定の build は変わらない 既定の feature を外すと bincode を link しない (順序の鍵 `converge::Key` と bitcode の形はそのまま使える) CI と preflight が、既定の feature なしの依存に bincode が無いことと既定の依存に有ることを確かめる
 - `converge::Key::to_bytes` / `converge::Key::from_bytes` / `converge::KEY_BYTES`: 順序の鍵の 32 byte の形 (時刻 u64 big-endian ‖ origin 16 byte ‖ sequence u64 big-endian)、2 つの鍵の bytes の辞書順は鍵の順と同じなので bytes で並ぶ store は鍵の順に並ぶ `from_bytes` は 32 byte 以外を `None` で断る 試験 `tests/converge_key_bytes.rs` (400 個の鍵の全組で bytes の順と `Ord` が一致、往復、配置、長さ違いの拒否) 変異 4 件 (時刻を little-endian、sequence を little-endian、origin と sequence の入れ替え、長すぎる bytes を受け入れる) はすべて失敗する
+- `RollbackSession::with_input_delay` / `RollbackSession::add_local_input_delayed` / `RollbackSession::input_delay`: 入力遅延 D frame 時刻 t に渡した自分の入力を t + D の frame として確定し、送るべき入力 (stamp 済み) を返す 入力遅延つきの `RollbackSession` は frame 0 から始まり、全員の frame 0..D を空の入力で確定済みにする `InputBuffer::set_start_frame`: 確定の連続区間を数え始める frame
+- 試験: `tests/rollback_contract.rs` (全入力が既知の参照 sim と比べる連続 rollback、frame の記録の置き換え、frame 0、順不同の到着、重複、trim 済みの frame) / `tests/rollback_input_delay.rs`
 - CI (ALICE-Law G11): ALICE-Law の `scripts/g11_self_check.py` を pin の版で取得して走らせる step を ci.yml と preflight に足した (表・行・写し・manifest を見て、pass の宣言には自分の写しが全て目標にあることを要る pin だけを動かして写しを残すと落ちる)
 - CI (ALICE-Law G11): `.github/shared-files-pin` / `.github/g11-table-pin` を ALICE-Law 5f6679d に上げ、共有の写し 8 つをその表の目標の bytes にした (eol.yml / public-text.yml / gen_clippy_canary_calls.py / id_move_check.py / shared_files.sh と各試験、ALICE-Analytics と ALICE-DetMath の main と同じ bytes)
 - `SyncSession::send_bytes` / `SyncSession::recv_frame`: session の handshake の下で application bytes を送受する Hello を受け入れていない peer への送信と、その peer からの bytes と Hello 以外の message は `HandshakeRefused::NotHandshaken` で断る 受信は 1 本の loop で、bytes と Sync message を届いた順に `transport::Frame` で返す `recv` は従来どおり Sync message だけを返し、secure transport は飛ばした bytes を `skipped_bytes_count` で数える `SessionStats` の `messages_sent` / `messages_received` は bytes の塊も 1 件と数える `transport::Frame` は `#[non_exhaustive]`
@@ -35,6 +37,14 @@ All notable changes to ALICE-Sync will be documented in this file.
 - `clippy.toml` に ALICE-Law の G1 の禁止一覧 (f32 / f64 の超越関数 24 個と `sin_cos`、`powi`) と G10 の `Instant::now` / `SystemTime::now` / `RandomState::new` を `disallowed-methods` として追加 transport 層の単調時計の読み取りは `src/clock.rs` の 1 箇所に集め、その 1 箇所だけに理由つきの許可を置く `scripts/entropy_guard.py` (CI の `entropy-guard` job) が src/ の乱数・時計の使用を読み、`clock.rs` の 1 件以外を拒否する 挙動の変更なし
 - CI: libm を直接依存に足した時に G1 の禁止 (clippy.toml の `libm::` path と `scripts/libm_ban_check.py`) が無ければ失敗する検査 `scripts/libm_dependency_guard.py` (試験 `scripts/test_libm_dependency_guard.py`) を entropy-guard job と preflight に追加 (ALICE-DetMath と byte 一致)
 
+
+### Fixed
+- `RollbackSession::save_snapshot`: 同じ frame をもう一度保存すると記録を置き換える (従来は追記で、`get_snapshot` / `verify_checksum` が最初の記録を返したため、2 回目の rollback が誤予測の状態に戻っていた)
+- `RollbackSession::add_local_input`: frame 0 の入力で panic しない (`InputBuffer` の先頭 frame を 0 にした)
+- `RollbackSession::add_remote_input`: 後の frame より遅れて届いた入力を捨てずに保存し、予測と違えばその frame へ rollback する 確定済みの frame の重複は rollback を返さない
+
+### Changed
+- **Breaking:** `InputBuffer::is_confirmed` は frame ごとの確定の印を見る (`const fn` でなくなった) `InputBuffer::confirmed_frame` と `RollbackSession::confirmed_frame` は、受け取った最大の frame でなく、session の最初の frame から途切れずに確定した区間の最後の frame
 ### Changed
 - **Breaking** (依存): `alice-identity` 2.0 (証明書 version 3、端末の id は subject と device key から導くので `DeviceCert::issue` は id を取らない) README・doc の例と試験の `issue` の呼び出しから id を外した この crate の公開 API と識別子は変わらない
 - 依存: `alice-identity` / `alice-sign` / `alice-channel` を commit 指定から ALICE の各 repo の main (git、branch) に変えた 他の利用側も main から取るので、それらと一緒に build すると各 crate が 1 つずつ link される (版の固定は lock) 公開 API・識別子・通信の bytes は変わらない
