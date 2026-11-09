@@ -61,6 +61,5 @@ fuzz_target!(|data: &[u8]| {
     }
     buf.gc();
 
-    let _ = Message::from_bytes(data);
     let _ = Message::from_compact_bytes(data);
 });

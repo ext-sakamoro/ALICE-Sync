@@ -294,8 +294,7 @@ Coalesce Effect (same entity x1000):
   Speedup: 5.5x
 
 Serialization:
-  bincode:             46 bytes
-  bitcode:             18 bytes (61% smaller)
+  bitcode:             18 bytes
 
 Single Event Apply:
   Motion event:        30 ns

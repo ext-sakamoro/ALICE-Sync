@@ -176,24 +176,10 @@ impl Event {
         }
     }
 
-    /// Serialize to bytes using bincode (for compatibility)
-    #[cfg(feature = "bincode-codec")]
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_default()
-    }
-
     /// Serialize to compact bytes using bitcode
     #[must_use]
     pub fn to_compact_bytes(&self) -> Vec<u8> {
         bitcode::encode(self)
-    }
-
-    /// Deserialize from bincode bytes
-    #[cfg(feature = "bincode-codec")]
-    #[must_use]
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::deserialize(bytes).ok()
     }
 
     /// Deserialize from bitcode bytes
@@ -542,7 +528,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "bincode-codec")]
     fn test_event_compact_size() {
         let motion = Event::new(EventKind::Motion {
             entity: 1,
@@ -550,15 +535,13 @@ mod tests {
         });
 
         let compact = motion.to_compact_bytes();
-        let bincode_size = motion.to_bytes().len();
-
-        println!(
-            "Compact: {} bytes, Bincode: {} bytes",
-            compact.len(),
-            bincode_size
+        // no larger than the fixed-width fields (id, seq, origin, timestamp, kind tag, entity, delta)
+        assert!(
+            compact.len() <= 8 + 8 + 16 + 8 + 1 + 4 + 6,
+            "{}",
+            compact.len()
         );
-        // Compact should be significantly smaller
-        assert!(compact.len() <= bincode_size);
+        assert_eq!(Event::from_compact_bytes(&compact), Some(motion));
     }
 
     #[test]
@@ -666,34 +649,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "bincode-codec")]
-    fn test_event_bincode_roundtrip_all_kinds() {
-        let kinds = vec![
-            EventKind::Despawn { entity: 42 },
-            EventKind::Property {
-                entity: 1,
-                prop: 5,
-                value: -999,
-            },
-            EventKind::Input {
-                player: 3,
-                code: 0xFF_FF,
-            },
-            EventKind::Tick { frame: 12345 },
-            EventKind::Custom {
-                type_id: 7,
-                payload: [0xAB; 16],
-            },
-        ];
-        for kind in kinds {
-            let original = Event::new(kind);
-            let bytes = original.to_bytes();
-            let restored = Event::from_bytes(&bytes).unwrap();
-            assert_eq!(original.kind, restored.kind);
-        }
-    }
-
-    #[test]
     fn test_event_compact_bytes_roundtrip_all_kinds() {
         let kinds = vec![
             EventKind::Despawn { entity: 1 },
@@ -718,11 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn test_event_from_bytes_invalid_returns_none() {
-        #[cfg(feature = "bincode-codec")]
-        {
-            assert!(Event::from_bytes(b"garbage").is_none());
-        }
+    fn test_event_from_compact_bytes_invalid_returns_none() {
         assert!(Event::from_compact_bytes(b"garbage").is_none());
     }
 
