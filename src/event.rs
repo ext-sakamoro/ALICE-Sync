@@ -50,6 +50,13 @@ impl Origin {
             0, 0, 0, 0, 0, 0, 0, 0, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
         ])
     }
+
+    /// The origin of an author's device: its ALICE-Identity device id, byte for byte
+    /// ([`crate::authorship::origin_of`])
+    #[must_use]
+    pub const fn from_device_id(id: alice_identity::device_cert::DeviceId) -> Self {
+        Self(*id.as_bytes())
+    }
 }
 
 /// Sequence number for causal ordering

@@ -7,10 +7,10 @@
 
 use alice_sync::relay::{Limits, OpenError, Out, PeerId, Refusal, RelayCore, RoomId};
 
-const A: PeerId = PeerId::from_raw([1; 32]);
-const B: PeerId = PeerId::from_raw([2; 32]);
-const C: PeerId = PeerId::from_raw([3; 32]);
-const X: PeerId = PeerId::from_raw([9; 32]);
+const A: PeerId = PeerId::from_raw([1; 16]);
+const B: PeerId = PeerId::from_raw([2; 16]);
+const C: PeerId = PeerId::from_raw([3; 16]);
+const X: PeerId = PeerId::from_raw([9; 16]);
 const R: RoomId = RoomId::from_raw(7);
 
 fn relay() -> RelayCore {

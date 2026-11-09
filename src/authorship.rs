@@ -7,12 +7,17 @@
 
 //! Signed events: an event counts only under its author's signed checkpoint.
 //!
-//! The author of an [`Origin`] is the device whose certificate (ALICE-Identity) the origin is derived
-//! from ([`origin_of`]): the first 16 bytes of
+//! The author of an [`Origin`] is the device whose certificate (ALICE-Identity) it names
+//! ([`origin_of`]): the origin is the certificate's device id, `DeviceCert::device_id`, the first 16
+//! bytes of
 //!
 //! ```text
-//! SHA-256("alice-sync/origin/v1" || subject length (u16, big-endian) || subject || device key)
+//! SHA-256("alice-identity/device-id/v1" || subject length (u16, big-endian) || subject || device key)
 //! ```
+//!
+//! Sync does not derive it: ALICE-Identity derives it, checks it when a certificate is decoded and keys
+//! revocation by it, so an origin, a relay peer ([`crate::relay::PeerId`]) and a revoked device are the
+//! same 16 bytes. A renewed certificate (the same key and subject) keeps its origin.
 //!
 //! Each origin's events, in sequence-number order from 1, form a hash chain:
 //!
@@ -55,9 +60,6 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::event::Origin;
 use crate::{Event, EventKind};
-
-/// Prefixed to the certificate fields an origin is derived from
-pub const ORIGIN_CONTEXT: &[u8] = b"alice-sync/origin/v1";
 
 /// Prefixed to the origin to start its hash chain
 pub const CHAIN_CONTEXT: &[u8] = b"alice-sync/chain/v1";
@@ -129,21 +131,10 @@ impl std::fmt::Display for AuthorshipError {
 
 impl std::error::Error for AuthorshipError {}
 
-/// The origin derived from a device certificate (see the module documentation)
+/// The origin of a device certificate: its device id (see the module documentation)
 #[must_use]
 pub fn origin_of(cert: &DeviceCert) -> Origin {
-    let subject = cert.subject().to_string();
-    // a certificate's subject is at most 255 bytes (checked when it is issued or decoded)
-    let len = u16::try_from(subject.len()).unwrap_or(u16::MAX);
-    let mut m = Vec::with_capacity(ORIGIN_CONTEXT.len() + 2 + subject.len() + 32);
-    m.extend_from_slice(ORIGIN_CONTEXT);
-    m.extend_from_slice(&len.to_be_bytes());
-    m.extend_from_slice(subject.as_bytes());
-    m.extend_from_slice(cert.device_public());
-    let d = sha256_payload(&m);
-    let mut o = [0u8; 16];
-    o.copy_from_slice(&d.bytes()[..16]);
-    Origin(o)
+    Origin::from_device_id(cert.device_id())
 }
 
 impl Origin {

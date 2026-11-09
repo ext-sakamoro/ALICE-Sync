@@ -3,7 +3,7 @@
 //!
 //! Layout: one tag byte (`Bind` 1, `Publish` 2, `Forward` 3, `Resend` 4, `Refused` 5, `LogRange` 6,
 //! `Log` 7, `Close` 8), then the fields in order. Integers are big-endian fixed width, a room is
-//! its u64, a peer id its 32 bytes, a payload a u32 length then the bytes (at most [`MAX_FRAME`]),
+//! its u64, a peer id its 16 bytes (the device id), a payload a u32 length then the bytes (at most [`MAX_FRAME`]),
 //! a refusal one byte (`NoRoom` 1, `NotMember` 2, `TooLarge` 3, `TooFarAhead` 4). Decoding is
 //! strict: the bytes must be exactly one frame.
 

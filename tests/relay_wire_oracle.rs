@@ -3,12 +3,12 @@
 //! (truncated at any byte, a trailing byte, an unknown tag or refusal, a length over the cap).
 //!
 //! Layout: one tag byte, then the fields in order; integers big-endian fixed width; a peer id is
-//! its 32 bytes; a payload is a u32 length then the bytes (at most `MAX_FRAME`).
+//! its 16 bytes (the device id); a payload is a u32 length then the bytes (at most `MAX_FRAME`).
 
 use alice_sync::relay::{PeerId, Refusal, RoomId};
 use alice_sync::relay_wire::{Frame, WireError, MAX_FRAME};
 
-const A: PeerId = PeerId::from_raw([0xa1; 32]);
+const A: PeerId = PeerId::from_raw([0xa1; 16]);
 const R: RoomId = RoomId::from_raw(0x0102_0304_0506_0708);
 
 fn all() -> Vec<Frame> {

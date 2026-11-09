@@ -45,6 +45,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - `RollbackSession::add_remote_input`: 後の frame より遅れて届いた入力を捨てずに保存し、予測と違えばその frame へ rollback する 確定済みの frame の重複は rollback を返さない
 
 ### Changed
+- **Breaking:** 端末の id を ALICE-Identity 2.0 の `DeviceId` に揃える `authorship::origin_of` (と `Origin::of`) は証明書の `device_id()` をそのまま返し、Sync 自身の導出と `ORIGIN_CONTEXT` を除く (同じ鍵と subject で更新した証明書は同じ origin、失効と同じ 16 byte) `Origin::from_device_id` を足す 中継の `relay::PeerId` は `DeviceId` (16 byte、wire の peer も 16 byte) 依存: alice-identity を 2.0 に
 - **Breaking:** `auth_bridge`: event の署名は `EVENT_SIGNING_TAG` (`alice-sync/event/v1`) を前に置いた bytes に掛ける (domain 分離、以前の形式の署名は検証で拒む) `AuthenticatedNode::sign_event` は `Result<SignedEvent, SignError>` を返す (alice-auth 0.6 は予約の前置 `alice-auth/` で始まる message を断る、tag が先に来るのでこの前置で始まる event の bytes も署名できる) 版を 0.8.0 に
 - 依存: alice-physics (4)・alice-analytics (0.7)・alice-auth (0.6)・alice-db (0.6)・alice-cache (0.2)・alice-codec (0.2) を git の main から取る (他の利用者と同じ 1 つの写しを link する、det-math は 0.6.1 が 1 つ) alice-analytics 0.7 の識別子の名前は `semantics::ANALYTICS_SEMANTICS_ID` `SYNC_SEMANTICS_PINS` の `alice-analytics` はその crate 自身の識別子
 - **Breaking:** `InputBuffer::is_confirmed` は frame ごとの確定の印を見る (`const fn` でなくなった) `InputBuffer::confirmed_frame` と `RollbackSession::confirmed_frame` は、受け取った最大の frame でなく、session の最初の frame から途切れずに確定した区間の最後の frame

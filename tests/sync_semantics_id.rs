@@ -138,7 +138,10 @@ fn analytics_pin_is_the_resolved_analytics_identifier() {
         .find(|(n, _)| *n == "alice-analytics")
         .unwrap()
         .1;
-    assert_eq!(hex(&pin), hex(&alice_analytics::semantics::ANALYTICS_SEMANTICS_ID));
+    assert_eq!(
+        hex(&pin),
+        hex(&alice_analytics::semantics::ANALYTICS_SEMANTICS_ID)
+    );
 }
 
 /// Changing any single pin (each golden and each upstream identifier) moves
