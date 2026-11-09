@@ -1178,7 +1178,7 @@ pub extern "C" fn as_sync_vec3_hash(x: f32, y: f32, z: f32) -> u64 {
 
 #[no_mangle]
 pub extern "C" fn as_sync_version() -> u32 {
-    // major * 10000 + minor * 100 + patch, from Cargo.toml (0.7.0 -> 700)
+    // major * 10000 + minor * 100 + patch, from Cargo.toml (0.8.0 -> 800)
     ffi_guard(0, || VERSION_CODE)
 }
 
@@ -1416,7 +1416,7 @@ mod tests {
 
     #[test]
     fn test_ffi_version() {
-        assert_eq!(as_sync_version(), 700);
+        assert_eq!(as_sync_version(), 800);
     }
 
     #[test]

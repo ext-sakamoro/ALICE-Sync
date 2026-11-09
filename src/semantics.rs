@@ -25,8 +25,9 @@
 //! the encoding of the UDP transport's packets, so a peer of another wire version
 //! is refused at Hello), plus one
 //! per bridged Law-bearing crate: `"alice-physics"` (its
-//! `PHYSICS_SEMANTICS_ID`, the `physics` bridge) and `"alice-analytics"` (its
-//! `SEMANTICS_ID`, the `analytics` bridge), at the versions this release
+//! `PHYSICS_SEMANTICS_ID`, the `physics` bridge) and `"alice-analytics"` (its own
+//! `ANALYTICS_SEMANTICS_ID`, the `analytics` bridge; det-math reaches Sync through the
+//! function pins, not through this entry), at the versions this release
 //! resolves.
 //!
 //! # Fold
@@ -103,7 +104,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     ),
     (
         "alice-analytics",
-        hex32("d2209b30f6f1f45baa1b638bcdfee34ac64773b2e63b9c083b2e77afc691398e"),
+        hex32("847535174fa305517aa11fe8b98f604d1b1ec48abaa23d2b1dce9ccc8aa8884f"),
     ),
 ];
 
