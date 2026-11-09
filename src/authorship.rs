@@ -103,6 +103,8 @@ pub enum AuthorshipError {
     NoAuthor,
     /// An accepted event did not apply to the world
     Apply(String),
+    /// An event no correct writer makes (a custom payload over `MAX_CUSTOM_PAYLOAD`)
+    Malformed { origin: Origin, seq: u64 },
 }
 
 impl std::fmt::Display for AuthorshipError {
@@ -125,6 +127,9 @@ impl std::fmt::Display for AuthorshipError {
             Self::Credential(e) => write!(f, "this side's credential cannot sign: {e}"),
             Self::NoAuthor => f.write_str("the node has no author"),
             Self::Apply(e) => write!(f, "an accepted event did not apply: {e}"),
+            Self::Malformed { origin, seq } => {
+                write!(f, "event {seq} of {origin:?} is not well formed")
+            }
         }
     }
 }
@@ -196,7 +201,11 @@ pub fn canonical_bytes(event: &Event) -> Vec<u8> {
         EventKind::Custom { type_id, payload } => {
             b.extend_from_slice(&[6]);
             b.extend_from_slice(&type_id.to_be_bytes());
-            b.extend_from_slice(payload);
+            // the length first, so two payloads never sign the same bytes (at most MAX_CUSTOM_PAYLOAD)
+            let p = payload.as_bytes();
+            let len = u16::try_from(p.len()).unwrap_or(u16::MAX);
+            b.extend_from_slice(&len.to_be_bytes());
+            b.extend_from_slice(p);
         }
     }
     b
@@ -423,6 +432,13 @@ impl Verifier {
         policy: &impl TrustPolicy,
         mut apply: impl FnMut(&Event) -> Result<(), String>,
     ) -> Result<usize, AuthorshipError> {
+        // 0. every event is one a correct writer makes
+        if let Some(e) = batch.events.iter().find(|e| !e.is_well_formed()) {
+            return Err(AuthorshipError::Malformed {
+                origin: e.origin,
+                seq: e.seq.0,
+            });
+        }
         // 1. checkpoints: verified, and not forked against what is held or against each other
         let mut fresh: BTreeMap<(Origin, u64), &Checkpoint> = BTreeMap::new();
         for cp in &batch.checkpoints {

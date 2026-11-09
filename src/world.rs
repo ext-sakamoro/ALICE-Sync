@@ -826,7 +826,7 @@ mod tests {
         world
             .apply(&Event::new(EventKind::Custom {
                 type_id: 0,
-                payload: [0u8; 16],
+                payload: crate::event::CustomPayload::new([0u8; 16].to_vec()).unwrap(),
             }))
             .unwrap();
 

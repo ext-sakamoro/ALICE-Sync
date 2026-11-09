@@ -103,7 +103,10 @@ impl Message {
     /// Deserialize from bitcode bytes
     #[must_use]
     pub fn from_compact_bytes(bytes: &[u8]) -> Option<Self> {
-        bitcode::decode(bytes).ok()
+        bitcode::decode::<Self>(bytes).ok().filter(|m| match m {
+            Self::Events { events, .. } => events.iter().all(Event::is_well_formed),
+            _ => true,
+        })
     }
 
     /// Get message size in bytes

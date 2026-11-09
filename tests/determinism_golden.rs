@@ -285,7 +285,7 @@ fn golden_crdt() {
 }
 
 pub const GOLDEN_UDP_WIRE: &str =
-    "3917218293a200a3769ab9f7cdb06f736390b899b0ba84c2064b95d1157cf4b2";
+    "39209410f7a6e4cf8d125fbb9ef5fc2447c040cb3cea75515bcbf4042b03eda4";
 
 /// The UDP wire (version 2): the packets of a fixed exchange between two reliability endpoints (the open
 /// request and its accept, data packets with one lost, acknowledgement-only packets for a near and a far
@@ -355,6 +355,28 @@ fn golden_udp_wire() {
     let message: Vec<u8> = (0..3000u32).map(|i| (i * 131 % 251) as u8).collect();
     for f in fragment_payload((1 << 32) + 5, &message) {
         put(&f);
+    }
+    // the events a packet carries: their compact form and the bytes an author signs, for every kind,
+    // custom payloads of 0, 1 and the most bytes
+    {
+        use alice_sync::authorship::canonical_bytes;
+        use alice_sync::event::{CustomPayload, Origin, MAX_CUSTOM_PAYLOAD};
+        let mut kinds = scenario();
+        for len in [0, 1, MAX_CUSTOM_PAYLOAD] {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 7 % 251) as u8).collect();
+            kinds.push(EventKind::Custom {
+                type_id: 0x0102,
+                payload: CustomPayload::new(bytes).unwrap(),
+            });
+        }
+        let mut stream = alice_sync::event::EventStream::new();
+        for kind in kinds {
+            stream.push(Event::new(kind), Origin::of_node(9));
+        }
+        for e in stream.all() {
+            put(&e.to_compact_bytes());
+            put(&canonical_bytes(e));
+        }
     }
     out.extend_from_slice(&a.packets_acked.to_le_bytes());
     out.extend_from_slice(&b2.stale_frames.to_le_bytes());

@@ -97,9 +97,92 @@ pub enum EventKind {
     /// Network: 8 bytes
     Tick { frame: u64 },
 
-    /// Custom event with compact payload
-    /// Network: 2 + 16 = 18 bytes
-    Custom { type_id: u16, payload: [u8; 16] },
+    /// Custom event: an application type id and a payload of 0 to [`MAX_CUSTOM_PAYLOAD`] bytes
+    /// (the compact form and the signed bytes both carry the payload's length)
+    Custom {
+        type_id: u16,
+        payload: CustomPayload,
+    },
+}
+
+/// The longest payload a custom event carries, in bytes. Part of the wire format: a decoder refuses
+/// an event whose payload is longer (the compact form, a protocol message, a signed batch), and the
+/// signed bytes carry the length as a big-endian `u16`
+///
+/// The bound is for application events of a synchronised world (a command, a small record, an
+/// id): message bodies and other large or private content travel in an end-to-end encrypted group
+/// (a messaging layer above Sync), not in Sync events, so the bound is not to be raised to carry them
+pub const MAX_CUSTOM_PAYLOAD: usize = 256;
+
+/// The payload of a custom event: at most [`MAX_CUSTOM_PAYLOAD`] bytes, checked when it is made
+/// ([`CustomPayload::new`]) and when an event is decoded
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Encode, Decode)]
+pub struct CustomPayload(Vec<u8>);
+
+/// Why a custom payload was not made
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustomPayloadError {
+    /// Longer than [`MAX_CUSTOM_PAYLOAD`] bytes (its length is given)
+    TooLong { len: usize },
+}
+
+impl std::fmt::Display for CustomPayloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLong { len } => write!(
+                f,
+                "a custom payload of {len} bytes is over {MAX_CUSTOM_PAYLOAD}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CustomPayloadError {}
+
+impl CustomPayload {
+    /// A payload of `bytes`
+    ///
+    /// # Errors
+    ///
+    /// [`CustomPayloadError::TooLong`] when `bytes` is longer than [`MAX_CUSTOM_PAYLOAD`]
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CustomPayloadError> {
+        if bytes.len() > MAX_CUSTOM_PAYLOAD {
+            return Err(CustomPayloadError::TooLong { len: bytes.len() });
+        }
+        Ok(Self(bytes))
+    }
+
+    /// The payload's bytes
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
+    /// Whether the payload is within [`MAX_CUSTOM_PAYLOAD`] (a decoded payload is checked with this)
+    #[must_use]
+    pub const fn is_within_bound(&self) -> bool {
+        self.0.len() <= MAX_CUSTOM_PAYLOAD
+    }
+}
+
+impl AsRef<[u8]> for CustomPayload {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl TryFrom<Vec<u8>> for CustomPayload {
+    type Error = CustomPayloadError;
+    fn try_from(bytes: Vec<u8>) -> Result<Self, CustomPayloadError> {
+        Self::new(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for CustomPayload {
+    type Error = CustomPayloadError;
+    fn try_from(bytes: &[u8]) -> Result<Self, CustomPayloadError> {
+        Self::new(bytes.to_vec())
+    }
 }
 
 impl EventKind {
@@ -185,7 +268,19 @@ impl Event {
     /// Deserialize from bitcode bytes
     #[must_use]
     pub fn from_compact_bytes(bytes: &[u8]) -> Option<Self> {
-        bitcode::decode(bytes).ok()
+        bitcode::decode::<Self>(bytes)
+            .ok()
+            .filter(Self::is_well_formed)
+    }
+
+    /// Whether the event is one a correct writer makes: a custom payload within
+    /// [`MAX_CUSTOM_PAYLOAD`] (every decoder of events checks this)
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        match &self.kind {
+            EventKind::Custom { payload, .. } => payload.is_within_bound(),
+            _ => true,
+        }
     }
 
     /// Get approximate size in bytes (compact format)
@@ -200,7 +295,7 @@ impl Event {
             EventKind::Motion { .. } | EventKind::Property { .. } => 10,
             EventKind::Input { .. } => 6,
             EventKind::Tick { .. } => 8,
-            EventKind::Custom { .. } => 18,
+            EventKind::Custom { payload, .. } => 2 + 2 + payload.as_bytes().len(),
         };
         header + payload
     }
@@ -262,11 +357,10 @@ pub struct TickData {
 }
 
 /// Custom event data
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
-#[repr(C)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct CustomData {
     pub type_id: u16,
-    pub payload: [u8; 16],
+    pub payload: CustomPayload,
 }
 
 /// Event type tag (for ordered replay)
@@ -401,7 +495,7 @@ impl EventStream {
                 let idx = self.customs.len() as u32;
                 self.customs.push(CustomData {
                     type_id: *type_id,
-                    payload: *payload,
+                    payload: payload.clone(),
                 });
                 (EventType::Custom, idx)
             }
@@ -641,10 +735,18 @@ mod tests {
         assert_eq!(
             Event::new(EventKind::Custom {
                 type_id: 0,
-                payload: [0u8; 16]
+                payload: crate::event::CustomPayload::new([0u8; 16].to_vec()).unwrap()
             })
             .size_bytes(),
-            30
+            12 + 2 + 2 + 16
+        );
+        assert_eq!(
+            Event::new(EventKind::Custom {
+                type_id: 0,
+                payload: crate::event::CustomPayload::default()
+            })
+            .size_bytes(),
+            12 + 2 + 2
         );
     }
 
@@ -661,7 +763,7 @@ mod tests {
             EventKind::Tick { frame: 9999 },
             EventKind::Custom {
                 type_id: 1,
-                payload: [1u8; 16],
+                payload: crate::event::CustomPayload::new([1u8; 16].to_vec()).unwrap(),
             },
         ];
         for kind in kinds {
@@ -742,7 +844,7 @@ mod tests {
         stream.push(
             Event::new(EventKind::Custom {
                 type_id: 2,
-                payload: [0u8; 16],
+                payload: crate::event::CustomPayload::new([0u8; 16].to_vec()).unwrap(),
             }),
             Origin::of_node(0),
         );
