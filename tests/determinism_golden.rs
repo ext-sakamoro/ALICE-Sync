@@ -216,12 +216,12 @@ fn golden_receive() {
     assert_golden(&out, GOLDEN_RECEIVE, "receive golden moved");
 }
 
-pub const GOLDEN_CRDT: &str = "54f05313b39a7b671f53bf5c87fb4e37cb1b64f40b402ef98517047c4a730bc8";
+pub const GOLDEN_CRDT: &str = "65b7b5e2aeab6c5a65710f28ea750f074f78ce36bec15a8acd27ec4a6a3bb114";
 
-#[cfg(feature = "async")]
 #[test]
 fn golden_crdt() {
-    use alice_sync::crdt::{CrdtMergeable, GCounter, LwwRegister, OrSet, PnCounter};
+    use alice_sync::crdt::{CrdtMergeable, GCounter, LwwMap, LwwRegister, OrSet, PnCounter};
+    use alice_sync::persist::encode_state;
     let mut out = Vec::new();
 
     let (mut g1, mut g2) = (GCounter::new(), GCounter::new());
@@ -260,6 +260,26 @@ fn golden_crdt() {
     s2.merge(&s1);
     for v in s2.values() {
         out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // the persisted forms of a merged set and map (the tag and body, after the 38-byte magic,
+    // version and identifier header, so the pin does not contain the identifier it is folded into)
+    let (mut m1, mut m2) = (OrSet::new(), OrSet::new());
+    m1.add(1, 10_u64);
+    m1.add(1, 11);
+    m2.merge(&m1);
+    m2.remove(&10);
+    m2.add(2, 12);
+    m1.merge(&m2);
+    let (mut l1, mut l2) = (LwwMap::new(1), LwwMap::new(2));
+    l1.insert(10_u64, false);
+    l1.insert(11, false);
+    l2.merge(&l1);
+    l1.insert(10, true);
+    l2.remove(&11);
+    l1.merge(&l2);
+    for bytes in [encode_state(&m1), encode_state(&l1)] {
+        out.extend_from_slice(&bytes[4 + 2 + 32..]);
     }
     assert_golden(&out, GOLDEN_CRDT, "CRDT merge golden moved");
 }

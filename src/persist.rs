@@ -2,8 +2,8 @@
 //! [`SYNC_STATE_SEMANTICS_ID`] (the Hello handshake carries [`crate::SYNC_SEMANTICS_ID`]).
 //!
 //! The fixed-point types ([`Fixed`], [`Vec3Fixed`]) and the state built from
-//! them ([`Entity`], [`WorldState`], and with the `async` feature
-//! `LwwRegister` of those) are the values
+//! them ([`Entity`], [`WorldState`], `LwwRegister` of those) and the replicated
+//! sets and maps of [`crate::crdt`] (`OrSet`, `LwwMap`) are the values
 //! whose bits the crate's semantics identifier names. Their raw `serde`
 //! implementations are behind the opt-in `serde-raw` feature and carry no
 //! identifier, so they are not a durable format. To store or hand over such a
@@ -29,7 +29,7 @@
 //! | 4 | magic `ASYN` |
 //! | 2 | format version, `3` |
 //! | 32 | the writer's `SYNC_STATE_SEMANTICS_ID` |
-//! | 1 | type tag (`1` Fixed, `2` Vec3Fixed, `3` Entity, `4` WorldState, `5` LwwRegister) |
+//! | 1 | type tag (`1` Fixed, `2` Vec3Fixed, `3` Entity, `4` WorldState, `5` LwwRegister, `6` u64, `7` bool, `8` Option, `9` OrSet, `10` LwwMap) |
 //! | rest | the value's body |
 //!
 //! Bodies: `Fixed` is its raw `i32`; `Vec3Fixed` is `x`, `y`, `z`; `Entity` is
@@ -37,7 +37,17 @@
 //! active mask (`u16`); `WorldState` is the number of live entities (`u32`),
 //! their bodies in ascending id order, `frame: u64` and `seed: u64`;
 //! `LwwRegister<V>` is `timestamp: u64`, `replica_id: u64`, then the tag and
-//! body of `V`.
+//! body of `V`. `u64` is its 8 bytes; `bool` is one byte, 0 or 1; `Option<V>` is
+//! 0, or 1 then the tag and body of `V`. `OrSet<V>` is the number of live values
+//! (`u32`), each value (tag and body, strictly ascending) with its tags (a count
+//! then `(replica: u64, n: u64)` pairs, strictly ascending, never none), then the
+//! add counters (a count, then `(replica, n)` pairs by replica) and the tombstoned
+//! tags (as a value's tags). `LwwMap<K, V>` is the number of keys (`u32`), then
+//! each key (tag and body, strictly ascending) and its `LwwRegister<Option<V>>`
+//! body: the replicated entries only. The writing replica and its clock are local
+//! to a device, so two devices holding the same map write the same bytes; a map
+//! read back has replica 0 and its clock at its latest timestamp, and
+//! `LwwMap::with_replica` names the device that writes through it next.
 //!
 //! A world is stored as its logical content only: which entities live with
 //! which values, the frame and the seed. Where the entities sit in memory (arena
@@ -69,12 +79,12 @@
 //! them.
 
 use crate::arena::{Arena, Handle};
-#[cfg(feature = "async")]
-use crate::crdt::LwwRegister;
+use crate::crdt::{LwwMap, LwwRegister, OrSet, ReplicaId};
 use crate::fixed_point::{Fixed, Vec3Fixed};
 pub use crate::semantics::IdStatus;
 use crate::semantics::{check_state_semantics, SemanticsMismatch, SYNC_STATE_SEMANTICS_ID};
 use crate::world::{Entity, EntityProps, WorldState, MAX_LIVE_ENTITIES, MAX_PROPS};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The first four bytes of every encoded value.
 pub const MAGIC: [u8; 4] = *b"ASYN";
@@ -531,9 +541,7 @@ impl Persist for WorldState {
 /// The bytes of one entity body: id, kind, position, the property values and the active mask
 const ENTITY_BODY_LEN: usize = 4 + 2 + 3 * 4 + MAX_PROPS * 4 + 2;
 
-#[cfg(feature = "async")]
 impl<V: Persist + Clone> sealed::Sealed for LwwRegister<V> {}
-#[cfg(feature = "async")]
 impl<V: Persist + Clone> Persist for LwwRegister<V> {
     const TAG: u8 = 5;
     fn write_body(&self, out: &mut Vec<u8>) {
@@ -551,6 +559,166 @@ impl<V: Persist + Clone> Persist for LwwRegister<V> {
             timestamp,
             replica_id,
         })
+    }
+}
+
+impl sealed::Sealed for u64 {}
+impl Persist for u64 {
+    const TAG: u8 = 6;
+    fn write_body(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.to_le_bytes());
+    }
+    fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        r.u64()
+    }
+}
+
+impl sealed::Sealed for bool {}
+impl Persist for bool {
+    const TAG: u8 = 7;
+    fn write_body(&self, out: &mut Vec<u8>) {
+        out.push(u8::from(*self));
+    }
+    fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        match r.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(PersistError::Malformed("a bool that is neither 0 nor 1")),
+        }
+    }
+}
+
+impl<V: Persist> sealed::Sealed for Option<V> {}
+impl<V: Persist> Persist for Option<V> {
+    const TAG: u8 = 8;
+    fn write_body(&self, out: &mut Vec<u8>) {
+        match self {
+            None => out.push(0),
+            Some(v) => {
+                out.push(1);
+                out.push(V::TAG);
+                v.write_body(out);
+            }
+        }
+    }
+    fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        match r.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(read_tagged::<V>(r, FormatStatus::Current)?)),
+            _ => Err(PersistError::Malformed("an option that is neither 0 nor 1")),
+        }
+    }
+}
+
+/// A count read before a sequence: refused when even one byte per element would not fit
+fn count(r: &mut Reader<'_>) -> Result<usize, PersistError> {
+    let n = r.u32()? as usize;
+    if n > r.bytes.len() {
+        return Err(PersistError::Truncated);
+    }
+    Ok(n)
+}
+
+fn write_tag_pairs(out: &mut Vec<u8>, pairs: &BTreeSet<(ReplicaId, u64)>) {
+    out.extend_from_slice(&len_u32(pairs.len()).to_le_bytes());
+    for (replica, n) in pairs {
+        out.extend_from_slice(&replica.to_le_bytes());
+        out.extend_from_slice(&n.to_le_bytes());
+    }
+}
+
+/// Pairs in strictly ascending order (the canonical form a `BTreeSet` writes)
+fn read_tag_pairs(r: &mut Reader<'_>) -> Result<BTreeSet<(ReplicaId, u64)>, PersistError> {
+    let n = count(r)?;
+    let mut out = BTreeSet::new();
+    let mut last = None;
+    for _ in 0..n {
+        let p = (r.u64()?, r.u64()?);
+        if last.is_some_and(|l| l >= p) {
+            return Err(PersistError::Malformed("tags not in ascending order"));
+        }
+        last = Some(p);
+        out.insert(p);
+    }
+    Ok(out)
+}
+
+impl<V: Persist + Clone + Ord> sealed::Sealed for OrSet<V> {}
+impl<V: Persist + Clone + Ord> Persist for OrSet<V> {
+    const TAG: u8 = 9;
+    fn write_body(&self, out: &mut Vec<u8>) {
+        let (elements, counters, tombstones) = self.parts();
+        out.extend_from_slice(&len_u32(elements.len()).to_le_bytes());
+        for (v, tags) in elements {
+            out.push(V::TAG);
+            v.write_body(out);
+            write_tag_pairs(out, tags);
+        }
+        out.extend_from_slice(&len_u32(counters.len()).to_le_bytes());
+        for (replica, n) in counters {
+            out.extend_from_slice(&replica.to_le_bytes());
+            out.extend_from_slice(&n.to_le_bytes());
+        }
+        write_tag_pairs(out, tombstones);
+    }
+    fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        let n = count(r)?;
+        let mut elements = BTreeMap::new();
+        for _ in 0..n {
+            let v = read_tagged::<V>(r, FormatStatus::Current)?;
+            if elements
+                .last_key_value()
+                .is_some_and(|(last, _)| *last >= v)
+            {
+                return Err(PersistError::Malformed("set values not in ascending order"));
+            }
+            let tags = read_tag_pairs(r)?;
+            if tags.is_empty() {
+                return Err(PersistError::Malformed("a set value with no tag"));
+            }
+            elements.insert(v, tags);
+        }
+        let n = count(r)?;
+        let mut counters = BTreeMap::new();
+        for _ in 0..n {
+            let (replica, c) = (r.u64()?, r.u64()?);
+            if counters
+                .last_key_value()
+                .is_some_and(|(last, _)| *last >= replica)
+            {
+                return Err(PersistError::Malformed("counters not in ascending order"));
+            }
+            counters.insert(replica, c);
+        }
+        let tombstones = read_tag_pairs(r)?;
+        Ok(Self::from_parts(elements, counters, tombstones))
+    }
+}
+
+impl<K: Persist + Clone + Ord, V: Persist + Clone> sealed::Sealed for LwwMap<K, V> {}
+impl<K: Persist + Clone + Ord, V: Persist + Clone> Persist for LwwMap<K, V> {
+    const TAG: u8 = 10;
+    fn write_body(&self, out: &mut Vec<u8>) {
+        // the replicated entries only: the writing replica and its clock are local
+        let entries = self.registers();
+        out.extend_from_slice(&len_u32(entries.len()).to_le_bytes());
+        for (k, reg) in entries {
+            out.push(K::TAG);
+            k.write_body(out);
+            reg.write_body(out);
+        }
+    }
+    fn read_body(r: &mut Reader<'_>) -> Result<Self, PersistError> {
+        let n = count(r)?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..n {
+            let k = read_tagged::<K>(r, FormatStatus::Current)?;
+            if entries.last_key_value().is_some_and(|(last, _)| *last >= k) {
+                return Err(PersistError::Malformed("map keys not in ascending order"));
+            }
+            entries.insert(k, LwwRegister::<Option<V>>::read_body(r)?);
+        }
+        Ok(Self::from_registers(entries))
     }
 }
 

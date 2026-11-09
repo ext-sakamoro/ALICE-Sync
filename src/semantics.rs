@@ -88,7 +88,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     ),
     (
         "crdt",
-        hex32("54f05313b39a7b671f53bf5c87fb4e37cb1b64f40b402ef98517047c4a730bc8"),
+        hex32("65b7b5e2aeab6c5a65710f28ea750f074f78ce36bec15a8acd27ec4a6a3bb114"),
     ),
     (
         "receive",

@@ -8,7 +8,7 @@
 
 ## What is ALICE-Sync?
 
-ALICE-Sync is a high-performance P2P state synchronization engine. Instead of sending entire world states, it synchronizes only the **events** (spawn, move, despawn) between nodes. With the `async` feature, it becomes a complete, self-contained P2P infrastructure — transport, discovery, pub/sub, CRDTs, and session management included.
+ALICE-Sync is a high-performance P2P state synchronization engine. Instead of sending entire world states, it synchronizes only the **events** (spawn, move, despawn) between nodes. With the `async` feature, it becomes a complete, self-contained P2P infrastructure — transport, discovery, pub/sub and session management included; the CRDTs build without it.
 
 ### Key Benefits
 
@@ -96,7 +96,7 @@ Enable with `--features async` to get a complete, self-contained P2P stack.
 |--------|-------------|
 | `reliability` | UDP reliability layer: ACK tracking, RTT estimation, retransmission, fragmentation/reassembly |
 | `transport` | `SyncTransport` trait + UDP, TCP, in-process Channel implementations |
-| `crdt` | Conflict-free replicated data types: `LwwRegister`, `GCounter`, `PnCounter`, `OrSet`, `LwwMap` |
+| `crdt` | Conflict-free replicated data types: `LwwRegister`, `GCounter`, `PnCounter`, `OrSet`, `LwwMap` (no feature needed; `crdt-db` stores them through ALICE-DB) |
 | `channel` | Topic-based pub/sub with per-topic filtering |
 | `discovery` | mDNS LAN auto-discovery + manual peer registration + GC |
 | `session` | High-level session driver: builder pattern, tick loop, 5 sync modes |
@@ -458,10 +458,11 @@ match rollback.add_remote_input(confirmed_input) {
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std` | Yes | Standard library support |
-| `async` | No | Full P2P infrastructure: transport, discovery, pub/sub, CRDTs, session driver (requires tokio) |
+| `async` | No | Full P2P infrastructure: transport, discovery, pub/sub, session driver (requires tokio) |
 | `simd` | No | SIMD acceleration hints |
 | `python` | No | Python bindings (PyO3 0.28 + NumPy zero-copy) |
 | `physics` | No | ALICE-Physics bridge (InputFrame <-> FrameInput, PhysicsRollbackSession) |
+| `crdt-db` | No | Store and reload CRDT state (`OrSet`, `LwwMap`, …) through ALICE-DB in the persisted form (`crdt_store`) |
 | `telemetry` | No | Sync telemetry recording via ALICE-DB (RTT, rollback, desync metrics) |
 | `cache` | No | Markov oracle entity prefetching via ALICE-Cache |
 | `auth` | No | Ed25519 ZKP peer authentication via ALICE-Auth |

@@ -156,6 +156,9 @@ pub mod cloud_bridge;
 #[cfg(feature = "codec")]
 pub mod codec_bridge;
 pub mod converge;
+pub mod crdt;
+#[cfg(feature = "crdt-db")]
+pub mod crdt_store;
 pub mod determinism;
 pub mod event;
 #[cfg(feature = "ffi")]
@@ -180,8 +183,6 @@ pub mod semantics;
 pub mod channel;
 #[cfg(feature = "async")]
 mod clock;
-#[cfg(feature = "async")]
-pub mod crdt;
 #[cfg(feature = "async")]
 pub mod discovery;
 #[cfg(feature = "async")]
