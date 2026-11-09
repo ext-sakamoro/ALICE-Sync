@@ -170,6 +170,7 @@ pub mod physics_bridge;
 pub mod protocol;
 #[cfg(feature = "python")]
 mod python;
+pub mod relay;
 pub mod semantics;
 // Async P2P infrastructure (transport, discovery, pub/sub, CRDT, session)
 #[cfg(feature = "async")]
