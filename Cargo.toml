@@ -13,7 +13,9 @@ categories = ["network-programming", "compression"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-bincode = "1.3"
+# the bincode byte forms of Event and Message (`to_bytes` / `from_bytes`, feature `bincode-codec`, on by
+# default); the compact bitcode forms and the order key build without it
+bincode = { version = "1.3", optional = true }
 bitcode = "0.6"
 tokio = { version = "1.0", features = ["full"], optional = true }
 wide = "0.7"
@@ -43,7 +45,8 @@ sha2 = "0.10"
 tempfile = "3.10"
 
 [features]
-default = ["std"]
+default = ["std", "bincode-codec"]
+bincode-codec = ["dep:bincode"]
 std = []
 async = ["tokio"]  # Transport, discovery, pub/sub, session driver
 simd = []
@@ -75,6 +78,8 @@ strip = true
 [[bench]]
 name = "sync_bench"
 harness = false
+# compares the bincode and bitcode forms
+required-features = ["bincode-codec"]
 
 [profile.bench]
 opt-level = 3

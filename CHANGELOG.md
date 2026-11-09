@@ -5,6 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- feature `bincode-codec` (既定で有効): `Event` / `Message` の bincode の形 (`to_bytes` / `from_bytes`) をこの feature の下に置いた 既定の build は変わらない 既定の feature を外すと bincode を link しない (順序の鍵 `converge::Key` と bitcode の形はそのまま使える) CI と preflight が、既定の feature なしの依存に bincode が無いことと既定の依存に有ることを確かめる
 - `converge::Key::to_bytes` / `converge::Key::from_bytes` / `converge::KEY_BYTES`: 順序の鍵の 32 byte の形 (時刻 u64 big-endian ‖ origin 16 byte ‖ sequence u64 big-endian)、2 つの鍵の bytes の辞書順は鍵の順と同じなので bytes で並ぶ store は鍵の順に並ぶ `from_bytes` は 32 byte 以外を `None` で断る 試験 `tests/converge_key_bytes.rs` (400 個の鍵の全組で bytes の順と `Ord` が一致、往復、配置、長さ違いの拒否) 変異 4 件 (時刻を little-endian、sequence を little-endian、origin と sequence の入れ替え、長すぎる bytes を受け入れる) はすべて失敗する
 - CI (ALICE-Law G11): ALICE-Law の `scripts/g11_self_check.py` を pin の版で取得して走らせる step を ci.yml と preflight に足した (表・行・写し・manifest を見て、pass の宣言には自分の写しが全て目標にあることを要る pin だけを動かして写しを残すと落ちる)
 - CI (ALICE-Law G11): `.github/shared-files-pin` / `.github/g11-table-pin` を ALICE-Law 5f6679d に上げ、共有の写し 8 つをその表の目標の bytes にした (eol.yml / public-text.yml / gen_clippy_canary_calls.py / id_move_check.py / shared_files.sh と各試験、ALICE-Analytics と ALICE-DetMath の main と同じ bytes)

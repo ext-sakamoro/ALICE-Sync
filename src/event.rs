@@ -170,6 +170,7 @@ impl Event {
     }
 
     /// Serialize to bytes using bincode (for compatibility)
+    #[cfg(feature = "bincode-codec")]
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_default()
@@ -182,6 +183,7 @@ impl Event {
     }
 
     /// Deserialize from bincode bytes
+    #[cfg(feature = "bincode-codec")]
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::deserialize(bytes).ok()
@@ -533,6 +535,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "bincode-codec")]
     fn test_event_compact_size() {
         let motion = Event::new(EventKind::Motion {
             entity: 1,
@@ -656,6 +659,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bincode-codec")]
     fn test_event_bincode_roundtrip_all_kinds() {
         let kinds = vec![
             EventKind::Despawn { entity: 42 },
@@ -708,7 +712,10 @@ mod tests {
 
     #[test]
     fn test_event_from_bytes_invalid_returns_none() {
-        assert!(Event::from_bytes(b"garbage").is_none());
+        #[cfg(feature = "bincode-codec")]
+        {
+            assert!(Event::from_bytes(b"garbage").is_none());
+        }
         assert!(Event::from_compact_bytes(b"garbage").is_none());
     }
 

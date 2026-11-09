@@ -95,6 +95,7 @@ pub enum Message {
 
 impl Message {
     /// Serialize to bytes (bincode, compatible)
+    #[cfg(feature = "bincode-codec")]
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_default()
@@ -107,6 +108,7 @@ impl Message {
     }
 
     /// Deserialize from bincode bytes
+    #[cfg(feature = "bincode-codec")]
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::deserialize(bytes).ok()
@@ -229,9 +231,11 @@ impl BandwidthStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "bincode-codec")]
     use crate::EventKind;
 
     #[test]
+    #[cfg(feature = "bincode-codec")]
     fn test_message_compact_size() {
         let hello = Message::Hello {
             node_id: NodeId(1),
@@ -252,6 +256,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "bincode-codec")]
     fn test_events_message_compact() {
         let events = vec![
             Event::new(EventKind::Motion {
@@ -370,7 +375,10 @@ mod tests {
 
     #[test]
     fn test_message_from_bytes_invalid_returns_none() {
-        assert!(Message::from_bytes(b"junk").is_none());
+        #[cfg(feature = "bincode-codec")]
+        {
+            assert!(Message::from_bytes(b"junk").is_none());
+        }
         assert!(Message::from_compact_bytes(b"junk").is_none());
     }
 
