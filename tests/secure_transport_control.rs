@@ -48,7 +48,6 @@ impl Device {
             noise.public(),
             ISSUED,
             EXPIRES,
-            [self.seed; 16],
         )
         .unwrap();
         Credential::new(key, cert, noise).unwrap()

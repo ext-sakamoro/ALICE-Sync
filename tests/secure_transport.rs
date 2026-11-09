@@ -50,7 +50,6 @@ impl Device {
             noise.public(),
             1_800_000_000,
             1_800_086_400,
-            [self.seed; 16],
         )
         .unwrap();
         Credential::new(key, cert, noise).unwrap()

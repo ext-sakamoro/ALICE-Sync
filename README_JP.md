@@ -46,7 +46,7 @@ fn author(seed: u8, name: &str) -> (Author, PublicKey) {
     let master = KeyPair::from_seed([seed; 32]);
     let device = KeyPair::from_seed([seed + 100; 32]);
     let did = Did::parse(&format!("did:alice:{name}")).unwrap();
-    let cert = DeviceCert::issue(&master, &did, device.public().0, [0; 32], 0, u64::MAX, [seed; 16])
+    let cert = DeviceCert::issue(&master, &did, device.public().0, [0; 32], 0, u64::MAX)
         .unwrap();
     (Author::new(device, cert).unwrap(), master.public())
 }

@@ -39,7 +39,6 @@ fn party(seed: u8, name: &str) -> Party {
         [0x4e; 32],
         1_800_000_000,
         1_800_086_400,
-        [seed; 16],
     )
     .unwrap();
     Party { master, key, cert }
@@ -115,7 +114,6 @@ fn the_origin_is_derived_from_the_certificate() {
         [0x4e; 32],
         1_800_000_000,
         1_800_086_400,
-        [9; 16],
     )
     .unwrap();
     assert_ne!(Origin::of(&other), Origin::of(&a.cert));

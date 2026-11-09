@@ -608,7 +608,6 @@ pub(crate) mod testing {
             [0x4e; 32],
             1_800_000_000,
             1_800_086_400,
-            [seed; 16],
         )
         .unwrap();
         Author::new(key, cert).unwrap()
