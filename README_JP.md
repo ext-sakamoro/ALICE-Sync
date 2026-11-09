@@ -269,6 +269,7 @@ world.apply_motions_sorted(motions);  // 2-5x faster than naive apply
 | Despawn | エンティティを削除する | 約 10 バイト |
 | Property | エンティティのプロパティを設定する | 約 18 バイト |
 | Tick | フレームを進める | 約 14 バイト |
+| Custom | アプリの type id と 0〜`MAX_CUSTOM_PAYLOAD` (256) byte の payload | ~14 bytes + payload |
 
 ## ベンチマーク結果
 

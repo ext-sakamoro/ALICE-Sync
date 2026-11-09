@@ -96,7 +96,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     ),
     (
         "udp-wire",
-        hex32("3917218293a200a3769ab9f7cdb06f736390b899b0ba84c2064b95d1157cf4b2"),
+        hex32("39209410f7a6e4cf8d125fbb9ef5fc2447c040cb3cea75515bcbf4042b03eda4"),
     ),
     (
         "alice-physics",

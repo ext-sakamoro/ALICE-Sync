@@ -269,6 +269,7 @@ world.apply_motions_sorted(motions);  // 2-5x faster than naive apply
 | Despawn | Remove entity | ~10 bytes |
 | Property | Set entity property | ~18 bytes |
 | Tick | Advance frame | ~14 bytes |
+| Custom | Application type id and a payload of 0 to `MAX_CUSTOM_PAYLOAD` (256) bytes | ~14 bytes + payload |
 
 ## Benchmark Results
 
