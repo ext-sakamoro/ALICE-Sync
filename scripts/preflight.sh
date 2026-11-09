@@ -229,7 +229,10 @@ step "fuzz.yml / build every fuzz target (nightly; the replay needs the runner)"
 if has_toolchain nightly && cargo +nightly fuzz --version >/dev/null 2>&1; then
   (cd fuzz && cargo +nightly fuzz build)
 else
-  echo "skip: nightly / cargo-fuzz not installed" >&2
+  # without nightly the targets are still type-checked on stable (the feature set of fuzz/Cargo.toml
+  # against the library), so a target that no longer compiles is found here and not only on the runner
+  echo "nightly / cargo-fuzz not installed: cargo check of every fuzz target on stable" >&2
+  cargo check --manifest-path fuzz/Cargo.toml --bins
 fi
 
 step "public-text.yml / public-text: Public text (ALICE-Law checker at the pin; tree, then the commits)"

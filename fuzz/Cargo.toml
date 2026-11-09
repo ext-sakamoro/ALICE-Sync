@@ -14,7 +14,7 @@ arbitrary = { version = "1", features = ["derive"] }
 [dependencies.alice-sync]
 path = ".."
 default-features = false
-features = ["std", "async", "codec"]
+features = ["std", "async", "codec", "bincode-codec"]
 
 # cargo-machete false-positive 予防
 [package.metadata.cargo-machete]
