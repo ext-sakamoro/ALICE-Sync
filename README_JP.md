@@ -8,7 +8,7 @@
 
 ## ALICE-Sync とは
 
-ALICE-Sync は高性能な P2P 状態同期エンジン ワールド全体の状態を送る代わりに、ノード間で**イベント** (spawn、move、despawn) だけを同期する `async` feature を有効にすると、トランスポート、ディスカバリ、pub/sub、CRDT、セッション管理を含む、それ自体で完結した P2P 基盤になる
+ALICE-Sync は高性能な P2P 状態同期エンジン ワールド全体の状態を送る代わりに、ノード間で**イベント** (spawn、move、despawn) だけを同期する `async` feature を有効にすると、トランスポート、ディスカバリ、pub/sub、セッション管理を含む、それ自体で完結した P2P 基盤になる (CRDT は feature なしで使える)
 
 ### 主な特長
 
@@ -96,7 +96,7 @@ fn main() {
 |--------|-------------|
 | `reliability` | UDP の信頼性レイヤ: ACK 追跡、RTT 推定、再送、分割と再構築 |
 | `transport` | `SyncTransport` trait と UDP、TCP、プロセス内 Channel の実装 |
-| `crdt` | 競合のない複製データ型: `LwwRegister`、`GCounter`、`PnCounter`、`OrSet`、`LwwMap` |
+| `crdt` | 競合のない複製データ型: `LwwRegister`、`GCounter`、`PnCounter`、`OrSet`、`LwwMap` (feature 不要、`crdt-db` で ALICE-DB に保存できる) |
 | `channel` | topic 単位のフィルタを持つ topic ベースの pub/sub |
 | `discovery` | mDNS による LAN 自動検出、手動のピア登録、GC |
 | `session` | 高レベルのセッションドライバ: builder パターン、tick ループ、5 つの同期モード |
@@ -458,10 +458,11 @@ match rollback.add_remote_input(confirmed_input) {
 | Feature | 既定 | 説明 |
 |---------|---------|-------------|
 | `std` | あり | 標準ライブラリ対応 |
-| `async` | なし | P2P 基盤一式: トランスポート、ディスカバリ、pub/sub、CRDT、セッションドライバ (tokio が必要) |
+| `async` | なし | P2P 基盤一式: トランスポート、ディスカバリ、pub/sub、セッションドライバ (tokio が必要) |
 | `simd` | なし | SIMD 高速化のヒント |
 | `python` | なし | Python バインディング (PyO3 0.28 と NumPy のゼロコピー) |
 | `physics` | なし | ALICE-Physics ブリッジ (InputFrame <-> FrameInput、PhysicsRollbackSession) |
+| `crdt-db` | No | CRDT の状態 (`OrSet`・`LwwMap` など) を保存の形で ALICE-DB に書き、再起動の後に読み戻す (`crdt_store`) |
 | `telemetry` | なし | ALICE-DB による同期テレメトリの記録 (RTT、rollback、desync の指標) |
 | `cache` | なし | ALICE-Cache による Markov oracle でのエンティティ先読み |
 | `auth` | なし | ALICE-Auth による Ed25519 ZKP のピア認証 |

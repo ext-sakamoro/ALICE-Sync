@@ -321,6 +321,36 @@ impl<V: Clone + Ord> CrdtMergeable for OrSet<V> {
             let entry = self.counters.entry(replica).or_insert(0);
             *entry = (*entry).max(count);
         }
+        // a value whose every tag is tombstoned is gone: no empty entry is kept, so two replicas
+        // holding the same set hold the same entries (and persist the same bytes)
+        self.elements.retain(|_, tags| !tags.is_empty());
+    }
+}
+
+impl<V: Clone + Ord> OrSet<V> {
+    /// The live values with their tags, the per-replica add counters and the tombstoned tags
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn parts(
+        &self,
+    ) -> (
+        &BTreeMap<V, BTreeSet<(ReplicaId, u64)>>,
+        &BTreeMap<ReplicaId, u64>,
+        &BTreeSet<(ReplicaId, u64)>,
+    ) {
+        (&self.elements, &self.counters, &self.tombstones)
+    }
+
+    /// A set from its parts (no value with an empty tag set)
+    pub(crate) fn from_parts(
+        elements: BTreeMap<V, BTreeSet<(ReplicaId, u64)>>,
+        counters: BTreeMap<ReplicaId, u64>,
+        tombstones: BTreeSet<(ReplicaId, u64)>,
+    ) -> Self {
+        Self {
+            elements,
+            counters,
+            tombstones,
+        }
     }
 }
 
@@ -411,6 +441,38 @@ impl<K: Clone + Ord, V: Clone> LwwMap<K, V> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+impl<K: Clone + Ord, V: Clone> LwwMap<K, V> {
+    /// The replica that writes through this map
+    #[must_use]
+    pub const fn replica_id(&self) -> ReplicaId {
+        self.replica_id
+    }
+
+    /// This map written by `replica_id` from now on (a map read back from storage carries no
+    /// writer: [`crate::persist`] stores the replicated entries only)
+    #[must_use]
+    pub fn with_replica(mut self, replica_id: ReplicaId) -> Self {
+        self.replica_id = replica_id;
+        self
+    }
+
+    /// The entries as replicated: each key's register (a removed key keeps a `None` register)
+    pub(crate) const fn registers(&self) -> &BTreeMap<K, LwwRegister<Option<V>>> {
+        &self.entries
+    }
+
+    /// A map of `entries` with no writer yet (replica 0) and its clock at the latest timestamp it
+    /// holds, so a write after [`LwwMap::with_replica`] is later than every entry it holds
+    pub(crate) fn from_registers(entries: BTreeMap<K, LwwRegister<Option<V>>>) -> Self {
+        let clock = entries.values().map(|r| r.timestamp).max().unwrap_or(0);
+        Self {
+            entries,
+            replica_id: 0,
+            clock,
+        }
     }
 }
 
