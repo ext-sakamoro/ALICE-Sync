@@ -101,7 +101,11 @@ impl AuthenticatedNode {
     ///
     /// Returns `true` if the signature is valid.
     pub fn verify_event(&mut self, signed: &SignedEvent) -> bool {
-        let valid = ok(&signed.signer, &tagged(&signed.event_bytes), &signed.signature);
+        let valid = ok(
+            &signed.signer,
+            &tagged(&signed.event_bytes),
+            &signed.signature,
+        );
         if valid {
             self.verified_count += 1;
         } else {
@@ -129,7 +133,12 @@ impl AuthenticatedNode {
 /// Verify a signed event without owning a node (standalone verification).
 #[must_use]
 pub fn verify_signed_event(signed: &SignedEvent) -> bool {
-    verify(&signed.signer, &tagged(&signed.event_bytes), &signed.signature).is_ok()
+    verify(
+        &signed.signer,
+        &tagged(&signed.event_bytes),
+        &signed.signature,
+    )
+    .is_ok()
 }
 
 #[cfg(test)]
@@ -262,6 +271,6 @@ mod tests {
         let signed = alice.sign_bytes(bytes).unwrap();
         assert!(bob.verify_event(&signed));
         assert!(verify_signed_event(&signed));
-        assert_eq!(&EVENT_SIGNING_TAG[..], b"alice-sync/event/v1");
+        assert_eq!(EVENT_SIGNING_TAG, b"alice-sync/event/v1");
     }
 }

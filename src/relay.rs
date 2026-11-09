@@ -13,32 +13,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-/// A member's device id (32 bytes, as carried by its identity certificate).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PeerId([u8; 32]);
-
-impl PeerId {
-    /// A device id from its 32 bytes.
-    #[must_use]
-    pub const fn from_raw(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-}
-
-impl AsRef<[u8]> for PeerId {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl core::fmt::Display for PeerId {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for b in &self.0[..8] {
-            write!(f, "{b:02x}")?;
-        }
-        Ok(())
-    }
-}
+/// A member's device id: ALICE-Identity's [`DeviceId`](alice_identity::device_cert::DeviceId), the
+/// 16 bytes its certificate carries (derived from the subject and the device key, the same value as the
+/// member's [`crate::event::Origin`] and the key its revocation is listed under).
+pub type PeerId = alice_identity::device_cert::DeviceId;
 
 /// A room id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

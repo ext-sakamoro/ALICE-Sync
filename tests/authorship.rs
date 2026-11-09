@@ -15,7 +15,7 @@ use alice_identity::did::Did;
 use alice_sign::{KeyPair, PublicKey};
 use alice_sync::authorship::{
     Author, AuthorshipError, Origin, SignedEvents, TrustPolicy, Verifier, CHECKPOINT_CONTEXT,
-    CHECKPOINT_INTERVAL, MAX_PENDING_PER_AUTHOR, ORIGIN_CONTEXT,
+    CHECKPOINT_INTERVAL, MAX_PENDING_PER_AUTHOR,
 };
 use alice_sync::{Event, EventKind, Node, NodeId};
 use sha2::{Digest, Sha256};
@@ -96,16 +96,32 @@ fn one(e: &Event, from: &SignedEvents) -> SignedEvents {
 }
 
 #[test]
-fn the_origin_is_derived_from_the_certificate() {
+fn the_origin_is_the_certificates_device_id() {
     let a = party(1, "alice");
+    // the device id as ALICE-Identity documents it, computed here from the certificate's fields
     let subject = a.cert.subject().to_string();
-    let mut m = ORIGIN_CONTEXT.to_vec();
+    let mut m = b"alice-identity/device-id/v1".to_vec();
     m.extend_from_slice(&u16::try_from(subject.len()).unwrap().to_be_bytes());
     m.extend_from_slice(subject.as_bytes());
     m.extend_from_slice(a.cert.device_public());
     let want: [u8; 16] = Sha256::digest(&m)[..16].try_into().unwrap();
-    assert_eq!(ORIGIN_CONTEXT, b"alice-sync/origin/v1");
+    assert_eq!(a.cert.device_id().as_bytes(), &want);
     assert_eq!(Origin::of(&a.cert), Origin(want));
+    assert_eq!(
+        Origin::of(&a.cert),
+        Origin::from_device_id(a.cert.device_id())
+    );
+    // a renewal of the same key and subject keeps the origin
+    let renewed = DeviceCert::issue(
+        &a.master,
+        a.cert.subject(),
+        *a.cert.device_public(),
+        [0x4e; 32],
+        1_800_086_400,
+        1_800_172_800,
+    )
+    .unwrap();
+    assert_eq!(Origin::of(&renewed), Origin::of(&a.cert));
     // another device key of the same subject is another origin
     let other = DeviceCert::issue(
         &a.master,
