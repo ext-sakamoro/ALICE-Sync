@@ -13,7 +13,7 @@
 //! # Hex form
 //!
 //! ```text
-//! 82244989533019fe66b74529d827daf3badd67495373993796822f7d004398d9
+//! cfd47e946abf8993c29f3a259d34d79ca437fdc243dcf008a97b7407b24d46c7
 //! ```
 //!
 //! # Entries
@@ -100,7 +100,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     ),
     (
         "alice-physics",
-        hex32("a3f7eb247574fcbac11839aeaf64f1bae826721f2a2e12e8b30fd22db70612c1"),
+        hex32("c82742de000629b51a5fa1717bb68620a683460617a89dc009c2374e7e9a470f"),
     ),
     (
         "alice-analytics",
@@ -111,7 +111,7 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
 /// The semantics identifier of this crate: the fold of
 /// [`SYNC_SEMANTICS_PINS`] (see the module documentation).
 pub const SYNC_SEMANTICS_ID: [u8; 32] =
-    hex32("82244989533019fe66b74529d827daf3badd67495373993796822f7d004398d9");
+    hex32("cfd47e946abf8993c29f3a259d34d79ca437fdc243dcf008a97b7407b24d46c7");
 
 /// Earlier values of [`SYNC_SEMANTICS_ID`] whose pinned bits this release
 /// still reproduces (none yet: this is the first identifier).
@@ -129,7 +129,7 @@ pub const SYNC_STATE_PIN_NAMES: [&str; 4] = ["crdt", "fixed", "receive", "world"
 /// bridge pin moves [`SYNC_SEMANTICS_ID`] (the Hello handshake, G7) and leaves this one, so stored
 /// worlds stay readable while a peer on another bridge is refused.
 pub const SYNC_STATE_SEMANTICS_ID: [u8; 32] =
-    hex32("2591de396e984ec245198762324c0e540c7d476d64c122e53ced71225791efc6");
+    hex32("6ce6c185368472c231b06b98b8bde331382fbaa7098a912c305a8f14776c4849");
 
 /// Earlier values of [`SYNC_STATE_SEMANTICS_ID`] whose pinned bits this release still reproduces
 /// (none yet: this is the first state identifier).
