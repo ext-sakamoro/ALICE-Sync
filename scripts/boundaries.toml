@@ -4,10 +4,8 @@
 # says why no Law-bearing value from another producer crosses it.
 [boundary]
 "decode::converge.rs::Key::from_bytes" = "local: an order key is three integers (Lamport time, origin, sequence), no Law-bearing value; the length is checked"
-"decode::event.rs::Event::from_bytes" = "local: events hold integers as the sender supplied them and reach a session inside Message, after its Hello was accepted"
 "decode::event.rs::Event::from_compact_bytes" = "local: events hold integers as the sender supplied them and reach a session inside Message, after its Hello was accepted"
 "decode::input_sync.rs::InputFrame::from_bytes" = "local: player input integers, received by a session whose peers were checked at the handshake"
-"decode::protocol.rs::Message::from_bytes" = "handshake: a_hello_with_another_identifier_is_refused_naming_both"
 "decode::protocol.rs::Message::from_compact_bytes" = "handshake: a_hello_with_another_identifier_is_refused_naming_both"
 "decode::reliability.rs::FragmentHeader::from_bytes" = "local: transport framing integers (sequence numbers, ack bits, fragment indices), no Law-bearing value"
 "decode::reliability.rs::PacketHeader::from_bytes" = "local: transport framing integers (sequence numbers, ack bits, fragment indices), no Law-bearing value"

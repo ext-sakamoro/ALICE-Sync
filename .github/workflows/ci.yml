@@ -23,7 +23,7 @@ env:
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: short
   # python を除く全 native feature (security-audit.yml と同じ定義)
-  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport"
+  NATIVE_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
 
 jobs:
   fmt:
