@@ -59,8 +59,11 @@
 //! them and are not kept across an encode and decode.
 //!
 //! Version 2 had today's body and carried the writer's full `SYNC_SEMANTICS_ID`. Version 1 also
-//! carried it and stored the arena layout (slots, generations, free list, a dense id map). Both are
-//! still read, as [`FormatStatus::Legacy`]; [`decode_state_strict`] refuses them.
+//! carried it and stored the arena layout (slots, generations, free list, a dense id map). Their
+//! headers are still parsed as [`FormatStatus::Legacy`], but the state identifier their full
+//! identifier maps to is not this release's and is not reproduced (the `crdt` pin moved), so both
+//! readers refuse them with [`PersistError::Semantics`] naming the format version and both state
+//! identifiers.
 //!
 //! # Reading
 //!
@@ -68,7 +71,7 @@
 //! [`check_state_semantics`]: its own state identifier gives [`IdStatus::Current`], one in
 //! [`PREVIOUS_SYNC_STATE_SEMANTICS_IDS`](crate::PREVIOUS_SYNC_STATE_SEMANTICS_IDS) gives
 //! [`IdStatus::VerifiedPrevious`], and any other identifier is [`PersistError::Semantics`] naming
-//! both. A version 1 or 2 file carries a full identifier: it is looked up in
+//! the file's format version and both identifiers. A version 1 or 2 file carries a full identifier: it is looked up in
 //! [`PERSISTED_FULL_SYNC_SEMANTICS_IDS`] and the state identifier it maps to is checked the same
 //! way; a full identifier the table does not hold is [`PersistError::Semantics`]. The full
 //! identifier itself is never compared here. A decoded `WorldState` is checked
@@ -168,8 +171,16 @@ pub enum PersistError {
     /// An earlier format version, refused by [`decode_state_strict`].
     LegacyFormat(u16),
     /// The stored semantics identifier is neither this build's nor a verified
-    /// earlier one.
-    Semantics(SemanticsMismatch),
+    /// earlier one. `format` is the file's format version; for a version 1 or 2
+    /// file `mismatch.stored` is the state identifier its full identifier maps to
+    /// in [`PERSISTED_FULL_SYNC_SEMANTICS_IDS`], or the full identifier itself
+    /// when the table does not hold it.
+    Semantics {
+        /// The format version in the file's header.
+        format: u16,
+        /// The stored identifier and this build's state identifier.
+        mismatch: SemanticsMismatch,
+    },
     /// The bytes hold another type than the one requested.
     WrongType {
         /// The tag in the bytes.
@@ -194,7 +205,9 @@ impl core::fmt::Display for PersistError {
                 f,
                 "state format version {v} is an earlier format (current {FORMAT_VERSION})"
             ),
-            Self::Semantics(m) => write!(f, "{m}"),
+            Self::Semantics { format, mismatch } => {
+                write!(f, "state format version {format}: {mismatch}")
+            }
             Self::WrongType { stored, expected } => {
                 write!(f, "state holds type tag {stored}, expected {expected}")
             }
@@ -206,12 +219,6 @@ impl core::fmt::Display for PersistError {
 }
 
 impl std::error::Error for PersistError {}
-
-impl From<SemanticsMismatch> for PersistError {
-    fn from(m: SemanticsMismatch) -> Self {
-        Self::Semantics(m)
-    }
-}
 
 /// Which format version the bytes were written in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,7 +341,10 @@ pub(crate) fn decode_with<T: Persist>(
         .take(32)?
         .try_into()
         .map_err(|_| PersistError::Truncated)?;
-    let status = check(&id, format)?;
+    let status = check(&id, format).map_err(|mismatch| PersistError::Semantics {
+        format: version,
+        mismatch,
+    })?;
     let value = read_tagged::<T>(&mut r, format)?;
     if !r.bytes.is_empty() {
         return Err(PersistError::TrailingBytes(r.bytes.len()));
@@ -746,7 +756,73 @@ mod tests {
         // the same bytes against the release's own (empty) list are refused
         assert!(matches!(
             decode_state::<Fixed>(&bytes),
-            Err(PersistError::Semantics(m)) if m.stored == earlier
+            Err(PersistError::Semantics { mismatch: m, .. }) if m.stored == earlier
         ));
+    }
+
+    /// A version 1 world whose free list or id map would break the unchecked
+    /// accessors is refused, not decoded, each with the reason of the check that
+    /// caught it (the fixture written by the last release of that format). `decode_state` refuses
+    /// every version 1 file at its identifier before the body, so the body checks are read here past
+    /// an identifier check that accepts.
+    #[test]
+    fn malformed_world_state_is_refused() {
+        let bytes = include_bytes!("../tests/data/persist/world_state_v1.bin").to_vec();
+        assert_eq!(&bytes[4..6], &1u16.to_le_bytes());
+        // walk the slots (format table in src/persist.rs) to find the one free
+        // slot's next-free field and the free-list head that follows the slots
+        let body = 39;
+        let n = u32::from_le_bytes(bytes[body..body + 4].try_into().unwrap()) as usize;
+        let mut at = body + 4;
+        let mut free_next_at = Vec::new();
+        for _ in 0..n {
+            let state = bytes[at];
+            if state == 0 {
+                free_next_at.push(at + 1 + 4);
+            }
+            at += 1 + 4 + if state == 1 { 4 + 2 + 12 + 64 + 2 } else { 4 };
+        }
+        assert_eq!(free_next_at.len(), 1, "the scenario leaves one free slot");
+        let head_at = at;
+        let refused =
+            |bad: &[u8]| match decode_with::<WorldState>(bad, |_, _| Ok(IdStatus::Current)) {
+                Err(PersistError::Malformed(why)) => why,
+                other => panic!("expected Malformed, got {other:?}"),
+            };
+        let with = |pos: usize, v: u32| {
+            let mut bad = bytes.clone();
+            bad[pos..pos + 4].copy_from_slice(&v.to_le_bytes());
+            bad
+        };
+        assert_eq!(
+            refused(&with(head_at, 0)),
+            "the free list reaches an occupied slot"
+        );
+        assert_eq!(
+            refused(&with(head_at, n as u32)),
+            "the free list points past the last slot"
+        );
+        // the head is right, but the free slot links on to an occupied one
+        assert_eq!(
+            refused(&with(free_next_at[0], 0)),
+            "the free list reaches an occupied slot"
+        );
+        // the free slot links to itself
+        let own = u32::from_le_bytes(bytes[head_at..head_at + 4].try_into().unwrap());
+        assert_eq!(
+            refused(&with(free_next_at[0], own)),
+            "the free list has a cycle"
+        );
+        assert_eq!(
+            refused(&with(head_at, u32::MAX)),
+            "a free slot is not on the free list"
+        );
+        // an id map handle with a stale generation
+        let first_gen = head_at + 4 + 4 + 4;
+        let g = u32::from_le_bytes(bytes[first_gen..first_gen + 4].try_into().unwrap());
+        assert_eq!(
+            refused(&with(first_gen, g.wrapping_add(1))),
+            "an id map handle does not point to an occupied slot of its generation"
+        );
     }
 }

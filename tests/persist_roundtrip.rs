@@ -11,6 +11,7 @@ use alice_sync::persist::{
     decode_state, decode_state_strict, encode_state, FormatStatus, IdStatus, Persist, PersistError,
     FORMAT_VERSION, MAGIC,
 };
+use alice_sync::semantics::SemanticsMismatch;
 use alice_sync::{Entity, Event, EventKind, World, WorldState, SYNC_STATE_SEMANTICS_ID};
 
 const ID: std::ops::Range<usize> = 6..38;
@@ -77,7 +78,10 @@ fn assert_mismatch<T: Persist + core::fmt::Debug>(value: &T) {
     let bytes = foreign(encode_state(value));
     let stored: [u8; 32] = bytes[ID].try_into().unwrap();
     match decode_state::<T>(&bytes) {
-        Err(PersistError::Semantics(m)) => {
+        Err(PersistError::Semantics {
+            format: 3,
+            mismatch: m,
+        }) => {
             assert_eq!(m.stored, stored);
             assert_eq!(m.expected, SYNC_STATE_SEMANTICS_ID);
             let text = m.to_string();
@@ -167,17 +171,22 @@ fn header_and_framing_errors() {
         decode_state::<Fixed>(&bad),
         Err(PersistError::UnsupportedVersion(4))
     );
-    // version 1 is an earlier format: read, marked legacy, and refused by the strict reader
-    // (a version 1 header carries a full identifier, read through the table of earlier ones)
+    // version 1 is an earlier format: its header carries a full identifier, read through the
+    // table of earlier ones; the state identifier it maps to is not this build's, so both readers
+    // refuse it naming the format and both state identifiers
     let mut v1 = bytes.clone();
     v1[4] = 1;
-    v1[ID].copy_from_slice(&alice_sync::persist::PERSISTED_FULL_SYNC_SEMANTICS_IDS[0].full);
-    let d = decode_state::<Fixed>(&v1).unwrap();
-    assert_eq!((d.value, d.format), (Fixed(5), FormatStatus::Legacy(1)));
-    assert_eq!(
-        decode_state_strict::<Fixed>(&v1),
-        Err(PersistError::LegacyFormat(1))
-    );
+    let earlier = &alice_sync::persist::PERSISTED_FULL_SYNC_SEMANTICS_IDS[0];
+    v1[ID].copy_from_slice(&earlier.full);
+    let refusal = Err(PersistError::Semantics {
+        format: 1,
+        mismatch: SemanticsMismatch {
+            stored: earlier.state,
+            expected: SYNC_STATE_SEMANTICS_ID,
+        },
+    });
+    assert_eq!(decode_state::<Fixed>(&v1), refusal);
+    assert_eq!(decode_state_strict::<Fixed>(&v1), refusal);
     assert_eq!(
         decode_state_strict::<Fixed>(&bytes).unwrap().format,
         FormatStatus::Current
@@ -202,99 +211,50 @@ fn header_and_framing_errors() {
     assert_eq!(decode_state::<Fixed>(&[]), Err(PersistError::Truncated));
 }
 
-/// A version 1 world whose free list or id map would break the unchecked
-/// accessors is refused, not decoded, each with the reason of the check that
-/// caught it (the fixture written by the last release of that format).
+/// The version 1 fixture (written by the last release of that format) is refused by both readers:
+/// the state identifier its full identifier maps to is not this build's (the `crdt` pin moved, so
+/// no earlier state identifier is reproduced), and the error names the format and both identifiers.
 #[test]
-fn malformed_world_state_is_refused() {
-    let bytes = WORLD_STATE_V1.to_vec();
-    assert_eq!(&bytes[4..6], &1u16.to_le_bytes());
-    // walk the slots (format table in src/persist.rs) to find the one free
-    // slot's next-free field and the free-list head that follows the slots
-    let body = 39;
-    let n = u32::from_le_bytes(bytes[body..body + 4].try_into().unwrap()) as usize;
-    let mut at = body + 4;
-    let mut free_next_at = Vec::new();
-    for _ in 0..n {
-        let state = bytes[at];
-        if state == 0 {
-            free_next_at.push(at + 1 + 4);
-        }
-        at += 1 + 4 + if state == 1 { 4 + 2 + 12 + 64 + 2 } else { 4 };
-    }
-    assert_eq!(free_next_at.len(), 1, "the scenario leaves one free slot");
-    let head_at = at;
-    let refused = |bad: &[u8]| match decode_state::<WorldState>(bad) {
-        Err(PersistError::Malformed(why)) => why,
-        other => panic!("expected Malformed, got {other:?}"),
-    };
-    let with = |pos: usize, v: u32| {
-        let mut bad = bytes.clone();
-        bad[pos..pos + 4].copy_from_slice(&v.to_le_bytes());
-        bad
-    };
+fn a_version_1_world_is_refused_naming_its_format_and_both_identifiers() {
+    let earlier = &alice_sync::persist::PERSISTED_FULL_SYNC_SEMANTICS_IDS[0];
+    assert_eq!(&WORLD_STATE_V1[6..38], &earlier.full);
+    let refusal: Result<(), _> = Err(PersistError::Semantics {
+        format: 1,
+        mismatch: SemanticsMismatch {
+            stored: earlier.state,
+            expected: SYNC_STATE_SEMANTICS_ID,
+        },
+    });
     assert_eq!(
-        refused(&with(head_at, 0)),
-        "the free list reaches an occupied slot"
+        decode_state::<WorldState>(WORLD_STATE_V1).err(),
+        refusal.clone().err()
     );
     assert_eq!(
-        refused(&with(head_at, n as u32)),
-        "the free list points past the last slot"
+        decode_state_strict::<WorldState>(WORLD_STATE_V1).err(),
+        refusal.err()
     );
-    // the head is right, but the free slot links on to an occupied one
-    assert_eq!(
-        refused(&with(free_next_at[0], 0)),
-        "the free list reaches an occupied slot"
-    );
-    // the free slot links to itself
-    let own = u32::from_le_bytes(bytes[head_at..head_at + 4].try_into().unwrap());
-    assert_eq!(
-        refused(&with(free_next_at[0], own)),
-        "the free list has a cycle"
-    );
-    assert_eq!(
-        refused(&with(head_at, u32::MAX)),
-        "a free slot is not on the free list"
-    );
-    // an id map handle with a stale generation
-    let first_gen = head_at + 4 + 4 + 4;
-    let g = u32::from_le_bytes(bytes[first_gen..first_gen + 4].try_into().unwrap());
-    assert_eq!(
-        refused(&with(first_gen, g.wrapping_add(1))),
-        "an id map handle does not point to an occupied slot of its generation"
+    let text = decode_state::<WorldState>(WORLD_STATE_V1)
+        .unwrap_err()
+        .to_string();
+    assert!(text.contains("state format version 1"), "{text}");
+    assert!(
+        text.contains(&hex(&earlier.state)) && text.contains(&hex(&SYNC_STATE_SEMANTICS_ID)),
+        "{text}"
     );
 }
 
-/// The version 1 fixture is read as legacy: the same live entities, frame and seed as the world
-/// that wrote it, and re-encoded it gives today's bytes for that world.
+/// A file this build writes reads back as the same value in the current format.
 #[test]
-fn a_version_1_world_is_read_as_legacy() {
-    let d = decode_state::<WorldState>(WORLD_STATE_V1).unwrap();
-    assert_eq!(d.format, FormatStatus::Legacy(1));
-    assert_eq!(d.status, IdStatus::Current);
+fn a_current_format_file_round_trips() {
     let w = world();
+    let bytes = encode_state(w.state());
+    assert_eq!(&bytes[4..6], &FORMAT_VERSION.to_le_bytes());
+    let d = decode_state_strict::<WorldState>(&bytes).unwrap();
     assert_eq!(
-        (d.value.frame, d.value.seed),
-        (w.state().frame, w.state().seed)
+        (d.format, d.status),
+        (FormatStatus::Current, IdStatus::Current)
     );
-    let mut ids = Vec::new();
-    for (id, h) in d.value.ids() {
-        let e = d.value.entities.get(h).unwrap();
-        assert_eq!(e.id, id);
-        let original = w
-            .state()
-            .entities
-            .get(w.state().get_handle(id).unwrap())
-            .unwrap();
-        assert_eq!(e.compute_hash(), original.compute_hash());
-        ids.extend([id]);
-    }
-    assert_eq!(ids, [0, 2, 3, 5, 9]);
-    assert_eq!(encode_state(&d.value), encode_state(w.state()));
-    assert!(matches!(
-        decode_state_strict::<WorldState>(WORLD_STATE_V1),
-        Err(PersistError::LegacyFormat(1))
-    ));
+    assert_eq!(encode_state(&d.value), bytes);
 }
 
 /// The current world body: the live count, the entity bodies in strictly ascending id order, the

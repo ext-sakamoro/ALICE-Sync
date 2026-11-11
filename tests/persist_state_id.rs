@@ -9,7 +9,7 @@ use alice_sync::persist::{
     decode_state, encode_state, FormatStatus, IdStatus, PersistError, FORMAT_VERSION,
     PERSISTED_FULL_SYNC_SEMANTICS_IDS,
 };
-use alice_sync::semantics::{check_semantics, SYNC_STATE_PIN_NAMES};
+use alice_sync::semantics::{check_semantics, SemanticsMismatch, SYNC_STATE_PIN_NAMES};
 use alice_sync::world::{World, WorldState};
 use alice_sync::{Fixed, SYNC_SEMANTICS_ID, SYNC_SEMANTICS_PINS, SYNC_STATE_SEMANTICS_ID};
 use sha2::{Digest, Sha256};
@@ -113,28 +113,43 @@ fn a_state_pin_change_refuses_stored_state_and_the_peer() {
     let bytes = stamped(&encode_state(World::new(7).state()), &state);
     assert!(matches!(
         decode_state::<WorldState>(&bytes),
-        Err(PersistError::Semantics(_))
+        Err(PersistError::Semantics { format: 3, .. })
     ));
     assert!(check_semantics(&full).is_err());
 }
 
 #[test]
-fn a_format_2_file_with_an_earlier_full_identifier_reads_as_legacy() {
-    // format 2 kept the body of today's format; only the header identifier differs
+fn a_format_2_file_with_an_earlier_full_identifier_is_refused_naming_its_format() {
+    // format 2 kept the body of today's format; only the header identifier differs. Its full
+    // identifier maps to an earlier state identifier this build does not reproduce (the `crdt` pin
+    // moved), so the file is refused naming the format and both state identifiers
     let e = &PERSISTED_FULL_SYNC_SEMANTICS_IDS[0];
     let mut bytes = stamped(&encode_state(&Fixed::from_int(5)), &e.full);
     bytes[4..6].copy_from_slice(&2u16.to_le_bytes());
-    let d = decode_state::<Fixed>(&bytes).unwrap();
-    assert_eq!(d.value, Fixed::from_int(5));
-    assert_eq!(d.format, FormatStatus::Legacy(2));
-    // the same file stamped with an identifier the table does not hold is refused
+    assert_eq!(
+        decode_state::<Fixed>(&bytes).err(),
+        Some(PersistError::Semantics {
+            format: 2,
+            mismatch: SemanticsMismatch {
+                stored: e.state,
+                expected: SYNC_STATE_SEMANTICS_ID,
+            },
+        })
+    );
+    // the same file stamped with a full identifier the table does not hold is refused naming it
     let mut unknown = e.full;
     unknown[0] ^= 1;
     let bytes = stamped(&bytes, &unknown);
-    assert!(matches!(
-        decode_state::<Fixed>(&bytes),
-        Err(PersistError::Semantics(_))
-    ));
+    assert_eq!(
+        decode_state::<Fixed>(&bytes).err(),
+        Some(PersistError::Semantics {
+            format: 2,
+            mismatch: SemanticsMismatch {
+                stored: unknown,
+                expected: SYNC_STATE_SEMANTICS_ID,
+            },
+        })
+    );
 }
 
 #[test]
@@ -144,7 +159,7 @@ fn a_format_3_file_never_consults_the_full_identifier_table() {
     let bytes = stamped(&encode_state(&Fixed::from_int(5)), &e.full);
     assert!(matches!(
         decode_state::<Fixed>(&bytes),
-        Err(PersistError::Semantics(_))
+        Err(PersistError::Semantics { format: 3, .. })
     ));
 }
 
@@ -152,7 +167,10 @@ fn a_format_3_file_never_consults_the_full_identifier_table() {
 fn a_format_3_file_stamped_with_the_full_identifier_is_refused_naming_both() {
     let bytes = stamped(&encode_state(&Fixed::from_int(5)), &SYNC_SEMANTICS_ID);
     match decode_state::<Fixed>(&bytes) {
-        Err(PersistError::Semantics(m)) => {
+        Err(PersistError::Semantics {
+            format: 3,
+            mismatch: m,
+        }) => {
             assert_eq!(m.stored, SYNC_SEMANTICS_ID);
             assert_eq!(m.expected, SYNC_STATE_SEMANTICS_ID);
         }
@@ -164,10 +182,18 @@ fn a_format_3_file_stamped_with_the_full_identifier_is_refused_naming_both() {
 fn the_strict_reader_refuses_formats_1_and_2() {
     use alice_sync::persist::decode_state_strict;
     let e = &PERSISTED_FULL_SYNC_SEMANTICS_IDS[0];
-    let mut bytes = stamped(&encode_state(&Fixed::from_int(5)), &e.full);
-    bytes[4..6].copy_from_slice(&2u16.to_le_bytes());
-    assert_eq!(
-        decode_state_strict::<Fixed>(&bytes).map(|d| d.value),
-        Err(PersistError::LegacyFormat(2))
-    );
+    for format in [1u16, 2] {
+        let mut bytes = stamped(&encode_state(&Fixed::from_int(5)), &e.full);
+        bytes[4..6].copy_from_slice(&format.to_le_bytes());
+        assert_eq!(
+            decode_state_strict::<Fixed>(&bytes).err(),
+            Some(PersistError::Semantics {
+                format,
+                mismatch: SemanticsMismatch {
+                    stored: e.state,
+                    expected: SYNC_STATE_SEMANTICS_ID,
+                },
+            })
+        );
+    }
 }
