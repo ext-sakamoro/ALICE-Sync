@@ -407,8 +407,11 @@ mod tests {
         assert_eq!(back, physics_checksum);
     }
 
-    /// A peer with another physics identifier is refused naming both; an
-    /// identifier in the previous list is accepted.
+    /// A peer with another physics identifier is refused naming both; every
+    /// identifier the physics crate lists as previous is accepted (the list can
+    /// be empty: a new major release starts it again), and an identifier in a
+    /// previous list is accepted by the same check (a synthetic list, so the
+    /// acceptance is checked whatever the physics crate lists).
     #[test]
     fn a_peer_with_another_physics_identifier_is_refused() {
         let mut foreign = alice_physics::PHYSICS_SEMANTICS_ID;
@@ -420,8 +423,15 @@ mod tests {
             }
             Ok(_) => panic!("a foreign physics identifier was accepted"),
         }
-        let earlier = alice_physics::PREVIOUS_PHYSICS_SEMANTICS_IDS[0];
-        assert!(PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default(), &earlier).is_ok());
+        for earlier in alice_physics::PREVIOUS_PHYSICS_SEMANTICS_IDS {
+            assert!(
+                PhysicsRollbackSession::new(2, 0, 8, NetcodeConfig::default(), earlier).is_ok()
+            );
+        }
+        let current = alice_physics::PHYSICS_SEMANTICS_ID;
+        assert!(check_semantics_against(&foreign, &current, &[foreign]).is_ok());
+        assert!(check_semantics_against(&current, &current, &[]).is_ok());
+        assert!(check_semantics_against(&foreign, &current, &[]).is_err());
     }
 
     #[test]
