@@ -18,8 +18,13 @@
 //!   are opaque (sealed end to end by the members): a member that takes another member's tag after it
 //!   leaves can only disorder that tag's sequence, never forge a payload.
 //! - Forwarded payloads are kept in a per-room log, capped by count, for a member that reconnects.
-//! - Limits: payload size, members per room, publishes per tag per window, and rooms; when the room count is
-//!   reached, the empty room idle longest makes way for a new one (its log goes with it).
+//! - A bound connection keeps its tag (a bind under another tag is refused), so a new tag takes a new
+//!   connection, which the server admits at its own rate (for example a per-source handshake gate).
+//! - Limits: payload size, members per room, publishes per tag per window, rooms per connection, tags a room
+//!   keeps state for (a tag nobody holds and with nothing held back makes way, and its sequence starts again),
+//!   and rooms; when the room count is reached, the empty room idle longest makes way for a new one (its log
+//!   goes with it). A room that made way can be opened again under another token by whoever names its alias
+//!   first: members that then get `BadToken` move to their next epoch's room.
 //!
 //! All maps are ordered, so the output for a given input sequence is the same on every build.
 
@@ -143,10 +148,16 @@ pub struct Limits {
     pub max_rooms: usize,
     /// Connections bound to one room at once.
     pub max_members: usize,
-    /// Publishes accepted per sender tag in one window.
+    /// Publishes accepted per sender tag in one window (a connection keeps its tag, so a new tag needs a new
+    /// connection, which the server admits at its own rate).
     pub max_publishes_per_window: u32,
     /// The window, in the caller's clock units.
     pub window: u64,
+    /// Rooms one connection may be bound to at once.
+    pub max_rooms_per_conn: usize,
+    /// Sender tags a room keeps state for (sequence, held payloads); a tag no connection holds and with
+    /// nothing held back makes way for a new one.
+    pub max_tags_per_room: usize,
 }
 
 /// Why the relay refused a frame.
@@ -170,6 +181,12 @@ pub enum Refusal {
     RoomFull,
     /// The sender tag reached [`Limits::max_publishes_per_window`] in this window.
     RateLimited,
+    /// The connection is bound to [`Limits::max_rooms_per_conn`] rooms.
+    ConnRoomLimit,
+    /// The connection is bound to the room under another tag.
+    TagChange,
+    /// The room keeps [`Limits::max_tags_per_room`] tags and none can make way.
+    TooManyTags,
 }
 
 /// A frame the relay sends.
@@ -293,6 +310,20 @@ impl AnonymousRelayCore {
                 reason,
             }]
         };
+        let joining = self
+            .rooms
+            .get(&room)
+            .is_none_or(|r| !r.members.contains_key(&conn));
+        if joining
+            && self
+                .rooms
+                .values()
+                .filter(|r| r.members.contains_key(&conn))
+                .count()
+                >= self.limits.max_rooms_per_conn
+        {
+            return refuse(Refusal::ConnRoomLimit);
+        }
         if !self.rooms.contains_key(&room) {
             if self.rooms.len() >= self.limits.max_rooms && !self.make_way() {
                 return refuse(Refusal::TooManyRooms);
@@ -311,17 +342,28 @@ impl AnonymousRelayCore {
                 },
             );
         }
+        let max_members = self.limits.max_members;
+        let max_tags = self.limits.max_tags_per_room;
         let Some(r) = self.rooms.get_mut(&room) else {
             return refuse(Refusal::NoRoom);
         };
         if !same(&r.token, &token) {
             return refuse(Refusal::BadToken);
         }
+        if r.members.get(&conn).is_some_and(|held| *held != tag) {
+            return refuse(Refusal::TagChange);
+        }
         if r.members.iter().any(|(c, t)| *t == tag && *c != conn) {
             return refuse(Refusal::TagInUse);
         }
-        if !r.members.contains_key(&conn) && r.members.len() >= self.limits.max_members {
+        if !r.members.contains_key(&conn) && r.members.len() >= max_members {
             return refuse(Refusal::RoomFull);
+        }
+        if !r.knows(tag) && r.tag_count() >= max_tags {
+            r.prune_tags();
+            if r.tag_count() >= max_tags {
+                return refuse(Refusal::TooManyTags);
+            }
         }
         r.members.insert(conn, tag);
         r.last_active = now;
@@ -437,6 +479,18 @@ impl AnonymousRelayCore {
         Ok(LogRange { first_index, items })
     }
 
+    /// How many sender tags `room` keeps state for (0 for a room not open).
+    #[must_use]
+    pub fn tags_held(&self, room: RoomAlias) -> usize {
+        self.rooms.get(&room).map_or(0, |r| {
+            let mut tags: std::collections::BTreeSet<SenderTag> =
+                r.next_seq.keys().copied().collect();
+            tags.extend(r.held.keys().copied());
+            tags.extend(r.members.values().copied());
+            tags.len()
+        })
+    }
+
     /// Unbind connection `conn` from every room (its transport closed); the rooms and their logs stay.
     pub fn close(&mut self, conn: ConnId) {
         for r in self.rooms.values_mut() {
@@ -446,6 +500,46 @@ impl AnonymousRelayCore {
 }
 
 impl Room {
+    /// The tags this room keeps state for: held by a connection, or with a sequence, held payloads or a rate
+    fn tags(&self) -> std::collections::BTreeSet<SenderTag> {
+        let mut tags: std::collections::BTreeSet<SenderTag> =
+            self.members.values().copied().collect();
+        tags.extend(self.next_seq.keys().copied());
+        tags.extend(self.held.keys().copied());
+        tags.extend(self.rate.keys().copied());
+        tags
+    }
+
+    fn tag_count(&self) -> usize {
+        self.tags().len()
+    }
+
+    fn knows(&self, tag: SenderTag) -> bool {
+        self.members.values().any(|t| *t == tag)
+            || self.next_seq.contains_key(&tag)
+            || self.held.contains_key(&tag)
+            || self.rate.contains_key(&tag)
+    }
+
+    /// Forget the tags no connection holds and with nothing held back (their sequence and rate go with them:
+    /// a member that comes back under such a tag starts its sequence again at 0)
+    fn prune_tags(&mut self) {
+        let held_by_member: std::collections::BTreeSet<SenderTag> =
+            self.members.values().copied().collect();
+        let gone: Vec<SenderTag> = self
+            .tags()
+            .into_iter()
+            .filter(|t| {
+                !held_by_member.contains(t) && self.held.get(t).is_none_or(BTreeMap::is_empty)
+            })
+            .collect();
+        for t in gone {
+            self.next_seq.remove(&t);
+            self.held.remove(&t);
+            self.rate.remove(&t);
+        }
+    }
+
     /// Send one payload to every bound connection but the publisher's, and log it
     #[allow(clippy::too_many_arguments)]
     fn forward(

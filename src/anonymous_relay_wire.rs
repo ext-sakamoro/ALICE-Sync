@@ -5,7 +5,8 @@
 //! `Refused` 0x46, `LogRange` 0x47, `Log` 0x48, `Close` 0x49), then the fields in order. A room is its 32-byte
 //! alias, a token 32 bytes, a sender tag 16 bytes, integers big-endian fixed width, a payload a u32 length
 //! then the bytes (at most [`MAX_FRAME`]), a refusal one byte (`NoRoom` 1, `BadToken` 2, `NotBound` 3,
-//! `TagInUse` 4, `TooLarge` 5, `TooFarAhead` 6, `TooManyRooms` 7, `RoomFull` 8, `RateLimited` 9). Decoding
+//! `TagInUse` 4, `TooLarge` 5, `TooFarAhead` 6, `TooManyRooms` 7, `RoomFull` 8, `RateLimited` 9,
+//! `ConnRoomLimit` 10, `TagChange` 11, `TooManyTags` 12). Decoding
 //! is strict: the bytes must be exactly one frame.
 //!
 //! The tags lie outside those of the named relay's frames ([`crate::relay_wire`], [`NAMED_RELAY_TAGS`]): a
@@ -136,6 +137,9 @@ const fn refusal_code(r: Refusal) -> u8 {
         Refusal::TooManyRooms => 7,
         Refusal::RoomFull => 8,
         Refusal::RateLimited => 9,
+        Refusal::ConnRoomLimit => 10,
+        Refusal::TagChange => 11,
+        Refusal::TooManyTags => 12,
     }
 }
 
@@ -150,6 +154,9 @@ const fn refusal_of(code: u8) -> Option<Refusal> {
         7 => Refusal::TooManyRooms,
         8 => Refusal::RoomFull,
         9 => Refusal::RateLimited,
+        10 => Refusal::ConnRoomLimit,
+        11 => Refusal::TagChange,
+        12 => Refusal::TooManyTags,
         _ => return None,
     })
 }

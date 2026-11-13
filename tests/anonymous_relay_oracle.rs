@@ -36,6 +36,8 @@ const LIMITS: Limits = Limits {
     max_members: 3,
     max_publishes_per_window: 100,
     window: 60,
+    max_rooms_per_conn: 2,
+    max_tags_per_room: 4,
 };
 
 fn bound(out: &[Out], conn: ConnId) -> bool {
@@ -215,7 +217,7 @@ fn the_limits_hold() {
 }
 
 #[test]
-fn publishes_per_sender_tag_are_limited_per_window() {
+fn publishes_per_connection_are_limited_per_window() {
     let mut r = AnonymousRelayCore::new(Limits {
         max_publishes_per_window: 2,
         ..LIMITS
@@ -234,7 +236,7 @@ fn publishes_per_sender_tag_are_limited_per_window() {
         refused(&r.publish(ALICE, EPOCH_1, 2, b"2".to_vec(), 69)),
         Some(Refusal::RateLimited)
     );
-    // the other tag has its own count
+    // another connection has its own count
     assert_eq!(
         forwards(&r.publish(BOB, EPOCH_1, 0, b"b".to_vec(), 69)).len(),
         1
@@ -244,6 +246,84 @@ fn publishes_per_sender_tag_are_limited_per_window() {
         forwards(&r.publish(ALICE, EPOCH_1, 2, b"2".to_vec(), 70)).len(),
         1
     );
+}
+
+#[test]
+fn a_bound_connection_cannot_change_its_tag() {
+    // switching tags would start a fresh sequence and rate state for the same connection
+    let mut r = two();
+    assert_eq!(
+        refused(&r.bind(ALICE, EPOCH_1, TOKEN_1, SenderTag::from_raw([0x7a; 16]), 1)),
+        Some(Refusal::TagChange)
+    );
+    // its tag is still its own
+    assert_eq!(
+        forwards(&r.publish(ALICE, EPOCH_1, 0, b"x".to_vec(), 1)),
+        vec![(BOB, TAG_A, 0, b"x".to_vec())]
+    );
+}
+
+#[test]
+fn tags_held_by_nobody_are_pruned_and_the_tag_count_is_bounded() {
+    // a member reconnecting under ever new tags (each from a new connection) cannot grow the room's state
+    // past max_tags_per_room: a tag nobody holds and with nothing held back makes way for a new one, and
+    // when every tag is held or holds payloads, a new tag is refused
+    let mut r = AnonymousRelayCore::new(Limits {
+        max_tags_per_room: 3,
+        max_members: 10,
+        ..LIMITS
+    });
+    r.bind(ALICE, EPOCH_1, TOKEN_1, TAG_A, 0);
+    for n in 0..20u8 {
+        let conn = ConnId::from_raw(100 + u64::from(n));
+        let tag = SenderTag::from_raw([0x80 + n; 16]);
+        assert!(
+            bound(&r.bind(conn, EPOCH_1, TOKEN_1, tag, u64::from(n)), conn),
+            "tag {n}"
+        );
+        r.publish(conn, EPOCH_1, 0, b"once".to_vec(), u64::from(n));
+        r.close(conn);
+    }
+    assert!(r.tags_held(EPOCH_1) <= 3, "{}", r.tags_held(EPOCH_1));
+    // every tag held or holding payloads: a new tag is refused
+    let mut r = AnonymousRelayCore::new(Limits {
+        max_tags_per_room: 2,
+        ..LIMITS
+    });
+    r.bind(ALICE, EPOCH_1, TOKEN_1, TAG_A, 0);
+    r.bind(BOB, EPOCH_1, TOKEN_1, TAG_B, 0);
+    assert_eq!(
+        refused(&r.bind(CAROL, EPOCH_1, TOKEN_1, TAG_C, 0)),
+        Some(Refusal::TooManyTags)
+    );
+}
+
+#[test]
+fn one_connection_cannot_hold_every_room() {
+    let mut r = AnonymousRelayCore::new(Limits {
+        max_rooms: 4,
+        max_rooms_per_conn: 2,
+        ..LIMITS
+    });
+    let flood = ConnId::from_raw(66);
+    let mut opened = 0;
+    for n in 0..10u8 {
+        let out = r.bind(
+            flood,
+            RoomAlias::from_raw([0xf0 ^ n; 32]),
+            RoomToken::from_raw([n; 32]),
+            SenderTag::from_raw([n; 16]),
+            0,
+        );
+        if bound(&out, flood) {
+            opened += 1;
+        } else {
+            assert_eq!(refused(&out), Some(Refusal::ConnRoomLimit));
+        }
+    }
+    assert_eq!(opened, 2);
+    // a real group still gets a room
+    assert!(bound(&r.bind(ALICE, EPOCH_1, TOKEN_1, TAG_A, 1), ALICE));
 }
 
 #[test]
