@@ -126,7 +126,7 @@ dependencies = [
 [[package]]
 name = "alice-db"
 version = "0.6.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-DB?branch=main#54697bf516a4240dbc029124e6651b572f1d2286"
+source = "git+https://github.com/ext-sakamoro/ALICE-DB?branch=main#1965a764841bb2fe076559ca5478ee197167a3d7"
 dependencies = [
  "alice-det-math",
  "alice-serial",
@@ -148,7 +148,7 @@ dependencies = [
 [[package]]
 name = "alice-det-math"
 version = "0.6.1"
-source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#95934099bfe6aa31296633ac35b023ed74878791"
+source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#00cdeb7a53a4f401ccacf9bfff751bcbe037e8b7"
 
 [[package]]
 name = "alice-identity"
@@ -179,7 +179,7 @@ dependencies = [
 [[package]]
 name = "alice-serial"
 version = "0.2.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Serial?rev=16b34ebcaf3a195fe6500defb4d1e6002cb3d09d#16b34ebcaf3a195fe6500defb4d1e6002cb3d09d"
+source = "git+https://github.com/ext-sakamoro/ALICE-Serial?branch=main#38f306c2a4fc49d2b89f61494a16f1d0b07dc609"
 
 [[package]]
 name = "alice-sign"
@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "alice-zip"
 version = "0.11.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Zip?branch=main#f1aa51dada9048753bfea387ce4c6f07863d6070"
+source = "git+https://github.com/ext-sakamoro/ALICE-Zip?branch=main#845dfd075dd389568e76d8e9507d4dbb74abcf6e"
 dependencies = [
  "alice-det-math",
  "flate2",
