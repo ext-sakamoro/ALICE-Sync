@@ -62,6 +62,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ### Changed
 - **Breaking** (依存): `alice-identity` 2.0 (証明書 version 3、端末の id は subject と device key から導くので `DeviceCert::issue` は id を取らない) README・doc の例と試験の `issue` の呼び出しから id を外した この crate の公開 API と識別子は変わらない
 - 依存: `alice-identity` / `alice-sign` / `alice-channel` を commit 指定から ALICE の各 repo の main (git、branch) に変えた 他の利用側も main から取るので、それらと一緒に build すると各 crate が 1 つずつ link される (版の固定は lock) 公開 API・識別子・通信の bytes は変わらない
+- CI (ALICE-Law G11): `.github/shared-files-pin` と `.github/g11-table-pin` を ALICE-Law ffcc3d5a に上げ、共有の `scripts/id_move_check.py` と試験を ALICE-Analytics main 6c5f098 の bytes (Cargo.lock の無い base は base の日付の main に固定して読む) に、`scripts/release_baseline.py` と試験を保留中の行の target にする (新しい id_move_check の試験が要る)
 - CI (ALICE-Law G11): `.github/shared-files-pin` と `.github/g11-table-pin` を ALICE-Law 5b19cf68 に上げ、計画済みの共有 file 9 本 (`scripts/gated_tests.py` / `scripts/id_move_check.py` / `scripts/release_baseline.py` / `scripts/semver_gate.py` と各試験、`scripts/test_libm_dependency_guard.py`) をその表の target の bytes にする
 - 依存: alice-channel の pin を 5829dde0 から 3ee365d6 に上げる (alice-crypto が main の ed065ad になる、封の bytes と識別子は変わらない)
 - CI (ALICE-Law G11): 共有の `scripts/gated_tests.py` と試験を ALICE-Law の表の計画した bytes で入れ、機能で gate された試験 file がどれも CI と preflight の `cargo test` で走ることを検査する (この repository の設定は `scripts/gated_tests.toml`)
