@@ -5,6 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- CI: 他の crate の `PREVIOUS_*_SEMANTICS_IDS` は一覧全体としてだけ使える (`contains` / `len` / `is_empty`、全体を回す iterator や for、引数として丸ごと渡す) とし、添字・slice のパターン・`.first` / `next` / `take` などを拒む `scripts/upstream_previous_ids_check.py` と試験を足した (ALICE-Edge と同じ中身の共有 file) 上流は major で一覧を空にする 走査した .rs が 0 件なら失敗 (ci.yml と preflight)
 - `crdt` を feature `async` の外に出す (CRDT は値と merge だけで非同期の部分を持たない) feature `crdt-db` と `crdt_store::{store_state, load_state}`: CRDT の状態を `persist` の形 (状態の識別子つき) で ALICE-DB の `BlobStorage` に書き、再起動の後に同じ decode で読み戻す `persist` に `u64` / `bool` / `Option` / `OrSet` / `LwwMap` の形 (正規の順、空の tag の値なし、読む時も順と空を拒む) `LwwMap` は複製される entry だけを書き、端末の replica と clock は書かない (同じ map の 2 端末が同じ bytes を書く)、読み戻した map は `LwwMap::with_replica` で書き手を決め、clock は持っている最新の時刻から続く 試験 `tests/crdt_persist_oracle.rs` (A が既読・B が削除を同時に行い、交換の後に両者の保存の bytes の digest が一致し、ALICE-DB 経由の再起動の後も一致、再起動の後の A の書き込みが B で勝つ)
 - 試験 `tests/relay_match_e2e.rs`: 2 人が中継を通して 1 試合 (証明書の device id が中継の peer、`match_sync` で入力遅延を合意、全 frame が `relay_wire` の bytes で往復、`RelayCore` が順序を揃えて転送、遅れた入力で両者が rollback、1 つの欠けを中継の再送要求で埋める、確定した frame の digest を交換) 両者の全 frame の状態が全入力既知の参照と一致し、digest の不一致の報告が 0
 - `match_sync::DigestLog::local` の doc: 入力が全て確定した frame の digest だけを記録して送る (予測の frame の digest は rollback の前に比べると不一致でない desync を報告する)

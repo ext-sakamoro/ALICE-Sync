@@ -711,6 +711,16 @@ step "ci.yml / clippy: API boundary (rustdoc JSON, every item decided)"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/api_boundary.py )
 )
 
+step "ci.yml / clippy: Upstream previous identifiers (test, then whole-list uses only)"
+(
+  gh_step ci.yml.clippy
+(
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  python3 scripts/test_upstream_previous_ids_check.py
+  python3 scripts/upstream_previous_ids_check.py
+)
+)
+
 step "ci.yml / clippy: Identifier moves (tests)"
 (
   gh_step ci.yml.clippy
