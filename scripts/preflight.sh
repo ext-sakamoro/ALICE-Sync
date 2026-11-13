@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev c16026cbe85a2c6d0b8c0f6333c47c5185837453
+# generator rev b52be62b5b6e407c90b9a7a01c1fb96e64844cf8
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -616,7 +616,6 @@ need cargo-deny "cargo install cargo-deny --locked"
 need cargo-hack "cargo install cargo-hack --locked"
 need cargo-machete "cargo install cargo-machete --locked"
 has_toolchain 1.88 || { echo "missing toolchain 1.88 (rustup toolchain install 1.88)" >&2; exit 1; }
-has_toolchain 686976e191b89faba57d3206551f0f330d8cb249 || { echo "missing toolchain 686976e191b89faba57d3206551f0f330d8cb249 (rustup toolchain install 686976e191b89faba57d3206551f0f330d8cb249)" >&2; exit 1; }
 command -v python >/dev/null 2>&1 || python() { python3 "$@"; }
 
 step "ci.yml / fmt: run"
