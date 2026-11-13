@@ -28,11 +28,11 @@ alice-codec = { version = "0.2.0", git = "https://github.com/ext-sakamoro/ALICE-
 alice-analytics = { git = "https://github.com/ext-sakamoro/ALICE-Analytics", branch = "main", version = "0.7", optional = true, default-features = false, features = ["std"] }
 mdns-sd = { version = "0.11", optional = true }
 # the secure transport: the channel (feature secure-transport)
-alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", branch = "main", features = ["async"], optional = true }
+alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", rev = "a3809b013c535ce9703dad8fe3329b33afae7508", features = ["async"], optional = true }
 # signed events (authorship) and the secure transport: the device certificates and the checkpoint
 # signatures; Ed25519 and SHA-256 from alice-sign (ALICE repositories taken by git from main, as their
 # other consumers take them, so a build with downstream consumers links one copy of each; the lock is the pin)
-alice-identity = { version = "2.0.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", branch = "main" }
+alice-identity = { version = "3.0", git = "https://github.com/ext-sakamoro/ALICE-Identity", rev = "8c3ef375d401c4f7ac321cbfc3d2518c99841473" }
 alice-sign = { version = "0.1", git = "https://github.com/ext-sakamoro/ALICE-Sign", branch = "main" }
 
 [dev-dependencies]
