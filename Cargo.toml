@@ -21,7 +21,7 @@ numpy = { version = "0.28", optional = true }
 # bridge 系 sibling は全て crates.io 公開済なので version 依存 (2026-09-17:
 # CI の manifest-only stub は version 0.1.0 固定で ^1 / ^0.5 等を満たせず 09-14 から red)
 alice-physics = { git = "https://github.com/ext-sakamoro/ALICE-Physics", branch = "main", version = "4", optional = true }
-alice-db = { version = "0.6.0", git = "https://github.com/ext-sakamoro/ALICE-DB", branch = "main", optional = true }
+alice-db = { version = "0.7", git = "https://github.com/ext-sakamoro/ALICE-DB", branch = "main", optional = true }
 alice-cache = { version = "0.2", git = "https://github.com/ext-sakamoro/ALICE-Cache", branch = "main", optional = true }
 alice-auth = { version = "0.6.0", git = "https://github.com/ext-sakamoro/ALICE-Auth", branch = "main", optional = true, default-features = false, features = ["std"] }
 alice-codec = { version = "0.2.0", git = "https://github.com/ext-sakamoro/ALICE-Codec", branch = "main", optional = true, default-features = false, features = ["std"] }

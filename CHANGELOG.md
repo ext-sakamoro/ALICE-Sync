@@ -48,6 +48,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 - `RollbackSession::add_remote_input`: 後の frame より遅れて届いた入力を捨てずに保存し、予測と違えばその frame へ rollback する 確定済みの frame の重複は rollback を返さない
 
 ### Changed
+- 依存: feature `crdt-db` / `telemetry` の alice-db を 0.7 に (展開は上限付き、blob の圧縮値に長さを記録、config は non_exhaustive) この crate は config を struct literal で作らないので code の変更なし lock: alice-db f045d85、alice-zip 6c5fc8b、alice-det-math 6269efc 識別子 (`SYNC_SEMANTICS_PINS` の golden) は不変
 - 手元の `scripts/preflight.sh` を生成し直す: SHA で固定した `dtolnay/rust-toolchain` の commit を toolchain と読んで `has_toolchain` で毎回止まっていた (toolchain は `rust-toolchain.toml` に従う)
 - 依存: alice-identity を 3.0 に、alice-channel を alice-identity 3.0 を取る commit に (どちらも branch main、lock は identity 3.0.0 / channel / crypto main) code の変更は無し
 - CI: feature `crdt-db` を `NATIVE_FEATURES` に足し、`tests/crdt_persist_oracle.rs` を CI と preflight の `cargo test` で走らせる (以前はどの command も feature を有効にせず、`scripts/gated_tests.py` が落ちていた) 検査の表: `CustomPayload` を `scripts/serialize_types.toml` と `scripts/api_boundary.toml` に分類し、bincode の除去で消えた `Event` / `Message` の `to_bytes` / `from_bytes` と中継の `PeerId` の旧い項目を `scripts/boundaries.toml` / `scripts/api_boundary.toml` から除く `scripts/preflight.sh` は生成し直した
