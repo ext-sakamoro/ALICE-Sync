@@ -274,6 +274,11 @@ fn tags_held_by_nobody_are_pruned_and_the_tag_count_is_bounded() {
         ..LIMITS
     });
     r.bind(ALICE, EPOCH_1, TOKEN_1, TAG_A, 0);
+    r.bind(BOB, EPOCH_1, TOKEN_1, TAG_B, 0);
+    assert_eq!(
+        forwards(&r.publish(ALICE, EPOCH_1, 0, b"a0".to_vec(), 0)).len(),
+        1
+    );
     for n in 0..20u8 {
         let conn = ConnId::from_raw(100 + u64::from(n));
         let tag = SenderTag::from_raw([0x80 + n; 16]);
@@ -285,6 +290,11 @@ fn tags_held_by_nobody_are_pruned_and_the_tag_count_is_bounded() {
         r.close(conn);
     }
     assert!(r.tags_held(EPOCH_1) <= 3, "{}", r.tags_held(EPOCH_1));
+    // the tags of connections still bound kept their sequence through the pruning
+    assert_eq!(
+        forwards(&r.publish(ALICE, EPOCH_1, 1, b"a1".to_vec(), 30)),
+        vec![(BOB, TAG_A, 1, b"a1".to_vec())]
+    );
     // every tag held or holding payloads: a new tag is refused
     let mut r = AnonymousRelayCore::new(Limits {
         max_tags_per_room: 2,
@@ -322,6 +332,17 @@ fn one_connection_cannot_hold_every_room() {
         }
     }
     assert_eq!(opened, 2);
+    // a room it is already in can be bound again at the cap
+    assert!(bound(
+        &r.bind(
+            flood,
+            RoomAlias::from_raw([0xf0; 32]),
+            RoomToken::from_raw([0; 32]),
+            SenderTag::from_raw([0; 16]),
+            1
+        ),
+        flood
+    ));
     // a real group still gets a room
     assert!(bound(&r.bind(ALICE, EPOCH_1, TOKEN_1, TAG_A, 1), ALICE));
 }
