@@ -12,14 +12,14 @@ use alice_sync::anonymous_relay_wire::{Frame, WireError, MAX_FRAME, NAMED_RELAY_
 use alice_sync::relay::{PeerId, RoomId};
 use alice_sync::relay_wire::{Frame as NamedFrame, WireError as NamedWireError};
 
-const ROOM: RoomAlias = RoomAlias([0x33; 32]);
+const ROOM: RoomAlias = RoomAlias::from_raw([0x33; 32]);
 
 fn all_frames() -> Vec<Frame> {
     vec![
         Frame::Bind {
             room: ROOM,
-            token: RoomToken([0x44; 32]),
-            tag: SenderTag([0x55; 16]),
+            token: RoomToken::from_raw([0x44; 32]),
+            tag: SenderTag::from_raw([0x55; 16]),
         },
         Frame::Bound { room: ROOM },
         Frame::Publish {
@@ -29,7 +29,7 @@ fn all_frames() -> Vec<Frame> {
         },
         Frame::Forward {
             room: ROOM,
-            from: SenderTag([0x66; 16]),
+            from: SenderTag::from_raw([0x66; 16]),
             seq: 8,
             payload: b"sealed too".to_vec(),
         },
@@ -50,7 +50,7 @@ fn all_frames() -> Vec<Frame> {
         Frame::Log {
             room: ROOM,
             first_index: 2,
-            items: vec![(2, SenderTag([0x77; 16]), 4, b"p".to_vec())],
+            items: vec![(2, SenderTag::from_raw([0x77; 16]), 4, b"p".to_vec())],
         },
         Frame::Close { room: ROOM },
     ]
@@ -91,7 +91,7 @@ fn decoding_is_strict() {
     assert_eq!(Frame::decode(&[]), Err(WireError::Truncated));
     // a payload length over the cap is refused before any byte of it is read
     let mut big = vec![bytes[0]];
-    big.extend_from_slice(&ROOM.0);
+    big.extend_from_slice(ROOM.as_ref());
     big.extend_from_slice(&0u64.to_be_bytes());
     big.extend_from_slice(&u32::try_from(MAX_FRAME + 1).unwrap().to_be_bytes());
     assert_eq!(Frame::decode(&big), Err(WireError::TooLarge));

@@ -1,4 +1,8 @@
-//! Room relay core: frames in, frames out, no I/O and no simulation.
+//! Named-member room relay core: frames in, frames out, no I/O and no simulation.
+//!
+//! **The relay sees membership**: a room is a list of device ids, and every frame names its sender's. Use it
+//! where the members are known to whoever runs the relay anyway (for example a game room). For groups whose
+//! members must stay unknown to the relay, use [`crate::anonymous_relay`], which learns no device ids.
 //!
 //! A room is a fixed set of members (device ids). A member publishes payloads numbered by its own
 //! sequence; the relay forwards each payload, byte for byte, to every other member. Per publisher,

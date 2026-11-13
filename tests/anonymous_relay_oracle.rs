@@ -17,16 +17,16 @@ use alice_sync::anonymous_relay::{
     AnonymousRelayCore, ConnId, Limits, Out, Refusal, RoomAlias, RoomToken, SenderTag,
 };
 
-const EPOCH_1: RoomAlias = RoomAlias([0x11; 32]);
-const EPOCH_2: RoomAlias = RoomAlias([0x22; 32]);
-const TOKEN_1: RoomToken = RoomToken([0xa1; 32]);
-const TOKEN_2: RoomToken = RoomToken([0xa2; 32]);
-const ALICE: ConnId = ConnId(1);
-const BOB: ConnId = ConnId(2);
-const CAROL: ConnId = ConnId(3);
-const TAG_A: SenderTag = SenderTag([0x0a; 16]);
-const TAG_B: SenderTag = SenderTag([0x0b; 16]);
-const TAG_C: SenderTag = SenderTag([0x0c; 16]);
+const EPOCH_1: RoomAlias = RoomAlias::from_raw([0x11; 32]);
+const EPOCH_2: RoomAlias = RoomAlias::from_raw([0x22; 32]);
+const TOKEN_1: RoomToken = RoomToken::from_raw([0xa1; 32]);
+const TOKEN_2: RoomToken = RoomToken::from_raw([0xa2; 32]);
+const ALICE: ConnId = ConnId::from_raw(1);
+const BOB: ConnId = ConnId::from_raw(2);
+const CAROL: ConnId = ConnId::from_raw(3);
+const TAG_A: SenderTag = SenderTag::from_raw([0x0a; 16]);
+const TAG_B: SenderTag = SenderTag::from_raw([0x0b; 16]);
+const TAG_C: SenderTag = SenderTag::from_raw([0x0c; 16]);
 
 const LIMITS: Limits = Limits {
     max_payload: 64,
@@ -79,7 +79,7 @@ fn members_of_one_room_meet_and_payloads_go_byte_for_byte_to_the_others() {
     assert!(bound(&r.bind(CAROL, EPOCH_1, TOKEN_1, TAG_C, 0), CAROL));
     let out = r.publish(ALICE, EPOCH_1, 0, b"sealed".to_vec(), 1);
     let mut f = forwards(&out);
-    f.sort_by_key(|x| x.0 .0);
+    f.sort_by_key(|x| x.0);
     assert_eq!(
         f,
         vec![
@@ -166,7 +166,7 @@ fn a_reconnect_with_the_same_tag_continues_the_sequence() {
     let mut r = two();
     r.publish(ALICE, EPOCH_1, 0, b"a0".to_vec(), 1);
     r.close(ALICE);
-    let again = ConnId(41);
+    let again = ConnId::from_raw(41);
     assert!(bound(&r.bind(again, EPOCH_1, TOKEN_1, TAG_A, 2), again));
     assert_eq!(
         forwards(&r.publish(again, EPOCH_1, 1, b"a1".to_vec(), 2)),
@@ -203,7 +203,13 @@ fn the_limits_hold() {
     // members per room
     assert!(bound(&r.bind(CAROL, EPOCH_1, TOKEN_1, TAG_C, 0), CAROL));
     assert_eq!(
-        refused(&r.bind(ConnId(4), EPOCH_1, TOKEN_1, SenderTag([4; 16]), 0)),
+        refused(&r.bind(
+            ConnId::from_raw(4),
+            EPOCH_1,
+            TOKEN_1,
+            SenderTag::from_raw([4; 16]),
+            0
+        )),
         Some(Refusal::RoomFull)
     );
 }
@@ -246,31 +252,31 @@ fn rooms_are_bounded_and_the_longest_idle_empty_room_makes_way() {
         max_rooms: 2,
         ..LIMITS
     });
-    let room = |n: u8| RoomAlias([n; 32]);
-    let token = |n: u8| RoomToken([n; 32]);
+    let room = |n: u8| RoomAlias::from_raw([n; 32]);
+    let token = |n: u8| RoomToken::from_raw([n; 32]);
     assert!(bound(
-        &r.bind(ConnId(1), room(1), token(1), TAG_A, 10),
-        ConnId(1)
+        &r.bind(ConnId::from_raw(1), room(1), token(1), TAG_A, 10),
+        ConnId::from_raw(1)
     ));
     assert!(bound(
-        &r.bind(ConnId(2), room(2), token(2), TAG_A, 20),
-        ConnId(2)
+        &r.bind(ConnId::from_raw(2), room(2), token(2), TAG_A, 20),
+        ConnId::from_raw(2)
     ));
     // both rooms have a member: no room makes way
     assert_eq!(
-        refused(&r.bind(ConnId(3), room(3), token(3), TAG_A, 30)),
+        refused(&r.bind(ConnId::from_raw(3), room(3), token(3), TAG_A, 30)),
         Some(Refusal::TooManyRooms)
     );
     // room 1 empties; it makes way for room 3
-    r.close(ConnId(1));
+    r.close(ConnId::from_raw(1));
     assert!(bound(
-        &r.bind(ConnId(3), room(3), token(3), TAG_A, 40),
-        ConnId(3)
+        &r.bind(ConnId::from_raw(3), room(3), token(3), TAG_A, 40),
+        ConnId::from_raw(3)
     ));
     // room 1 is gone, so its alias is free again (under whatever token comes first)
-    r.close(ConnId(2));
+    r.close(ConnId::from_raw(2));
     assert!(bound(
-        &r.bind(ConnId(4), room(1), token(9), TAG_A, 50),
-        ConnId(4)
+        &r.bind(ConnId::from_raw(4), room(1), token(9), TAG_A, 50),
+        ConnId::from_raw(4)
     ));
 }

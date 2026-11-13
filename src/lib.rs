@@ -145,6 +145,8 @@
 
 #[cfg(feature = "analytics")]
 pub mod analytics_bridge;
+pub mod anonymous_relay;
+pub mod anonymous_relay_wire;
 pub mod arena;
 #[cfg(feature = "auth")]
 pub mod auth_bridge;

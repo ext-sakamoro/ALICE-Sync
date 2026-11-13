@@ -1,5 +1,7 @@
-//! The relay's wire frames (what a client and the relay send each other inside the relay hop's
-//! encrypted channel; the relay reads these frames, never the payloads).
+//! The named-member relay's wire frames ([`crate::relay`], which sees membership: frames carry device ids;
+//! what a client and the relay send each other inside the relay hop's encrypted channel; the relay reads
+//! these frames, never the payloads). The anonymous relay's frames are [`crate::anonymous_relay_wire`]; their
+//! tags lie outside these, so each decoder refuses the other's frames.
 //!
 //! Layout: one tag byte (`Bind` 1, `Publish` 2, `Forward` 3, `Resend` 4, `Refused` 5, `LogRange` 6,
 //! `Log` 7, `Close` 8), then the fields in order. Integers are big-endian fixed width, a room is
