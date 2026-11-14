@@ -29,6 +29,21 @@
 //! the core follows them (a payload the old `max_payload` refused is now accepted, the log grows to the
 //! new `max_log`), and its snapshot stores the new limits.
 //!
+//! # In pieces
+//!
+//! A host that stores the snapshot over several steps in bounded pieces, while the core keeps running,
+//! uses [`AnonymousRelayCore::snapshot_writer`]: the [`SnapshotWriter`] takes the state at the moment it
+//! is made, and its pieces ([`SnapshotWriter::next_chunk`]), concatenated, are the bytes
+//! [`AnonymousRelayCore::snapshot`] returns at that moment, whatever the core does between the pieces.
+//! It does not copy the state: the rooms are shared with the core, which copies a room the writer still
+//! holds when it changes it (the room's fields, not its payloads, which stay shared). Besides the piece
+//! it appends, the writer holds per room one reference and at most [`SnapshotWriter::BUFFER`] bytes.
+//! [`AnonymousRelayCore::restore_from_pieces`] and [`AnonymousRelayCore::restore_from_pieces_with_limits`]
+//! read the pieces as they come, without joining them, and give the same core or the same
+//! [`SnapshotError`] as [`AnonymousRelayCore::restore`] and [`AnonymousRelayCore::restore_with_limits`]
+//! on the concatenated bytes, wherever the pieces are cut. The format has no length or checksum over
+//! the whole, so nothing is computed ahead of the first byte.
+//!
 //! # Clock
 //!
 //! The times in the state (each room's last activity, each rate window's start) are in the caller's
@@ -91,8 +106,13 @@
 //! [`Refusal::Exhausted`](super::Refusal::Exhausted), so a restored core cannot be made to overflow.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
-use super::{AnonymousRelayCore, ConnId, Limits, LogItem, Room, RoomAlias, RoomToken, SenderTag};
+use super::{AnonymousRelayCore, ConnId, Limits, Logged, Room, RoomAlias, RoomToken, SenderTag};
+
+mod stream;
+
+pub use stream::SnapshotWriter;
 
 /// The first four bytes of a snapshot.
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"ARLY";
@@ -196,7 +216,7 @@ impl AnonymousRelayCore {
                 log,
                 next_index,
                 last_active,
-            } = room;
+            } = &**room;
             out.extend_from_slice(alias.as_ref());
             out.extend_from_slice(token.as_ref());
             out.extend_from_slice(&last_active.to_be_bytes());
@@ -228,7 +248,7 @@ impl AnonymousRelayCore {
             }
             put_len(&mut out, log.len(), LOG)?;
             for item in log {
-                let LogItem {
+                let Logged {
                     index,
                     from,
                     seq,
@@ -252,13 +272,17 @@ impl AnonymousRelayCore {
     ///
     /// See [`SnapshotError`].
     pub fn restore(bytes: &[u8]) -> Result<Self, SnapshotError> {
-        read(bytes, None)
+        read(Reader(bytes), None)
     }
 }
 
-/// The core `bytes` holds, run and checked under `run_under`, or under the stored limits when `None`
-fn read(bytes: &[u8], run_under: Option<Limits>) -> Result<AnonymousRelayCore, SnapshotError> {
-    let mut r = Reader(bytes);
+/// The core the bytes of `r` hold, run and checked under `run_under`, or under the stored limits when
+/// `None`. The same decode for one slice ([`Reader`]) and for pieces ([`stream`]): every check is made
+/// in the same order on the same bytes, so the result (the core or the error) is the same
+fn read<S: Source>(
+    mut r: S,
+    run_under: Option<Limits>,
+) -> Result<AnonymousRelayCore, SnapshotError> {
     if r.take::<4>()? != SNAPSHOT_MAGIC {
         return Err(SnapshotError::BadMagic);
     }
@@ -299,9 +323,9 @@ fn read(bytes: &[u8], run_under: Option<Limits>) -> Result<AnonymousRelayCore, S
             return Err(SnapshotError::NotCanonical);
         }
         let room = read_room(&mut r, &limits, &mut rooms_of_conn)?;
-        rooms.insert(alias, room);
+        rooms.insert(alias, Arc::new(room));
     }
-    if !r.0.is_empty() {
+    if !r.at_end() {
         return Err(SnapshotError::Trailing);
     }
     Ok(AnonymousRelayCore { limits, rooms })
@@ -318,15 +342,15 @@ impl AnonymousRelayCore {
     ///
     /// See [`SnapshotError`].
     pub fn restore_with_limits(bytes: &[u8], limits: Limits) -> Result<Self, SnapshotError> {
-        read(bytes, Some(limits))
+        read(Reader(bytes), Some(limits))
     }
 }
 
 /// One room, checked for the invariants the core keeps. Every count is checked against its limit when
 /// it is read and every entry as it is read, so the work done is bounded by the limits and the bytes
 /// present, never by a count alone
-fn read_room(
-    r: &mut Reader<'_>,
+fn read_room<S: Source>(
+    r: &mut S,
     limits: &Limits,
     rooms_of_conn: &mut BTreeMap<ConnId, usize>,
 ) -> Result<Room, SnapshotError> {
@@ -377,7 +401,7 @@ fn read_room(
         add_tag(tag)?;
         next_seq.insert(tag, seq);
     }
-    let mut held: BTreeMap<SenderTag, BTreeMap<u64, Vec<u8>>> = BTreeMap::new();
+    let mut held: BTreeMap<SenderTag, BTreeMap<u64, Arc<Vec<u8>>>> = BTreeMap::new();
     for _ in 0..r.count(limits.max_tags_per_room)? {
         let tag = SenderTag::from_raw(r.take()?);
         if held.last_key_value().is_some_and(|(last, _)| *last >= tag) {
@@ -385,7 +409,7 @@ fn read_room(
         }
         add_tag(tag)?;
         let next = next_seq.get(&tag).copied().unwrap_or(0);
-        let mut payloads: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
+        let mut payloads: BTreeMap<u64, Arc<Vec<u8>>> = BTreeMap::new();
         for _ in 0..r.count(limits.max_pending)? {
             let seq = r.u64()?;
             let payload = r.bytes(limits.max_payload)?;
@@ -399,7 +423,7 @@ fn read_room(
             if seq <= next || seq == u64::MAX {
                 return Err(SnapshotError::Inconsistent);
             }
-            payloads.insert(seq, payload);
+            payloads.insert(seq, Arc::new(payload));
         }
         held.insert(tag, payloads);
     }
@@ -424,7 +448,7 @@ fn read_room(
     if should_keep > next_index.min(u64::try_from(limits.max_log).unwrap_or(u64::MAX)) {
         return Err(SnapshotError::Inconsistent);
     }
-    let mut log: VecDeque<LogItem> = VecDeque::new();
+    let mut log: VecDeque<Logged> = VecDeque::new();
     // per tag, the sequence number of its latest logged payload
     let mut last_logged: BTreeMap<SenderTag, u64> = BTreeMap::new();
     let first_index = next_index - should_keep;
@@ -443,11 +467,11 @@ fn read_room(
                 return Err(SnapshotError::Inconsistent);
             }
         }
-        log.push_back(LogItem {
+        log.push_back(Logged {
             index,
             from,
             seq,
-            payload,
+            payload: Arc::new(payload),
         });
     }
     // a tag the room tracks: its latest logged payload is the one just before its next number (the entry
@@ -525,17 +549,18 @@ fn put_bytes(out: &mut Vec<u8>, p: &[u8]) -> Result<(), SnapshotError> {
     Ok(())
 }
 
-struct Reader<'a>(&'a [u8]);
+/// Where a decode reads its bytes from: one slice ([`Reader`]) or a sequence of pieces
+/// ([`stream`]). The checks are written once, over this, so both give the same result for the same bytes
+trait Source {
+    /// The next `N` bytes, or [`SnapshotError::Truncated`] when fewer are left
+    fn take<const N: usize>(&mut self) -> Result<[u8; N], SnapshotError>;
 
-impl Reader<'_> {
-    fn take<const N: usize>(&mut self) -> Result<[u8; N], SnapshotError> {
-        let (head, rest) = self
-            .0
-            .split_first_chunk::<N>()
-            .ok_or(SnapshotError::Truncated)?;
-        self.0 = rest;
-        Ok(*head)
-    }
+    /// The next `n` bytes (`n` already checked against its limit), or [`SnapshotError::Truncated`] when
+    /// fewer are left; nothing is allocated beyond the bytes present
+    fn payload(&mut self, n: usize) -> Result<Vec<u8>, SnapshotError>;
+
+    /// No byte is left
+    fn at_end(&mut self) -> bool;
 
     fn u32(&mut self) -> Result<u32, SnapshotError> {
         Ok(u32::from_be_bytes(self.take()?))
@@ -565,12 +590,33 @@ impl Reader<'_> {
         if n > limit {
             return Err(SnapshotError::Inconsistent);
         }
+        self.payload(n)
+    }
+}
+
+struct Reader<'a>(&'a [u8]);
+
+impl Source for Reader<'_> {
+    fn take<const N: usize>(&mut self) -> Result<[u8; N], SnapshotError> {
+        let (head, rest) = self
+            .0
+            .split_first_chunk::<N>()
+            .ok_or(SnapshotError::Truncated)?;
+        self.0 = rest;
+        Ok(*head)
+    }
+
+    fn payload(&mut self, n: usize) -> Result<Vec<u8>, SnapshotError> {
         if n > self.0.len() {
             return Err(SnapshotError::Truncated);
         }
         let (p, rest) = self.0.split_at(n);
         self.0 = rest;
         Ok(p.to_vec())
+    }
+
+    fn at_end(&mut self) -> bool {
+        self.0.is_empty()
     }
 }
 

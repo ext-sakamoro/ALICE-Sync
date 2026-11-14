@@ -42,12 +42,13 @@
 //! wire's `Close` names a room and maps to [`AnonymousRelayCore::leave`].
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use crate::anonymous_relay_wire::Frame;
 
 pub mod snapshot;
 
-pub use snapshot::{SnapshotError, SNAPSHOT_MAGIC, SNAPSHOT_VERSION};
+pub use snapshot::{SnapshotError, SnapshotWriter, SNAPSHOT_MAGIC, SNAPSHOT_VERSION};
 
 fn hex(f: &mut core::fmt::Formatter<'_>, bytes: &[u8]) -> core::fmt::Result {
     for b in bytes {
@@ -328,23 +329,50 @@ impl LogRange {
     }
 }
 
+/// A payload the core keeps (held back or logged): shared and never changed once stored, so a copy of
+/// a room ([`Room`] is cloned on write while a [`SnapshotWriter`] still reads it) shares the bytes
+type Payload = Arc<Vec<u8>>;
+
+/// One logged payload as the core keeps it
+#[derive(Clone, Debug)]
+struct Logged {
+    index: u64,
+    from: SenderTag,
+    seq: u64,
+    payload: Payload,
+}
+
+impl Logged {
+    fn to_item(&self) -> LogItem {
+        LogItem {
+            index: self.index,
+            from: self.from,
+            seq: self.seq,
+            payload: self.payload.as_ref().clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Room {
     token: RoomToken,
     members: BTreeMap<ConnId, SenderTag>,
     next_seq: BTreeMap<SenderTag, u64>,
-    held: BTreeMap<SenderTag, BTreeMap<u64, Vec<u8>>>,
+    held: BTreeMap<SenderTag, BTreeMap<u64, Payload>>,
     rate: BTreeMap<SenderTag, (u64, u32)>,
-    log: VecDeque<LogItem>,
+    log: VecDeque<Logged>,
     next_index: u64,
     last_active: u64,
 }
 
 /// The anonymous relay's state: its limits and the open rooms.
+///
+/// Each room is shared and copied on write (its payloads stay shared), so a
+/// [`SnapshotWriter`] keeps the state of the moment it was made while the core goes on.
 #[derive(Clone, Debug)]
 pub struct AnonymousRelayCore {
     limits: Limits,
-    rooms: BTreeMap<RoomAlias, Room>,
+    rooms: BTreeMap<RoomAlias, Arc<Room>>,
 }
 
 /// Whether two tokens are equal, in time that does not depend on where they differ
@@ -402,7 +430,7 @@ impl AnonymousRelayCore {
             }
             self.rooms.insert(
                 room,
-                Room {
+                Arc::new(Room {
                     token,
                     members: BTreeMap::new(),
                     next_seq: BTreeMap::new(),
@@ -411,26 +439,28 @@ impl AnonymousRelayCore {
                     log: VecDeque::new(),
                     next_index: 0,
                     last_active: now,
-                },
+                }),
             );
         }
         let max_members = self.limits.max_members;
         let max_tags = self.limits.max_tags_per_room;
-        let Some(r) = self.rooms.get_mut(&room) else {
+        let Some(shared) = self.rooms.get_mut(&room) else {
             return refuse(Refusal::NoRoom);
         };
-        if !same(&r.token, &token) {
+        if !same(&shared.token, &token) {
             return refuse(Refusal::BadToken);
         }
-        if r.members.get(&conn).is_some_and(|held| *held != tag) {
+        if shared.members.get(&conn).is_some_and(|held| *held != tag) {
             return refuse(Refusal::TagChange);
         }
-        if r.members.iter().any(|(c, t)| *t == tag && *c != conn) {
+        if shared.members.iter().any(|(c, t)| *t == tag && *c != conn) {
             return refuse(Refusal::TagInUse);
         }
-        if !r.members.contains_key(&conn) && r.members.len() >= max_members {
+        if !shared.members.contains_key(&conn) && shared.members.len() >= max_members {
             return refuse(Refusal::RoomFull);
         }
+        // the checks above only read; the room is copied here if a writer still holds it
+        let r = Arc::make_mut(shared);
         if !r.knows(tag) && r.tag_count() >= max_tags {
             r.prune_tags();
             if r.tag_count() >= max_tags {
@@ -470,10 +500,10 @@ impl AnonymousRelayCore {
             }]
         };
         let limits = self.limits;
-        let Some(r) = self.rooms.get_mut(&room) else {
+        let Some(shared) = self.rooms.get_mut(&room) else {
             return refuse(Refusal::NoRoom);
         };
-        let Some(&from) = r.members.get(&conn) else {
+        let Some(&from) = shared.members.get(&conn) else {
             return refuse(Refusal::NotBound);
         };
         if payload.len() > limits.max_payload {
@@ -484,10 +514,17 @@ impl AnonymousRelayCore {
         if seq == u64::MAX {
             return refuse(Refusal::Exhausted);
         }
-        let next = r.next_seq.get(&from).copied().unwrap_or(0);
-        if seq == next && r.next_index.checked_add(r.run_from(from, seq)).is_none() {
+        let next = shared.next_seq.get(&from).copied().unwrap_or(0);
+        if seq == next
+            && shared
+                .next_index
+                .checked_add(shared.run_from(from, seq))
+                .is_none()
+        {
             return refuse(Refusal::Exhausted);
         }
+        // the checks above only read; the room is copied here if a writer still holds it
+        let r = Arc::make_mut(shared);
         let window = limits.window.max(1);
         let slot = r.rate.entry(from).or_insert((now, 0));
         if now >= slot.0.saturating_add(window) {
@@ -509,7 +546,7 @@ impl AnonymousRelayCore {
             if held.len() >= limits.max_pending {
                 return refuse(Refusal::TooFarAhead);
             }
-            held.insert(seq, payload);
+            held.insert(seq, Arc::new(payload));
             return vec![Out::Resend {
                 to: conn,
                 room,
@@ -521,7 +558,7 @@ impl AnonymousRelayCore {
         // index within u64; seq is below u64::MAX and so are held numbers, so `s + 1` does not wrap)
         let mut out = Vec::new();
         let mut s = seq;
-        let mut p = payload;
+        let mut p = Arc::new(payload);
         loop {
             r.forward(limits.max_log, conn, from, room, s, p, &mut out);
             let Some(after) = s.checked_add(1) else {
@@ -558,7 +595,7 @@ impl AnonymousRelayCore {
             .log
             .iter()
             .filter(|i| i.index >= from && i.index < to)
-            .cloned()
+            .map(Logged::to_item)
             .collect();
         Ok(LogRange { first_index, items })
     }
@@ -611,7 +648,7 @@ impl AnonymousRelayCore {
                 _ if items.is_empty() => return Err(Refusal::TooLarge),
                 _ => break,
             }
-            items.push(i.clone());
+            items.push(i.to_item());
         }
         Ok(LogRange { first_index, items })
     }
@@ -630,7 +667,10 @@ impl AnonymousRelayCore {
     /// Unbind connection `conn` from every room (its transport closed); the rooms and their logs stay.
     pub fn close(&mut self, conn: ConnId) {
         for r in self.rooms.values_mut() {
-            r.members.remove(&conn);
+            // only a room the connection is in changes (and is copied if a writer holds it)
+            if r.members.contains_key(&conn) {
+                Arc::make_mut(r).members.remove(&conn);
+            }
         }
     }
 
@@ -639,7 +679,9 @@ impl AnonymousRelayCore {
     /// the room and its log stay. Nothing happens when `conn` is not bound to `room`.
     pub fn leave(&mut self, conn: ConnId, room: RoomAlias) {
         if let Some(r) = self.rooms.get_mut(&room) {
-            r.members.remove(&conn);
+            if r.members.contains_key(&conn) {
+                Arc::make_mut(r).members.remove(&conn);
+            }
         }
     }
 
@@ -733,7 +775,7 @@ impl Room {
         from: SenderTag,
         room: RoomAlias,
         seq: u64,
-        payload: Vec<u8>,
+        payload: Payload,
         out: &mut Vec<Out>,
     ) {
         for &to in self.members.keys() {
@@ -743,11 +785,11 @@ impl Room {
                     room,
                     from,
                     seq,
-                    payload: payload.clone(),
+                    payload: payload.as_ref().clone(),
                 });
             }
         }
-        self.log.push_back(LogItem {
+        self.log.push_back(Logged {
             index: self.next_index,
             from,
             seq,

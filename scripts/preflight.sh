@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev 5ece2bc3121e9bf65aa0bb39b5ae63c962b914db
+# generator rev a435b0d5d7655af2500185f73eb99726c67cee8e
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -1091,13 +1091,13 @@ fi
 step "ci.yml / test: Test (default = std)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,authorship=18,persist_state_id=10,input_wire_legacy=2 -- cargo test )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,authorship=18,persist_state_id=10,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1 -- cargo test )
 )
 
 step "ci.yml / test: Test (all native features)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2 -- cargo test --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1 -- cargo test --features "$NATIVE_FEATURES" )
 )
 
 step "ci.yml / test: Analytic oracle (async + physics + codec)"
