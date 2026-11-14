@@ -27,8 +27,17 @@
 //!   first: members that then get `BadToken` move to their next epoch's room.
 //!
 //! All maps are ordered, so the output for a given input sequence is the same on every build.
+//!
+//! The whole state can be written out and read back ([`AnonymousRelayCore::snapshot`],
+//! [`AnonymousRelayCore::restore`]), so a host that may evict and restart the process holding the core
+//! keeps every room across the restart; see [`snapshot`] for the format and what the host must do about
+//! connections.
 
 use std::collections::{BTreeMap, VecDeque};
+
+pub mod snapshot;
+
+pub use snapshot::{SnapshotError, SNAPSHOT_MAGIC, SNAPSHOT_VERSION};
 
 fn hex(f: &mut core::fmt::Formatter<'_>, bytes: &[u8]) -> core::fmt::Result {
     for b in bytes {
