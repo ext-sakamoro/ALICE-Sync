@@ -48,7 +48,9 @@ use crate::anonymous_relay_wire::Frame;
 
 pub mod snapshot;
 
-pub use snapshot::{SnapshotError, SnapshotWriter, SNAPSHOT_MAGIC, SNAPSHOT_VERSION};
+pub use snapshot::{
+    SnapshotError, SnapshotReader, SnapshotWriter, SNAPSHOT_MAGIC, SNAPSHOT_VERSION,
+};
 
 fn hex(f: &mut core::fmt::Formatter<'_>, bytes: &[u8]) -> core::fmt::Result {
     for b in bytes {

@@ -170,6 +170,7 @@ features = "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ff
 "fn::SessionBuilder::local_player" = "local: a small integer id or count typed u8 (player, local player, peer), not bytes"
 "fn::SessionBuilder::name" = "local: a text label or key chosen by the caller (topic, name, metadata), used as a name, never parsed into a value"
 "fn::SessionBuilder::player_count" = "local: a small integer id or count typed u8 (player, local player, peer), not bytes"
+"fn::SnapshotReader::feed" = "local: reads back, one piece at a time, a snapshot of the anonymous relay this crate wrote, with the checks and results of restore and restore_with_limits: rooms, tokens, tags, sequence numbers and sealed payloads passed through unopened, no Law-bearing value"
 "fn::SnapshotWriter::next_chunk" = "local: appends the next bounded piece of a snapshot of the anonymous relay this crate wrote (rooms, tokens, tags, sequence numbers, sealed payloads passed through unopened), no Law-bearing value"
 "fn::SyncSession::crdt_get" = "local: opaque caller bytes stored and returned unchanged; this crate never decodes them into a value, so their meaning is the caller's"
 "fn::SyncSession::crdt_merge" = "local: merges an in-memory LwwMap of opaque byte values by Lamport timestamp, no Law-bearing value"

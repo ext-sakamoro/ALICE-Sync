@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use super::super::{AnonymousRelayCore, ConnId, Limits, Room, RoomAlias, SenderTag};
-use super::{put_usize, read, SnapshotError, Source, SNAPSHOT_MAGIC, SNAPSHOT_VERSION};
+use super::{put_usize, SnapshotError, SNAPSHOT_MAGIC, SNAPSHOT_VERSION};
 
 /// Where the writer is in the format
 #[derive(Clone, Copy, Debug)]
@@ -296,93 +296,6 @@ const fn after<K>(k: K) -> (std::ops::Bound<K>, std::ops::Bound<K>) {
     (std::ops::Bound::Excluded(k), std::ops::Bound::Unbounded)
 }
 
-/// The pieces of a snapshot as a [`Source`]: one piece is held at a time
-struct Pieces<I: Iterator> {
-    pieces: I,
-    cur: Option<I::Item>,
-    at: usize,
-}
-
-impl<I> Pieces<I>
-where
-    I: Iterator,
-    I::Item: AsRef<[u8]>,
-{
-    /// The unread bytes of the current piece, moving to the next non-empty piece when it is used up;
-    /// empty when no byte is left
-    fn rest(&mut self) -> &[u8] {
-        loop {
-            let len = self.cur.as_ref().map_or(0, |p| p.as_ref().len());
-            if self.at < len {
-                break;
-            }
-            match self.pieces.next() {
-                Some(p) => {
-                    self.cur = Some(p);
-                    self.at = 0;
-                }
-                None => {
-                    self.cur = None;
-                    self.at = 0;
-                    break;
-                }
-            }
-        }
-        self.cur
-            .as_ref()
-            .map_or(&[][..], |p| &p.as_ref()[self.at..])
-    }
-
-    /// Fill `dst` from the pieces, or [`SnapshotError::Truncated`] when they end first
-    fn fill(&mut self, mut dst: &mut [u8]) -> Result<(), SnapshotError> {
-        while !dst.is_empty() {
-            let rest = self.rest();
-            if rest.is_empty() {
-                return Err(SnapshotError::Truncated);
-            }
-            let n = rest.len().min(dst.len());
-            let (head, tail) = dst.split_at_mut(n);
-            head.copy_from_slice(&rest[..n]);
-            self.at += n;
-            dst = tail;
-        }
-        Ok(())
-    }
-}
-
-impl<I> Source for Pieces<I>
-where
-    I: Iterator,
-    I::Item: AsRef<[u8]>,
-{
-    fn take<const N: usize>(&mut self) -> Result<[u8; N], SnapshotError> {
-        let mut out = [0u8; N];
-        self.fill(&mut out)?;
-        Ok(out)
-    }
-
-    /// Grown as the bytes arrive (never reserved for the whole length up front), then trimmed to the
-    /// length
-    fn payload(&mut self, n: usize) -> Result<Vec<u8>, SnapshotError> {
-        let mut p = Vec::new();
-        while p.len() < n {
-            let rest = self.rest();
-            if rest.is_empty() {
-                return Err(SnapshotError::Truncated);
-            }
-            let k = rest.len().min(n - p.len());
-            p.extend_from_slice(&rest[..k]);
-            self.at += k;
-        }
-        p.shrink_to_fit();
-        Ok(p)
-    }
-
-    fn at_end(&mut self) -> bool {
-        self.rest().is_empty()
-    }
-}
-
 impl AnonymousRelayCore {
     /// A writer of the state as it is now, in pieces (see [`SnapshotWriter`]): its pieces, concatenated,
     /// are the bytes [`snapshot`](Self::snapshot) returns now, whatever the core does afterwards.
@@ -411,14 +324,7 @@ impl AnonymousRelayCore {
         I: IntoIterator,
         I::Item: AsRef<[u8]>,
     {
-        read(
-            Pieces {
-                pieces: pieces.into_iter(),
-                cur: None,
-                at: 0,
-            },
-            None,
-        )
+        Self::read_pieces(pieces, None)
     }
 
     /// [`restore_with_limits`](Self::restore_with_limits) from a snapshot given in pieces, as
@@ -435,13 +341,6 @@ impl AnonymousRelayCore {
         I: IntoIterator,
         I::Item: AsRef<[u8]>,
     {
-        read(
-            Pieces {
-                pieces: pieces.into_iter(),
-                cur: None,
-                at: 0,
-            },
-            Some(limits),
-        )
+        Self::read_pieces(pieces, Some(limits))
     }
 }
