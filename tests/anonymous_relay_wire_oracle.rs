@@ -74,6 +74,7 @@ fn every_frame_decodes_to_itself() {
         Refusal::ConnRoomLimit,
         Refusal::TagChange,
         Refusal::TooManyTags,
+        Refusal::Exhausted,
     ] {
         let f = Frame::Refused { room: ROOM, reason };
         assert_eq!(Frame::decode(&f.encode()), Ok(f));

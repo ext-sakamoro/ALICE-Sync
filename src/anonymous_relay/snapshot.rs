@@ -53,16 +53,31 @@
 //!
 //! # Reading
 //!
-//! [`AnonymousRelayCore::restore`] takes exactly one snapshot: other magic, another version, bytes that
-//! end early, bytes after the end, keys out of order or repeated, or a state the core could not have
-//! reached (a log whose indices do not run up to the next index or that does not hold the last
-//! `min(next index, max_log)` payloads, two connections of a room on one tag, a
-//! held-back payload at or before its tag's next sequence number, a limit that does not fit this
-//! platform's `usize`) is a [`SnapshotError`], never a panic. Nothing is allocated for a count or a
-//! length before the bytes it names are there, so a corrupted count cannot make a decode reserve more
-//! space than the input holds.
+//! [`AnonymousRelayCore::restore`] takes exactly one snapshot. These are a [`SnapshotError`], never a
+//! panic: other magic, another version, bytes that end early, bytes after the end, keys out of order or
+//! repeated, a limit that does not fit this platform's `usize`, and any state the core cannot reach:
+//!
+//! - a count over its limit (rooms over `max_rooms`, members over `max_members`, held-back payloads of a
+//!   tag over `max_pending`, the tags a room keeps state for over `max_tags_per_room`, a connection in
+//!   more rooms than `max_rooms_per_conn`), a payload over `max_payload`, a rate window counting more
+//!   than `max_publishes_per_window`;
+//! - two connections of a room on one tag; a held-back payload at or before its tag's next sequence
+//!   number, or at `u64::MAX` (a publish of that number is refused);
+//! - a log that does not hold exactly the last `min(next index, max_log)` payloads with indices running
+//!   up to the next index; within one tag, a logged payload that neither follows the tag's previous one
+//!   (`seq + 1`) nor starts its sequence again at 0 (a tag that made way and came back); for a tag the
+//!   room tracks, a latest logged payload other than the one just before its next sequence number.
+//!
+//! A count is checked against its limit when it is read and each entry as it is read, so the work a
+//! decode does is bounded by the limits and the bytes present, never by a count alone. Nothing is
+//! allocated for a count or a length before the bytes it names are there.
+//!
+//! The counters at the top of their range are states the core reaches and handles: a tag whose next
+//! sequence number is `u64::MAX` has used every number, and a room whose next log index is `u64::MAX`
+//! has forwarded all it can; a publish that would need a number past either is refused with
+//! [`Refusal::Exhausted`](super::Refusal::Exhausted), so a restored core cannot be made to overflow.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{AnonymousRelayCore, ConnId, Limits, LogItem, Room, RoomAlias, RoomToken, SenderTag};
 
@@ -254,7 +269,8 @@ impl AnonymousRelayCore {
         };
         let mut rooms = BTreeMap::new();
         let mut rooms_of_conn: BTreeMap<ConnId, usize> = BTreeMap::new();
-        for _ in 0..r.u32()? {
+        let room_count = r.count(limits.max_rooms)?;
+        for _ in 0..room_count {
             let alias = RoomAlias::from_raw(r.take()?);
             if rooms
                 .last_key_value()
@@ -262,33 +278,39 @@ impl AnonymousRelayCore {
             {
                 return Err(SnapshotError::NotCanonical);
             }
-            let room = read_room(&mut r, &limits)?;
-            for conn in room.members.keys() {
-                let n = rooms_of_conn.entry(*conn).or_insert(0);
-                *n += 1;
-                if *n > limits.max_rooms_per_conn {
-                    return Err(SnapshotError::Inconsistent);
-                }
-            }
+            let room = read_room(&mut r, &limits, &mut rooms_of_conn)?;
             rooms.insert(alias, room);
         }
         if !r.0.is_empty() {
             return Err(SnapshotError::Trailing);
         }
-        if rooms.len() > limits.max_rooms {
-            return Err(SnapshotError::Inconsistent);
-        }
         Ok(Self { limits, rooms })
     }
 }
 
-/// One room, checked for the invariants the core keeps
-fn read_room(r: &mut Reader<'_>, limits: &Limits) -> Result<Room, SnapshotError> {
+/// One room, checked for the invariants the core keeps. Every count is checked against its limit when
+/// it is read and every entry as it is read, so the work done is bounded by the limits and the bytes
+/// present, never by a count alone
+fn read_room(
+    r: &mut Reader<'_>,
+    limits: &Limits,
+    rooms_of_conn: &mut BTreeMap<ConnId, usize>,
+) -> Result<Room, SnapshotError> {
     let token = RoomToken::from_raw(r.take()?);
     let last_active = r.u64()?;
     let next_index = r.u64()?;
+    // the tags the room keeps state for, added to as entries are read
+    let mut tags: BTreeSet<SenderTag> = BTreeSet::new();
+    let mut add_tag = |tag: SenderTag| -> Result<(), SnapshotError> {
+        tags.insert(tag);
+        if tags.len() > limits.max_tags_per_room {
+            return Err(SnapshotError::Inconsistent);
+        }
+        Ok(())
+    };
     let mut members: BTreeMap<ConnId, SenderTag> = BTreeMap::new();
-    for _ in 0..r.u32()? {
+    let mut member_tags: BTreeSet<SenderTag> = BTreeSet::new();
+    for _ in 0..r.count(limits.max_members.min(limits.max_tags_per_room))? {
         let conn = ConnId::from_raw(r.u64()?);
         let tag = SenderTag::from_raw(r.take()?);
         if members
@@ -297,13 +319,19 @@ fn read_room(r: &mut Reader<'_>, limits: &Limits) -> Result<Room, SnapshotError>
         {
             return Err(SnapshotError::NotCanonical);
         }
-        if members.values().any(|t| *t == tag) {
+        if !member_tags.insert(tag) {
+            return Err(SnapshotError::Inconsistent);
+        }
+        add_tag(tag)?;
+        let in_rooms = rooms_of_conn.entry(conn).or_insert(0);
+        *in_rooms += 1;
+        if *in_rooms > limits.max_rooms_per_conn {
             return Err(SnapshotError::Inconsistent);
         }
         members.insert(conn, tag);
     }
     let mut next_seq: BTreeMap<SenderTag, u64> = BTreeMap::new();
-    for _ in 0..r.u32()? {
+    for _ in 0..r.count(limits.max_tags_per_room)? {
         let tag = SenderTag::from_raw(r.take()?);
         let seq = r.u64()?;
         if next_seq
@@ -312,57 +340,72 @@ fn read_room(r: &mut Reader<'_>, limits: &Limits) -> Result<Room, SnapshotError>
         {
             return Err(SnapshotError::NotCanonical);
         }
+        add_tag(tag)?;
         next_seq.insert(tag, seq);
     }
     let mut held: BTreeMap<SenderTag, BTreeMap<u64, Vec<u8>>> = BTreeMap::new();
-    for _ in 0..r.u32()? {
+    for _ in 0..r.count(limits.max_tags_per_room)? {
         let tag = SenderTag::from_raw(r.take()?);
         if held.last_key_value().is_some_and(|(last, _)| *last >= tag) {
             return Err(SnapshotError::NotCanonical);
         }
+        add_tag(tag)?;
         let next = next_seq.get(&tag).copied().unwrap_or(0);
         let mut payloads: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
-        for _ in 0..r.u32()? {
+        for _ in 0..r.count(limits.max_pending)? {
             let seq = r.u64()?;
-            let payload = r.bytes()?;
+            let payload = r.bytes(limits.max_payload)?;
             if payloads
                 .last_key_value()
                 .is_some_and(|(last, _)| *last >= seq)
             {
                 return Err(SnapshotError::NotCanonical);
             }
-            if seq <= next || payload.len() > limits.max_payload {
+            // held numbers lie after the next expected one and below u64::MAX (refused on publish)
+            if seq <= next || seq == u64::MAX {
                 return Err(SnapshotError::Inconsistent);
             }
             payloads.insert(seq, payload);
         }
-        if payloads.len() > limits.max_pending {
-            return Err(SnapshotError::Inconsistent);
-        }
         held.insert(tag, payloads);
     }
     let mut rate: BTreeMap<SenderTag, (u64, u32)> = BTreeMap::new();
-    for _ in 0..r.u32()? {
+    for _ in 0..r.count(limits.max_tags_per_room)? {
         let tag = SenderTag::from_raw(r.take()?);
         let start = r.u64()?;
         let count = r.u32()?;
         if rate.last_key_value().is_some_and(|(last, _)| *last >= tag) {
             return Err(SnapshotError::NotCanonical);
         }
+        if count > limits.max_publishes_per_window {
+            return Err(SnapshotError::Inconsistent);
+        }
+        add_tag(tag)?;
         rate.insert(tag, (start, count));
     }
+    // the log holds exactly the last min(next index, max_log) payloads, ending just before the next index
+    let should_keep = next_index.min(u64::try_from(limits.max_log).unwrap_or(u64::MAX));
+    if u64::from(r.u32()?) != should_keep {
+        return Err(SnapshotError::Inconsistent);
+    }
     let mut log: VecDeque<LogItem> = VecDeque::new();
-    for _ in 0..r.u32()? {
+    // per tag, the sequence number of its latest logged payload
+    let mut last_logged: BTreeMap<SenderTag, u64> = BTreeMap::new();
+    let first_index = next_index - should_keep;
+    for k in 0..should_keep {
         let index = r.u64()?;
         let from = SenderTag::from_raw(r.take()?);
         let seq = r.u64()?;
-        let payload = r.bytes()?;
-        // indices run one by one
-        if log
-            .back()
-            .is_some_and(|last| last.index.checked_add(1) != Some(index))
-        {
+        let payload = r.bytes(limits.max_payload)?;
+        if index != first_index + k {
             return Err(SnapshotError::Inconsistent);
+        }
+        // within a tag, a payload follows the previous one, or the sequence started again at 0 (the
+        // tag made way and came back)
+        if let Some(prev) = last_logged.insert(from, seq) {
+            if seq != 0 && prev.checked_add(1) != Some(seq) {
+                return Err(SnapshotError::Inconsistent);
+            }
         }
         log.push_back(LogItem {
             index,
@@ -371,16 +414,16 @@ fn read_room(r: &mut Reader<'_>, limits: &Limits) -> Result<Room, SnapshotError>
             payload,
         });
     }
-    // the log ends just before the next index and holds the last min(next index, max_log) items
-    let ends_right = log
-        .back()
-        .is_none_or(|last| last.index.checked_add(1) == Some(next_index));
-    let kept = u64::try_from(log.len()).unwrap_or(u64::MAX);
-    let should_keep = next_index.min(u64::try_from(limits.max_log).unwrap_or(u64::MAX));
-    if !ends_right || kept != should_keep || members.len() > limits.max_members {
-        return Err(SnapshotError::Inconsistent);
+    // a tag the room tracks: its latest logged payload is the one just before its next number (the entry
+    // and that payload are made by the same forward, and the log drops oldest first)
+    for (tag, next) in &next_seq {
+        if let Some(last) = last_logged.get(tag) {
+            if last.checked_add(1) != Some(*next) {
+                return Err(SnapshotError::Inconsistent);
+            }
+        }
     }
-    let room = Room {
+    Ok(Room {
         token,
         members,
         next_seq,
@@ -389,11 +432,7 @@ fn read_room(r: &mut Reader<'_>, limits: &Limits) -> Result<Room, SnapshotError>
         log,
         next_index,
         last_active,
-    };
-    if room.tag_count() > limits.max_tags_per_room {
-        return Err(SnapshotError::Inconsistent);
-    }
-    Ok(room)
+    })
 }
 
 fn put_usize(out: &mut Vec<u8>, v: usize) {
@@ -474,10 +513,22 @@ impl Reader<'_> {
         usize::try_from(self.u64()?).map_err(|_| SnapshotError::LimitTooLarge)
     }
 
-    /// A length-prefixed byte string; the length is checked against the bytes present before anything
-    /// is allocated
-    fn bytes(&mut self) -> Result<Vec<u8>, SnapshotError> {
-        let n = usize::try_from(self.u32()?).map_err(|_| SnapshotError::Truncated)?;
+    /// A count, refused as soon as it is read when it is over `limit`
+    fn count(&mut self, limit: usize) -> Result<u32, SnapshotError> {
+        let n = self.u32()?;
+        if usize::try_from(n).map_or(true, |n| n > limit) {
+            return Err(SnapshotError::Inconsistent);
+        }
+        Ok(n)
+    }
+
+    /// A length-prefixed byte string of at most `limit` bytes; the length is checked against the limit
+    /// and the bytes present before anything is allocated
+    fn bytes(&mut self, limit: usize) -> Result<Vec<u8>, SnapshotError> {
+        let n = usize::try_from(self.u32()?).map_err(|_| SnapshotError::Inconsistent)?;
+        if n > limit {
+            return Err(SnapshotError::Inconsistent);
+        }
         if n > self.0.len() {
             return Err(SnapshotError::Truncated);
         }

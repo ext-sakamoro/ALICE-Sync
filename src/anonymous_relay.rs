@@ -14,7 +14,9 @@
 //! - A publisher is known by a [`SenderTag`] (16 bytes) it chose for the room, for example at random per
 //!   epoch, and keeps across reconnects within the room. Per tag, payloads leave in sequence order: a payload
 //!   ahead of the next expected one is held back (up to [`Limits::max_pending`]) and the publisher is asked
-//!   to resend the gap; a duplicate is dropped. A tag held by another bound connection is refused. Payloads
+//!   to resend the gap; a duplicate is dropped. Sequence numbers run
+//!   from 0 to `u64::MAX - 1`; a publish past that, or past a room's last log index, is refused as
+//!   [`Refusal::Exhausted`]. A tag held by another bound connection is refused. Payloads
 //!   are opaque (sealed end to end by the members): a member that takes another member's tag after it
 //!   leaves can only disorder that tag's sequence, never forge a payload.
 //! - Forwarded payloads are kept in a per-room log, capped by count, for a member that reconnects.
@@ -196,6 +198,9 @@ pub enum Refusal {
     TagChange,
     /// The room keeps [`Limits::max_tags_per_room`] tags and none can make way.
     TooManyTags,
+    /// The publish would need a sequence number or a log index past `u64::MAX`: a tag's last sequence
+    /// number is `u64::MAX - 1`, and a room forwards at most `u64::MAX` payloads.
+    Exhausted,
 }
 
 /// A frame the relay sends.
@@ -416,6 +421,15 @@ impl AnonymousRelayCore {
         if payload.len() > limits.max_payload {
             return refuse(Refusal::TooLarge);
         }
+        // the sequence space is 0..=u64::MAX - 1 and a room forwards at most u64::MAX payloads: refuse,
+        // before anything changes, a publish that would need a number past either
+        if seq == u64::MAX {
+            return refuse(Refusal::Exhausted);
+        }
+        let next = r.next_seq.get(&from).copied().unwrap_or(0);
+        if seq == next && r.next_index.checked_add(r.run_from(from, seq)).is_none() {
+            return refuse(Refusal::Exhausted);
+        }
         let window = limits.window.max(1);
         let slot = r.rate.entry(from).or_insert((now, 0));
         if now >= slot.0.saturating_add(window) {
@@ -426,7 +440,6 @@ impl AnonymousRelayCore {
         }
         slot.1 += 1;
         r.last_active = now;
-        let next = r.next_seq.get(&from).copied().unwrap_or(0);
         if seq < next {
             return Vec::new();
         }
@@ -446,13 +459,17 @@ impl AnonymousRelayCore {
                 to_seq: seq - 1,
             }];
         }
-        // seq == next: forward it and everything held right after it
+        // seq == next: forward it and everything held right after it (the check above keeps the log
+        // index within u64; seq is below u64::MAX and so are held numbers, so `s + 1` does not wrap)
         let mut out = Vec::new();
         let mut s = seq;
         let mut p = payload;
         loop {
             r.forward(limits.max_log, conn, from, room, s, p, &mut out);
-            s += 1;
+            let Some(after) = s.checked_add(1) else {
+                break;
+            };
+            s = after;
             match r.held.get_mut(&from).and_then(|h| h.remove(&s)) {
                 Some(next_p) => p = next_p,
                 None => break,
@@ -517,6 +534,22 @@ impl Room {
         tags.extend(self.held.keys().copied());
         tags.extend(self.rate.keys().copied());
         tags
+    }
+
+    /// How many payloads a publish of `seq` by `tag` forwards: itself and the held ones right after it
+    fn run_from(&self, tag: SenderTag, seq: u64) -> u64 {
+        let mut run = 1u64;
+        if let Some(held) = self.held.get(&tag) {
+            let mut want = seq.checked_add(1);
+            for (&s, _) in held.range(seq.saturating_add(1)..) {
+                if Some(s) != want {
+                    break;
+                }
+                run += 1;
+                want = s.checked_add(1);
+            }
+        }
+        run
     }
 
     fn tag_count(&self) -> usize {

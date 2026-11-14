@@ -452,13 +452,13 @@ fn counts_and_lengths_that_do_not_match_the_bytes() {
     let cases: [(usize, u32, SnapshotError); 7] = [
         (OFF_ROOM_COUNT, 2, SnapshotError::Truncated),
         (OFF_ROOM_COUNT, 0, SnapshotError::Trailing),
-        (OFF_ROOM_COUNT, u32::MAX, SnapshotError::Truncated),
-        // the bytes after the two real members are read as members, and the first of them names
-        // connection 0, below the last one: out of order before the bytes run out
-        (OFF_MEMBER_COUNT, u32::MAX, SnapshotError::NotCanonical),
-        (OFF_LOG_COUNT, u32::MAX, SnapshotError::Truncated),
+        // counts over their limit are refused when read (before any entry)
+        (OFF_ROOM_COUNT, u32::MAX, SnapshotError::Inconsistent),
+        (OFF_MEMBER_COUNT, u32::MAX, SnapshotError::Inconsistent),
+        (OFF_LOG_COUNT, u32::MAX, SnapshotError::Inconsistent),
         (OFF_LOG_COUNT, 0, SnapshotError::Inconsistent),
-        (OFF_LOG_PAYLOAD_LEN, u32::MAX, SnapshotError::Truncated),
+        // a payload length over max_payload (16), refused before its bytes
+        (OFF_LOG_PAYLOAD_LEN, u32::MAX, SnapshotError::Inconsistent),
     ];
     for (at, v, want) in cases {
         let mut b = good.clone();
@@ -469,6 +469,15 @@ fn counts_and_lengths_that_do_not_match_the_bytes() {
             "u32 {v} at {at}"
         );
     }
+    // with a max_payload that allows it, a payload length past the bytes present is `Truncated`,
+    // without reserving space for it
+    let mut b = good.clone();
+    put_u64(&mut b, 6, u64::MAX);
+    put_u32(&mut b, OFF_LOG_PAYLOAD_LEN, u32::MAX);
+    assert_eq!(
+        AnonymousRelayCore::restore(&b).err(),
+        Some(SnapshotError::Truncated)
+    );
     // a payload shorter than its stated length: the rest of the snapshot is read as the payload
     let mut b = good.clone();
     put_u32(&mut b, OFF_LOG_PAYLOAD_LEN, 1);
@@ -525,22 +534,56 @@ fn keys_out_of_order_and_unreachable_states() {
     }
 }
 
-/// Oracle 3e: no single flipped byte, and no single byte set to 0x00 / 0xff, makes the decoder panic.
+/// Operations run on a core restored from changed bytes: binds, publishes at the edges of the sequence
+/// space, log reads and closes, across the rooms and connections the snapshots use
+fn exercise(core: &mut AnonymousRelayCore) {
+    for room in [ROOM_1, ROOM_2, ROOM_3] {
+        for raw in 1..=6 {
+            let conn = ConnId::from_raw(raw);
+            for seq in [0, 1, 2, 3, 5, u64::MAX - 1, u64::MAX] {
+                core.publish(conn, room, seq, b"p".to_vec(), 1_000);
+            }
+            let _ = core.log_range(conn, room, 0, u64::MAX);
+        }
+        core.bind(ConnId::from_raw(7), room, TOKEN_1, TAG_Z, 1_001);
+        core.publish(ConnId::from_raw(7), room, 0, b"z".to_vec(), u64::MAX);
+    }
+    for raw in 1..=7 {
+        core.close(ConnId::from_raw(raw));
+    }
+    let _ = core.snapshot();
+}
+
+/// Oracle 3e: no single changed byte (flipped, set to 0x00 or 0xff) and no 8-byte field set to all ones
+/// makes the decoder panic, and a core restored from such bytes takes further frames without a panic.
 #[test]
 fn no_byte_change_panics() {
     for bytes in [golden_bytes(), rich()] {
+        let mut changed: Vec<(usize, Vec<u8>)> = Vec::new();
         for i in 0..bytes.len() {
             for f in [|x: u8| x ^ 0xff, |x: u8| x ^ 0x01, |_| 0x00, |_| 0xff] {
                 let mut b = bytes.clone();
                 b[i] = f(b[i]);
-                let r = std::panic::catch_unwind(|| {
-                    AnonymousRelayCore::restore(&b).and_then(|c| c.snapshot())
-                });
-                let r = r.unwrap_or_else(|_| panic!("panic at byte {i}"));
-                // a restored state writes the bytes it was read from (one encoding per state)
-                if let Ok(again) = r {
-                    assert_eq!(again, b, "byte {i}");
-                }
+                changed.push((i, b));
+            }
+            if i + 8 <= bytes.len() {
+                let mut b = bytes.clone();
+                b[i..i + 8].copy_from_slice(&[0xff; 8]);
+                changed.push((i, b));
+            }
+        }
+        for (i, b) in changed {
+            let r = std::panic::catch_unwind(|| {
+                AnonymousRelayCore::restore(&b).map(|mut c| {
+                    let again = c.snapshot();
+                    exercise(&mut c);
+                    again
+                })
+            });
+            let r = r.unwrap_or_else(|_| panic!("panic at byte {i}"));
+            // a restored state writes the bytes it was read from (one encoding per state)
+            if let Ok(again) = r {
+                assert_eq!(again, Ok(b), "byte {i}");
             }
         }
     }
@@ -556,4 +599,448 @@ fn limit_too_large_for_usize() {
         AnonymousRelayCore::restore(&b).err(),
         Some(SnapshotError::LimitTooLarge)
     );
+}
+
+// ---- edges of the counters, limits checked as entries are read, and the log against the sequences ----
+
+/// The held-back payloads of one tag in a hand-built snapshot: `(seq, payload)`
+type Held = Vec<(u64, Vec<u8>)>;
+
+/// A room of a hand-built snapshot (written from the format table, not by the encoder)
+#[derive(Clone, Default)]
+struct RoomSpec {
+    next_index: u64,
+    members: Vec<(u64, [u8; 16])>,
+    next_seq: Vec<([u8; 16], u64)>,
+    held: Vec<([u8; 16], Held)>,
+    rate: Vec<([u8; 16], u64, u32)>,
+    log: Vec<(u64, [u8; 16], u64, Vec<u8>)>,
+}
+
+fn n32(v: usize) -> [u8; 4] {
+    u32::try_from(v).expect("small").to_be_bytes()
+}
+
+fn build(limits: Limits, room: &RoomSpec) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"ARLY");
+    b.extend_from_slice(&1u16.to_be_bytes());
+    for v in [
+        limits.max_payload,
+        limits.max_log,
+        limits.max_pending,
+        limits.max_rooms,
+        limits.max_members,
+    ] {
+        b.extend_from_slice(&(v as u64).to_be_bytes());
+    }
+    b.extend_from_slice(&limits.max_publishes_per_window.to_be_bytes());
+    b.extend_from_slice(&limits.window.to_be_bytes());
+    b.extend_from_slice(&(limits.max_rooms_per_conn as u64).to_be_bytes());
+    b.extend_from_slice(&(limits.max_tags_per_room as u64).to_be_bytes());
+    b.extend_from_slice(&n32(1));
+    b.extend_from_slice(&[0x11; 32]);
+    b.extend_from_slice(&[0xa1; 32]);
+    b.extend_from_slice(&0u64.to_be_bytes()); // last_active
+    b.extend_from_slice(&room.next_index.to_be_bytes());
+    b.extend_from_slice(&n32(room.members.len()));
+    for (c, t) in &room.members {
+        b.extend_from_slice(&c.to_be_bytes());
+        b.extend_from_slice(t);
+    }
+    b.extend_from_slice(&n32(room.next_seq.len()));
+    for (t, s) in &room.next_seq {
+        b.extend_from_slice(t);
+        b.extend_from_slice(&s.to_be_bytes());
+    }
+    b.extend_from_slice(&n32(room.held.len()));
+    for (t, ps) in &room.held {
+        b.extend_from_slice(t);
+        b.extend_from_slice(&n32(ps.len()));
+        for (s, p) in ps {
+            b.extend_from_slice(&s.to_be_bytes());
+            b.extend_from_slice(&n32(p.len()));
+            b.extend_from_slice(p);
+        }
+    }
+    b.extend_from_slice(&n32(room.rate.len()));
+    for (t, st, n) in &room.rate {
+        b.extend_from_slice(t);
+        b.extend_from_slice(&st.to_be_bytes());
+        b.extend_from_slice(&n.to_be_bytes());
+    }
+    b.extend_from_slice(&n32(room.log.len()));
+    for (i, t, s, p) in &room.log {
+        b.extend_from_slice(&i.to_be_bytes());
+        b.extend_from_slice(t);
+        b.extend_from_slice(&s.to_be_bytes());
+        b.extend_from_slice(&n32(p.len()));
+        b.extend_from_slice(p);
+    }
+    b
+}
+
+const TA: [u8; 16] = [0x0a; 16];
+const TB: [u8; 16] = [0x0b; 16];
+
+fn no_log() -> Limits {
+    Limits {
+        max_log: 0,
+        ..LIMITS
+    }
+}
+
+/// Restore `bytes`, run `f` on the core under `catch_unwind`, and return what it gave
+fn after_restore<T>(bytes: &[u8], f: impl FnOnce(&mut AnonymousRelayCore) -> T) -> T {
+    let mut core = AnonymousRelayCore::restore(bytes).expect("restore edge state");
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut core)))
+        .unwrap_or_else(|_| panic!("panic after restoring an edge state"))
+}
+
+fn refused_with(out: &[Out]) -> Option<Refusal> {
+    match out {
+        [Out::Refused { reason, .. }] => Some(*reason),
+        _ => None,
+    }
+}
+
+/// F1: the last sequence number a publisher may use is `u64::MAX - 1`; `u64::MAX` is refused as
+/// `Exhausted` and changes nothing (it is not held back, and no rate is spent).
+#[test]
+fn a_live_core_refuses_the_sequence_number_past_the_last() {
+    let mut core = AnonymousRelayCore::new(LIMITS);
+    core.bind(A, ROOM_1, TOKEN_1, TAG_A, 0);
+    let before = core.snapshot();
+    let out = core.publish(A, ROOM_1, u64::MAX, b"x".to_vec(), 1);
+    assert_eq!(refused_with(&out), Some(Refusal::Exhausted));
+    assert_eq!(core.snapshot(), before);
+    // the one before it is a gap like any other
+    let out = core.publish(A, ROOM_1, u64::MAX - 1, b"x".to_vec(), 1);
+    assert!(matches!(out.as_slice(), [Out::Resend { .. }]), "{out:?}");
+}
+
+/// F1: a room whose log index reached `u64::MAX` refuses a publish as `Exhausted` (no panic, no wrap),
+/// and nothing changes.
+#[test]
+fn restore_at_the_last_log_index_then_publish() {
+    let room = RoomSpec {
+        next_index: u64::MAX,
+        members: vec![(1, TA)],
+        ..RoomSpec::default()
+    };
+    let bytes = build(no_log(), &room);
+    let (out, after) = after_restore(&bytes, |c| {
+        (
+            c.publish(A, ROOM_1, 0, b"x".to_vec(), 1),
+            c.snapshot().expect("representable"),
+        )
+    });
+    assert_eq!(refused_with(&out), Some(Refusal::Exhausted));
+    assert_eq!(after, bytes);
+    // one index left: one payload goes, the next is refused
+    let room = RoomSpec {
+        next_index: u64::MAX - 1,
+        members: vec![(1, TA), (2, TB)],
+        ..RoomSpec::default()
+    };
+    let bytes = build(no_log(), &room);
+    let (first, second) = after_restore(&bytes, |c| {
+        (
+            c.publish(A, ROOM_1, 0, b"x".to_vec(), 1),
+            c.publish(A, ROOM_1, 1, b"y".to_vec(), 1),
+        )
+    });
+    assert!(
+        matches!(first.as_slice(), [Out::Forward { seq: 0, .. }]),
+        "{first:?}"
+    );
+    assert_eq!(refused_with(&second), Some(Refusal::Exhausted));
+}
+
+/// F1: a run of held payloads that would carry the log index past `u64::MAX` is refused as a whole:
+/// nothing is forwarded and the held payloads stay.
+#[test]
+fn restore_near_the_last_log_index_with_held_payloads_then_publish() {
+    let room = RoomSpec {
+        next_index: u64::MAX - 2,
+        members: vec![(1, TA), (2, TB)],
+        held: vec![(TA, vec![(1, b"1".to_vec()), (2, b"2".to_vec())])],
+        ..RoomSpec::default()
+    };
+    let bytes = build(no_log(), &room);
+    let (out, after) = after_restore(&bytes, |c| {
+        (
+            c.publish(A, ROOM_1, 0, b"0".to_vec(), 1),
+            c.snapshot().expect("representable"),
+        )
+    });
+    assert_eq!(refused_with(&out), Some(Refusal::Exhausted));
+    assert_eq!(after, bytes);
+}
+
+/// F1: a tag whose sequence reached `u64::MAX` (every number used) takes no more payloads: the last
+/// number is a duplicate, the one past it is `Exhausted`; one before the end still forwards.
+#[test]
+fn restore_at_the_last_sequence_number_then_publish() {
+    let room = RoomSpec {
+        members: vec![(1, TA), (2, TB)],
+        next_seq: vec![(TA, u64::MAX)],
+        ..RoomSpec::default()
+    };
+    let bytes = build(no_log(), &room);
+    let (past, dup) = after_restore(&bytes, |c| {
+        (
+            c.publish(A, ROOM_1, u64::MAX, b"x".to_vec(), 1),
+            c.publish(A, ROOM_1, u64::MAX - 1, b"x".to_vec(), 1),
+        )
+    });
+    assert_eq!(refused_with(&past), Some(Refusal::Exhausted));
+    assert!(dup.is_empty(), "{dup:?}");
+    let room = RoomSpec {
+        members: vec![(1, TA), (2, TB)],
+        next_seq: vec![(TA, u64::MAX - 1)],
+        ..RoomSpec::default()
+    };
+    let bytes = build(no_log(), &room);
+    let (last, after) = after_restore(&bytes, |c| {
+        let last = c.publish(A, ROOM_1, u64::MAX - 1, b"x".to_vec(), 1);
+        let snap = c.snapshot().expect("representable");
+        (last, snap)
+    });
+    assert!(
+        matches!(last.as_slice(), [Out::Forward { seq, .. }] if *seq == u64::MAX - 1),
+        "{last:?}"
+    );
+    // and the state with every number used snapshots and restores
+    let again = AnonymousRelayCore::restore(&after).expect("restore");
+    assert_eq!(again.snapshot().expect("representable"), after);
+}
+
+/// F1: a held payload at `u64::MAX` is a state the core cannot reach (that number is refused).
+#[test]
+fn held_payload_at_the_number_past_the_last_is_refused() {
+    let room = RoomSpec {
+        members: vec![(1, TA)],
+        held: vec![(TA, vec![(u64::MAX, b"x".to_vec())])],
+        ..RoomSpec::default()
+    };
+    assert_eq!(
+        AnonymousRelayCore::restore(&build(no_log(), &room)).err(),
+        Some(SnapshotError::Inconsistent)
+    );
+}
+
+/// F2: a count over its limit is refused when the count is read, before any entry: the same error
+/// comes back with the entries cut off right after the count (otherwise it would be `Truncated`).
+#[test]
+fn a_count_over_its_limit_is_refused_before_its_entries() {
+    let good = golden_bytes();
+    // (offset of the count, a count one over the golden's limit, what the golden allows)
+    let cases = [
+        (OFF_ROOM_COUNT, 3u32), // max_rooms 2
+        (OFF_MEMBER_COUNT, 4),  // max_members 3
+        (210, 4),               // next sequence numbers: max_tags_per_room 3
+        (238, 4),               // tags with held payloads: max_tags_per_room 3
+        (258, 4),               // held payloads of one tag: max_pending 3
+        (275, 4),               // rate windows: max_tags_per_room 3
+        (OFF_LOG_COUNT, 5),     // log: min(next index 1, max_log 4) = 1
+    ];
+    for (at, n) in cases {
+        let mut b = good[..at + 4].to_vec();
+        put_u32(&mut b, at, n);
+        assert_eq!(
+            AnonymousRelayCore::restore(&b).err(),
+            Some(SnapshotError::Inconsistent),
+            "count {n} at {at}"
+        );
+        // a huge count fails the same way, at once
+        put_u32(&mut b, at, u32::MAX);
+        assert_eq!(
+            AnonymousRelayCore::restore(&b).err(),
+            Some(SnapshotError::Inconsistent),
+            "count u32::MAX at {at}"
+        );
+    }
+}
+
+/// F2: the tag limit is checked as each entry is read: with max_tags_per_room 1 the second member is
+/// refused, so the bytes after it are never read (cut off there, the error is still `Inconsistent`).
+#[test]
+fn the_tag_limit_is_checked_at_the_entry_that_passes_it() {
+    // max_tags_per_room 2: one member tag, one tracked sequence, and a third tag with held payloads.
+    // Each list is within the limit on its own; the third distinct tag passes it. Cut the bytes right
+    // after that tag: the error is `Inconsistent`, so the decoder stopped at that entry.
+    const TC: [u8; 16] = [0x0c; 16];
+    let limits = Limits {
+        max_tags_per_room: 2,
+        ..no_log()
+    };
+    let room = RoomSpec {
+        members: vec![(1, TA)],
+        next_seq: vec![(TB, 0)],
+        held: vec![(TC, vec![])],
+        ..RoomSpec::default()
+    };
+    let b = build(limits, &room);
+    let after_tag_c = b.len() - 4 * 3; // the held tag's own count, then rate and log counts
+    assert_eq!(
+        AnonymousRelayCore::restore(&b[..after_tag_c]).err(),
+        Some(SnapshotError::Inconsistent)
+    );
+    // with the held tag one already counted, the same state restores
+    let room = RoomSpec {
+        held: vec![(TB, vec![])],
+        ..room
+    };
+    assert!(AnonymousRelayCore::restore(&build(limits, &room)).is_ok());
+    // a connection in more rooms than allowed is refused at that member
+    let room_a = RoomSpec {
+        members: vec![(1, TA)],
+        ..RoomSpec::default()
+    };
+    let limits = Limits {
+        max_rooms_per_conn: 0,
+        ..no_log()
+    };
+    let b = build(limits, &room_a);
+    let cut = b.len() - 4 * 4; // right after the member, before the four empty lists
+    assert_eq!(
+        AnonymousRelayCore::restore(&b[..cut]).err(),
+        Some(SnapshotError::Inconsistent)
+    );
+}
+
+/// F2: a long member list within its limit decodes (the duplicate-tag check does not compare every
+/// pair).
+#[test]
+fn a_long_member_list_within_its_limit_decodes() {
+    let n = 100_000usize;
+    let limits = Limits {
+        max_members: n,
+        max_tags_per_room: n,
+        ..no_log()
+    };
+    let members: Vec<(u64, [u8; 16])> = (0..n as u64)
+        .map(|i| {
+            let mut t = [0u8; 16];
+            t[8..].copy_from_slice(&i.to_be_bytes());
+            (i, t)
+        })
+        .collect();
+    let room = RoomSpec {
+        members,
+        ..RoomSpec::default()
+    };
+    let b = build(limits, &room);
+    let core = AnonymousRelayCore::restore(&b).expect("restore");
+    assert_eq!(core.tags_held(ROOM_1), n);
+}
+
+/// F3: a rate window that counts more publishes than the window allows is refused.
+#[test]
+fn a_rate_count_over_the_window_limit_is_refused() {
+    let mut b = golden_bytes();
+    put_u32(&mut b, 303, 6); // max_publishes_per_window 5
+    assert_eq!(
+        AnonymousRelayCore::restore(&b).err(),
+        Some(SnapshotError::Inconsistent)
+    );
+    put_u32(&mut b, 303, 5);
+    assert!(AnonymousRelayCore::restore(&b).is_ok());
+}
+
+/// F3: a logged payload over max_payload is refused (max_payload 1: the held "x" fits, the logged
+/// "hi" does not).
+#[test]
+fn a_logged_payload_over_max_payload_is_refused() {
+    let mut b = golden_bytes();
+    put_u64(&mut b, 6, 1);
+    assert_eq!(
+        AnonymousRelayCore::restore(&b).err(),
+        Some(SnapshotError::Inconsistent)
+    );
+}
+
+/// F3: the log against the sequences. Within one tag, each logged payload follows the previous one of
+/// that tag (`seq + 1`) or starts the sequence again at 0 (the tag made way and came back); for a tag
+/// the room tracks, its latest logged payload is the one just before its next sequence number.
+#[test]
+fn the_log_agrees_with_the_sequences() {
+    let restore = |room: &RoomSpec| AnonymousRelayCore::restore(&build(LIMITS, room)).err();
+    let base = RoomSpec {
+        next_index: 3,
+        members: vec![(1, TA)],
+        next_seq: vec![(TA, 3)],
+        log: vec![
+            (0, TA, 0, b"0".to_vec()),
+            (1, TA, 1, b"1".to_vec()),
+            (2, TA, 2, b"2".to_vec()),
+        ],
+        ..RoomSpec::default()
+    };
+    assert_eq!(restore(&base), None);
+    // the golden's log item (seq 0) against its tag's next sequence number 1
+    let mut b = golden_bytes();
+    put_u64(&mut b, 335, 5);
+    assert_eq!(
+        AnonymousRelayCore::restore(&b).err(),
+        Some(SnapshotError::Inconsistent)
+    );
+    // the latest item is not next - 1
+    let mut r = base.clone();
+    r.next_seq = vec![(TA, 4)];
+    assert_eq!(restore(&r), Some(SnapshotError::Inconsistent));
+    // a gap within the tag
+    let mut r = base.clone();
+    r.log[1].2 = 5;
+    assert_eq!(restore(&r), Some(SnapshotError::Inconsistent));
+    // a restart at 0 (the tag made way and came back) is a state the core reaches
+    let mut r = base.clone();
+    r.next_seq = vec![(TA, 2)];
+    r.log = vec![
+        (0, TA, 7, b"7".to_vec()),
+        (1, TA, 0, b"0".to_vec()),
+        (2, TA, 1, b"1".to_vec()),
+    ];
+    assert_eq!(restore(&r), None);
+    // a tag the room does not track may have any logged sequence
+    let mut r = base.clone();
+    r.next_seq = vec![];
+    r.members = vec![(1, TB)];
+    r.log = vec![
+        (0, TA, 9, b"9".to_vec()),
+        (1, TA, 10, b"a".to_vec()),
+        (2, TA, 11, b"b".to_vec()),
+    ];
+    assert_eq!(restore(&r), None);
+}
+
+/// F3: the restart case above, reached by a live core (a tag makes way and comes back), restores.
+#[test]
+fn a_tag_that_made_way_and_came_back_restores() {
+    let limits = Limits {
+        max_tags_per_room: 2,
+        ..LIMITS
+    };
+    let mut core = AnonymousRelayCore::new(limits);
+    core.bind(A, ROOM_1, TOKEN_1, TAG_A, 0);
+    core.publish(A, ROOM_1, 0, b"0".to_vec(), 0);
+    core.publish(A, ROOM_1, 1, b"1".to_vec(), 0);
+    core.close(A);
+    assert!(bound_ok(&core.bind(B, ROOM_1, TOKEN_1, TAG_B, 1)));
+    assert!(bound_ok(&core.bind(C, ROOM_1, TOKEN_1, TAG_C, 2))); // TAG_A makes way
+    core.close(C);
+    assert!(bound_ok(&core.bind(D, ROOM_1, TOKEN_1, TAG_A, 3))); // TAG_C makes way
+    let out = core.publish(D, ROOM_1, 0, b"again".to_vec(), 4);
+    assert!(
+        matches!(out.as_slice(), [Out::Forward { seq: 0, .. }]),
+        "{out:?}"
+    );
+    let bytes = core.snapshot().expect("representable");
+    let again = AnonymousRelayCore::restore(&bytes).expect("a reachable state restores");
+    assert_eq!(again.snapshot().expect("representable"), bytes);
+}
+
+fn bound_ok(out: &[Out]) -> bool {
+    matches!(out, [Out::Bound { .. }])
 }
