@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "alice-channel"
 version = "0.1.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#06df20bc25bcc4f21de79d5239d58682cf24398a"
+source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#dda5a20f1daa5bd88e8f6c0ff34abb3d50a6ae79"
 dependencies = [
  "alice-crypto",
  "alice-identity",
@@ -153,7 +153,7 @@ source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#6269efc2
 [[package]]
 name = "alice-identity"
 version = "3.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#7ad904fa95c4b63718561663b59004bda626247d"
+source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#be7b7f60695fbad084da2cc3323390b88e6384e0"
 dependencies = [
  "alice-crypto",
  "alice-sign",

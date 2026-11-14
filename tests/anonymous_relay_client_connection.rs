@@ -485,3 +485,137 @@ fn fetch_relay_cert_refuses_a_transfer_coding_and_a_malformed_head() {
         request();
     }
 }
+
+/// A read timeout in the middle of a message is retryable: the relay writes the first bytes of its
+/// answer's WebSocket frame (the header and part of the payload), the client's read gives up while the
+/// rest is missing, and once the rest arrives the next `recv` continues the same message from the
+/// bytes the WebSocket kept. The nonces stay in step: a later request and answer still decrypt
+#[test]
+fn a_read_timeout_does_not_poison_the_connection() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    // the same socket: a read timeout set on the clone applies to the stream the connection owns
+    let handle = stream.try_clone().unwrap();
+    let (partial_tx, partial_rx) = mpsc::channel::<()>();
+    let (rest_tx, rest_rx) = mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let head = read_head(&mut stream);
+        let request = HandshakeRequest::parse(&head).unwrap();
+        stream
+            .write_all(
+                HandshakeResponse::from_key(&request.key)
+                    .to_http()
+                    .as_bytes(),
+            )
+            .unwrap();
+        let mut ws = ServerWs {
+            stream,
+            buf: Vec::new(),
+        };
+        let mut transport = accept_messages(&mut ws, &relay_static()).unwrap();
+        let mut core = AnonymousRelayCore::new(LIMITS);
+        let mut got = Vec::new();
+
+        // the bind, answered in two pieces with the client's read timing out in between
+        let sealed = ws.read_message(MAX_MESSAGE).unwrap();
+        let frame = Frame::decode(&transport.recv(&sealed).unwrap()).unwrap();
+        got.push(frame.clone());
+        let Frame::Bind { room, token, tag } = frame else {
+            panic!("not a bind {frame:?}");
+        };
+        let answers: Vec<Frame> = core
+            .bind(CLIENT, room, token, tag, 0)
+            .into_iter()
+            .map(|o| o.into_wire().1)
+            .collect();
+        assert_eq!(answers.len(), 1, "one answer to the bind");
+        let wire = WsFrame::binary(transport.send(&answers[0].encode()).unwrap()).serialize();
+        // the header (2 to 4 bytes for these lengths) and some of the payload, not the whole frame
+        let cut = 8;
+        assert!(
+            wire.len() > cut + 8,
+            "the frame is longer than the first piece"
+        );
+        ws.stream.write_all(&wire[..cut]).unwrap();
+        ws.stream.flush().unwrap();
+        partial_tx.send(()).unwrap();
+        rest_rx.recv().unwrap();
+        ws.stream.write_all(&wire[cut..]).unwrap();
+
+        // after that, ordinary requests and answers on the same channel
+        while let Some(sealed) = ws.read_message(MAX_MESSAGE) {
+            let frame = Frame::decode(&transport.recv(&sealed).unwrap()).unwrap();
+            got.push(frame.clone());
+            match frame {
+                Frame::LogRange {
+                    room,
+                    from_index,
+                    to_index,
+                } => {
+                    let page =
+                        match core.log_range_within(CLIENT, room, from_index, to_index, 4_096) {
+                            Ok(range) => range.into_wire(room),
+                            Err(reason) => Frame::Refused { room, reason },
+                        };
+                    ws.write_message(&transport.send(&page.encode()).unwrap());
+                }
+                Frame::Close { room } => core.leave(CLIENT, room),
+                other => panic!("not expected here {other:?}"),
+            }
+        }
+        got
+    });
+
+    let mut conn = RelayConnection::open(
+        stream,
+        "relay.test",
+        ROOM,
+        &relay_cert(),
+        &policy(&operator()),
+        CountingMask(1),
+    )
+    .unwrap();
+    let mut client = RelayClient::new(ROOM, TOKEN, TAG_A, 0, LIMITS.max_payload);
+
+    conn.send(&client.bind()).unwrap();
+    partial_rx.recv().unwrap();
+    handle
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    match conn.recv() {
+        Err(RelayConnectionError::WebSocket(alice_websocket::WsError::Io { kind, .. })) => assert!(
+            matches!(
+                kind,
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "a timeout kind, got {kind:?}"
+        ),
+        other => panic!("expected a read timeout, got {other:?}"),
+    }
+    rest_tx.send(()).unwrap();
+    handle.set_read_timeout(Some(TIMEOUT)).unwrap();
+    assert_eq!(
+        client.on_frame(conn.recv().unwrap()).unwrap(),
+        Event::Bound { replay: Vec::new() },
+        "the retried recv continues the frame whose first bytes arrived before the timeout"
+    );
+
+    // the channel is in step: a later request is decrypted by the relay and its answer by the client
+    conn.send(&client.read_log(0)).unwrap();
+    let Event::LogPage { items, .. } = client.on_frame(conn.recv().unwrap()).unwrap() else {
+        panic!("not a log page");
+    };
+    assert!(items.is_empty(), "nothing was published");
+    conn.send(&client.leave()).unwrap();
+    drop(conn);
+
+    assert_eq!(
+        server.join().unwrap(),
+        vec![client.bind(), client.read_log(0), client.leave()],
+        "the relay received the client's frames byte for byte, in order"
+    );
+}

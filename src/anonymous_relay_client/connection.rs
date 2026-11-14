@@ -107,6 +107,16 @@ impl<S, M> WsIo<'_, S, M> {
     }
 }
 
+/// A read that ran out of time before a whole message arrived (the stream's read timeout): retryable,
+/// since the WebSocket keeps the bytes it has and the channel has not advanced
+fn is_timeout(e: &WsError) -> bool {
+    matches!(
+        e,
+        WsError::Io { kind, .. }
+            if matches!(kind, std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+    )
+}
+
 /// A connection to the anonymous relay over a blocking stream `S`, with the WebSocket mask keys from `M`.
 ///
 /// Three layers: a WebSocket (RFC 6455) to `/r/<room alias in lowercase hex>` on the relay's host, the
@@ -117,7 +127,8 @@ impl<S, M> WsIo<'_, S, M> {
 /// [`RelayConnectionError::Poisoned`] (open a new one).
 ///
 /// The stream's read timeout is the caller's (set it on `S` before [`Self::open`]); a timeout surfaces as
-/// [`RelayConnectionError::WebSocket`] with the stream's error kind.
+/// [`RelayConnectionError::WebSocket`] with the stream's error kind and does not poison the connection:
+/// [`Self::recv`] can be called again and continues the message it was reading.
 pub struct RelayConnection<S, M> {
     ws: Connection<S, M>,
     transport: Transport,
@@ -209,26 +220,38 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
     /// [`RelayConnectionError::Wire`] when the decrypted bytes are not exactly one frame (the connection
     /// stays usable: the channel is in step); [`RelayConnectionError::Closed`] when the relay closed the
     /// WebSocket; [`RelayConnectionError::WebSocket`] / [`RelayConnectionError::Channel`] /
-    /// [`RelayConnectionError::TextMessage`] (the connection is poisoned); [`RelayConnectionError::Poisoned`].
+    /// [`RelayConnectionError::TextMessage`] (the connection is poisoned, except for a read timeout, which
+    /// leaves it usable); [`RelayConnectionError::Poisoned`].
     pub fn recv(&mut self) -> Result<Frame, RelayConnectionError> {
         if self.poisoned {
             return Err(RelayConnectionError::Poisoned);
         }
-        self.poisoned = true;
-        let sealed = match self
-            .ws
-            .recv_message(MAX_MESSAGE)
-            .map_err(RelayConnectionError::WebSocket)?
-        {
-            Received::Binary(bytes) => bytes,
-            Received::Text(_) => return Err(RelayConnectionError::TextMessage),
-            _ => return Err(RelayConnectionError::Closed),
+        // nothing has advanced the channel until a whole message is decrypted: a read timeout before that
+        // leaves the WebSocket's buffered bytes and the nonce as they were, so the call can be retried
+        let sealed = match self.ws.recv_message(MAX_MESSAGE) {
+            Ok(Received::Binary(bytes)) => bytes,
+            Ok(Received::Text(_)) => {
+                self.poisoned = true;
+                return Err(RelayConnectionError::TextMessage);
+            }
+            Ok(_) => {
+                self.poisoned = true;
+                return Err(RelayConnectionError::Closed);
+            }
+            Err(e) => {
+                if !is_timeout(&e) {
+                    self.poisoned = true;
+                }
+                return Err(RelayConnectionError::WebSocket(e));
+            }
         };
-        let bytes = self
-            .transport
-            .recv(&sealed)
-            .map_err(|e| RelayConnectionError::Channel(ChannelError::Noise(e)))?;
-        self.poisoned = false;
+        let bytes = match self.transport.recv(&sealed) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.poisoned = true;
+                return Err(RelayConnectionError::Channel(ChannelError::Noise(e)));
+            }
+        };
         Frame::decode(&bytes).map_err(RelayConnectionError::Wire)
     }
 }

@@ -39,11 +39,12 @@ use std::time::Duration;
 use crate::protocol::Message;
 use crate::transport::{Envelope, Frame, SyncTransport, TransportError, TransportResult};
 use alice_channel::{
-    AsyncRecvHalf, AsyncSecureChannel, AsyncSendHalf, ChannelError, Credential, PeerPolicy,
-    MAX_PAYLOAD,
+    AsyncRecvHalf, AsyncSecureChannel, AsyncSendHalf, ChannelError, Credential, PeerKind,
+    PeerPolicy, MAX_PAYLOAD,
 };
 use alice_identity::artifact::Revocation;
 use alice_identity::device_cert::DeviceCert;
+use alice_identity::service_cert::verify_service_cert;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::AbortHandle;
@@ -131,15 +132,25 @@ fn no_listener() -> TransportError {
 }
 
 /// Whether the policy as it stands at `now` still accepts `cert`: the subject's master key is known, the
-/// certificate verifies under it at `now`, and no revocation list held revokes it
+/// certificate verifies under it at `now` by the rules of the kind the policy expects
+/// ([`PeerPolicy::expected_peer`]: the device certificate rules for a person, which refuse a service
+/// certificate; `verify_service_cert` for a service, which refuses a person's certificate and holds the
+/// service's name, subject and lifetime bound), and no revocation list held revokes it
 fn still_accepted(cert: &DeviceCert, policy: &impl PeerPolicy, now: u64) -> bool {
     let Some(master) = policy.master_of(cert.subject()) else {
         return false;
     };
-    if cert.verify(&master, now).is_err() {
-        return false;
+    match policy.expected_peer() {
+        PeerKind::Service(service) => {
+            verify_service_cert(cert, &master, service, now, policy.revocation()).is_ok()
+        }
+        PeerKind::Person => {
+            cert.verify(&master, now).is_ok()
+                && !matches!(policy.revocation(), Revocation::Checked(list) if list.revokes(cert))
+        }
+        // a kind this transport does not know: not accepted
+        _ => false,
     }
-    !matches!(policy.revocation(), Revocation::Checked(list) if list.revokes(cert))
 }
 
 impl<P: PeerPolicy + Send + Sync + 'static> SecureTransport<P> {
