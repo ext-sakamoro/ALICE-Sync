@@ -6,7 +6,7 @@
 # Run `--quick` before every push.
 #
 # usage: scripts/preflight.sh [--quick]   (--quick skips the test / bench suites)
-# generator rev b52be62b5b6e407c90b9a7a01c1fb96e64844cf8
+# generator rev 5ece2bc3121e9bf65aa0bb39b5ae63c962b914db
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # --- heavy slot (begin) ---
@@ -367,7 +367,7 @@ heavy_slot_record_kill() {
   [ -n "${HEAVY_SLOT_TAKE_ROOT:-}" ] || return 0
   if printf '%s\n' "$1" | awk -v r="$HEAVY_SLOT_TAKE_ROOT" '$1 == r { found = 1 } END { exit !found }'; then
     heavy_slot_record_take 137 "$2"
-    rm -f "${HEAVY_SLOT_PEAK_FILE:-}" "${HEAVY_SLOT_PEAK_FILE:-}.note" "${HEAVY_SLOT_PEAK_FILE:-}.done" 2>/dev/null || true
+    rm -f "${HEAVY_SLOT_PEAK_FILE:-}" "${HEAVY_SLOT_PEAK_FILE:-}.note" 2>/dev/null || true
   elif [ -n "${HEAVY_SLOT_PEAK_FILE:-}" ]; then
     # the recording take outlives this kill and records at its exit: leave it the reason
     printf '%s\n' "$2" > "$HEAVY_SLOT_PEAK_FILE.note" 2>/dev/null || true
@@ -377,6 +377,9 @@ heavy_slot_record_kill() {
 heavy_slot_note_peak() {
   local f=${HEAVY_SLOT_PEAK_FILE:-} old
   [ -n "$f" ] || return 0
+  # a watcher still sampling after the take recorded would make the peak file again, and the lost-take recorder would
+  # then write a second row for the same take (2026-11-14: takes.tsv had each take twice, the second "lost")
+  [ -e "$f.done" ] && return 0
   old=$(cat "$f" 2>/dev/null) || old=0
   case "$old" in '' | *[!0-9]*) old=0 ;; esac
   if [ "$1" -gt "$old" ]; then printf '%s\n' "$1" > "$f" 2>/dev/null || true; fi
@@ -581,19 +584,19 @@ has_toolchain() { grep -q "^$1" <<<"$(rustup toolchain list)"; }
 # Steps CI runs that this file cannot reproduce locally (they can only fail remotely):
 #   - ci.yml:test:G11 self-check (ALICE-Law at the pinned revision) (no cargo / grep)
 #   - security-audit.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
-#   - security-audit.yml:audit:Install cargo-audit (needs network / runner-only)
-#   - security-audit.yml:deny:Install cargo-deny (needs network / runner-only)
+#   - security-audit.yml:audit:Install cargo-audit (a tool install, setup)
+#   - security-audit.yml:deny:Install cargo-deny (a tool install, setup)
 #   - security-audit.yml:gate:gate (reads NEEDS, a value only the runner has)
 #   - fuzz.yml:changes:decide (reads AFTER, BEFORE, CREATED, EVENT, FORCED, PR_BASE, PR_HEAD, a value only the runner has)
-#   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_packet_decode] (needs network / runner-only)
+#   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_packet_decode] (a tool install, setup)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_packet_decode] (no cargo / grep)
 #   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_packet_decode] (continue-on-error, runner-only (open-ended or unprovable-bounded fuzz run))
 #   - fuzz.yml:fuzz:Report crash (informational) [target=fuzz_packet_decode] (its `if:` runs on what happened earlier on the runner)
-#   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_codec_bridge] (needs network / runner-only)
+#   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_codec_bridge] (a tool install, setup)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_codec_bridge] (no cargo / grep)
 #   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_codec_bridge] (continue-on-error, runner-only (open-ended or unprovable-bounded fuzz run))
 #   - fuzz.yml:fuzz:Report crash (informational) [target=fuzz_codec_bridge] (its `if:` runs on what happened earlier on the runner)
-#   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_crdt_merge] (needs network / runner-only)
+#   - fuzz.yml:fuzz:Install cargo-fuzz [target=fuzz_crdt_merge] (a tool install, setup)
 #   - fuzz.yml:fuzz:Set fuzz duration [target=fuzz_crdt_merge] (no cargo / grep)
 #   - fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_crdt_merge] (continue-on-error, runner-only (open-ended or unprovable-bounded fuzz run))
 #   - fuzz.yml:fuzz:Report crash (informational) [target=fuzz_crdt_merge] (its `if:` runs on what happened earlier on the runner)
@@ -1164,5 +1167,36 @@ step "release-profile.yml / release-tests: Release-profile golden and oracle tes
   gh_step release-profile.yml.release-tests
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" RELEASE_TEST_FEATURES="async,physics,codec,cloud,telemetry"; scripts/run_tests.sh determinism_golden,float_edge_golden,analytic_oracle,float_environment=2 -- cargo test --release --features "$RELEASE_TEST_FEATURES" --test determinism_golden --test float_edge_golden --test analytic_oracle --test float_environment )
 )
+
+# CI runs that this run does not: named and counted in the receipt (run-preflight)
+not_run() { echo "PREFLIGHT-NOT-RUN: $*"; }
+# an OS leg runs here only when the host is of its family (ubuntu on Linux, macos on macOS)
+leg_not_run() {
+  case "$2:$(uname -s)" in
+    ubuntu*:Linux|macos*:Darwin) ;;
+    *) not_run "$1 [runs-on=$2] (an OS leg this host does not run)" ;;
+  esac
+}
+not_run 'ci.yml:test:G11 self-check (ALICE-Law at the pinned revision) (no cargo / grep)'
+not_run 'fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_packet_decode] (continue-on-error, runner-only (open-ended or unprovable-bounded fuzz run))'
+not_run 'fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_codec_bridge] (continue-on-error, runner-only (open-ended or unprovable-bounded fuzz run))'
+not_run 'fuzz.yml:fuzz:Run fuzz target (time-boxed) [target=fuzz_crdt_merge] (continue-on-error, runner-only (open-ended or unprovable-bounded fuzz run))'
+not_run 'eol.yml:eol: uses actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 (an action this file cannot run)'
+not_run 'g3-ir.yml:ir:Targets for the pinned toolchain [target=x86_64-unknown-linux-gnu] (no cargo / grep)'
+not_run 'g3-ir.yml:ir:No negated fma result in alice-sync'"'"'s release IR [target=x86_64-unknown-linux-gnu] (its `if:` runs on what happened earlier on the runner)'
+not_run 'g3-ir.yml:ir:Targets for the pinned toolchain [target=aarch64-unknown-linux-gnu] (no cargo / grep)'
+not_run 'g3-ir.yml:ir:No negated fma result in alice-sync'"'"'s release IR [target=aarch64-unknown-linux-gnu] (its `if:` runs on what happened earlier on the runner)'
+not_run 'public-text.yml:public-text: uses actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 (an action this file cannot run)'
+not_run 'public-text.yml:public-text:Public text (tree at HEAD, then the pushed commits) (no cargo / grep)'
+leg_not_run ci.yml:test ubuntu-latest
+leg_not_run ci.yml:test macos-latest
+leg_not_run ci.yml:test windows-latest
+leg_not_run eol.yml:eol ubuntu-latest
+leg_not_run eol.yml:eol macos-latest
+leg_not_run eol.yml:eol windows-latest
+leg_not_run g3-ir.yml:ir ubuntu-latest
+leg_not_run g3-ir.yml:ir ubuntu-24.04-arm
+leg_not_run release-profile.yml:release-tests ubuntu-latest
+leg_not_run release-profile.yml:release-tests macos-latest
 
 echo; echo "preflight OK"
