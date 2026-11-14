@@ -163,7 +163,9 @@ reference_repo = ""
 
 [G12]
 status = "pass"
-evidence = [".github/workflows/public-text.yml", "scripts/public_text.sh", ".github/public-text-pin", "scripts/test_public_text.py"]
+evidence = [".github/workflows/public-text.yml", "scripts/public_text.sh", ".github/public-text-pin", "scripts/test_public_text.py",
+    "the public text check runs in CI: `.github/workflows/public-text.yml#- name: Public text (tree at HEAD, then the pushed commits)` (scripts/public_text.sh, ALICE-Law's checker at .github/public-text-pin) after its tests `.github/workflows/public-text.yml#- name: Tests of scripts/public_text.sh (no network)`",
+]
 mutant = "add one of the refused internal words to a tracked document -> the public-text step fails"
 since = ""
 note = "the public-text.yml job runs scripts/public_text.sh, which fetches ALICE-Law's own scripts/public_text_check.py at the revision .github/public-text-pin names (rev e92ae4cda2660f1bdb7809ea003607323754fa2d) and refuses it unless its SHA-256 matches the pin (c9f0aa80e89a2c6bebda861f2a905c87d36b5509b798f28d4506f6f9c11ff28c) -- so a crate's own checker does not count, it is ALICE-Law's byte-identical file. It checks the tree at HEAD and the pushed commit range and fails when it compared nothing; scripts/test_public_text.py runs first as the checker's own test."
@@ -198,6 +200,7 @@ evidence = [
     ".github/workflows/ci.yml entropy-guard job (ubuntu): the static guard and both test files",
     ".github/workflows/release-profile.yml (ubuntu, macOS): tests/float_environment.rs in the release profile, and the dynamic check for the default, all-features and no-default feature sets",
     "tests/float_environment.rs round_to_nearest_even and subnormals_are_not_flushed (byte-identical to ALICE-DB's; ci.yml test job on ubuntu, macOS and Windows through scripts/run_tests.sh as `float_environment=2`, so the step fails unless both tests pass: an #[ignore], a #[cfg] that drops one, or a rename is red)",
+    "where it runs: the static guard `.github/workflows/ci.yml#python3 scripts/build_config_guard.py` and the float environment (tests/float_environment.rs through scripts/run_tests.sh) `.github/workflows/ci.yml#- name: Float environment (debug)`",
 ]
 mutant = "measured 2026-10-16, each reverted: `RUSTFLAGS: \"-C target-cpu=native\"` added to release-profile.yml's env makes scripts/build_config_guard.py exit 1 with `target-cpu-native: target-cpu=native` on the added line; RUSTFLAGS=$'-C target-cpu=nat\\x69ve' makes scripts/build_flags_check.py exit 1 with `alice_sync: target-cpu-native: target-cpu=native`; setting FPCR.RMode to round-toward-plus-infinity fails round_to_nearest_even and setting FPCR.FZ (flush-to-zero) fails subnormals_are_not_flushed (aarch64, macOS)"
 since = ""
