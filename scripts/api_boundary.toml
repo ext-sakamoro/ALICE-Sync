@@ -107,6 +107,7 @@ features = "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ff
 "fn::<TryFrom for CustomPayload>::try_from#2" = "local: opaque caller bytes of a custom event (length checked against MAX_CUSTOM_PAYLOAD), not interpreted by this crate, carried after the Hello handshake"
 "fn::AnonymousRelayCore::publish" = "local: forwards a sealed payload byte for byte without opening it, reads no Law-bearing value"
 "fn::AnonymousRelayCore::restore" = "local: reads back a snapshot of the anonymous relay this crate wrote: rooms, tokens, tags, sequence numbers and sealed payloads passed through unopened, no Law-bearing value"
+"fn::AnonymousRelayCore::restore_with_limits" = "local: reads back a snapshot of the anonymous relay this crate wrote, checked against limits the host passes: rooms, tokens, tags, sequence numbers and sealed payloads passed through unopened, no Law-bearing value"
 "fn::AnonymousRelayCore::snapshot" = "local: writes the anonymous relay's own state (rooms, tokens, tags, sequence numbers, sealed payloads passed through unopened), no Law-bearing value"
 "fn::AuthenticatedNode::from_seed" = "local: a 32-byte key seed for Ed25519 authentication, key material and not a Law-bearing value"
 "fn::AuthenticatedNode::seed" = "local: returns the 32-byte key seed it was built from, key material and not a Law-bearing value"

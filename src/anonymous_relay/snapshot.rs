@@ -12,9 +12,22 @@
 //! The bindings ([`ConnId`] to the tag it publishes as) are kept. A [`ConnId`] is the host's handle for
 //! one transport connection, and a host that restarts its process may keep the connections themselves
 //! open (a host that hibernates keeps its sockets). The host restores with the same numbering for the
-//! connections that are still open, and calls [`AnonymousRelayCore::close`] for each one that is gone
-//! (otherwise the room keeps routing to it, and its tag stays taken). It must not give a new
-//! connection a number a restored binding still uses.
+//! connections that are still open, and closes each one that is gone (otherwise the room keeps routing
+//! to it, and its tag stays taken): [`AnonymousRelayCore::bound_conns`] lists the restored bindings, and
+//! [`AnonymousRelayCore::close_all_except`] closes every one not in the set the host still holds. It
+//! must not give a new connection a number a restored binding still uses.
+//!
+//! # Limits
+//!
+//! [`AnonymousRelayCore::restore`] runs the core under the limits stored in the snapshot.
+//! [`AnonymousRelayCore::restore_with_limits`] runs it under limits the host passes instead (for example
+//! a new configuration deployed while the process was evicted): every check below is made against the
+//! new limits, so a state over any of them (a room with more members than the new `max_members`, a log
+//! longer than the new `max_log`, a payload over the new `max_payload`, a rate window counting more
+//! than the new `max_publishes_per_window`, ...) is refused with the same [`SnapshotError`] `restore`
+//! gives for a state over its stored limits; nothing is trimmed. After a restore under raised limits
+//! the core follows them (a payload the old `max_payload` refused is now accepted, the log grows to the
+//! new `max_log`), and its snapshot stores the new limits.
 //!
 //! # Clock
 //!
@@ -63,8 +76,8 @@
 //!   than `max_publishes_per_window`;
 //! - two connections of a room on one tag; a held-back payload at or before its tag's next sequence
 //!   number, or at `u64::MAX` (a publish of that number is refused);
-//! - a log that does not hold exactly the last `min(next index, max_log)` payloads with indices running
-//!   up to the next index; within one tag, a logged payload that neither follows the tag's previous one
+//! - a log longer than `min(next index, max_log)`, or whose indices do not run up to the next index
+//!   (a log shorter than that is a state the core reaches after `max_log` was raised, see below); within one tag, a logged payload that neither follows the tag's previous one
 //!   (`seq + 1`) nor starts its sequence again at 0 (a tag that made way and came back); for a tag the
 //!   room tracks, a latest logged payload other than the one just before its next sequence number.
 //!
@@ -239,52 +252,73 @@ impl AnonymousRelayCore {
     ///
     /// See [`SnapshotError`].
     pub fn restore(bytes: &[u8]) -> Result<Self, SnapshotError> {
-        let mut r = Reader(bytes);
-        if r.take::<4>()? != SNAPSHOT_MAGIC {
-            return Err(SnapshotError::BadMagic);
+        read(bytes, None)
+    }
+}
+
+/// The core `bytes` holds, run and checked under `run_under`, or under the stored limits when `None`
+fn read(bytes: &[u8], run_under: Option<Limits>) -> Result<AnonymousRelayCore, SnapshotError> {
+    let mut r = Reader(bytes);
+    if r.take::<4>()? != SNAPSHOT_MAGIC {
+        return Err(SnapshotError::BadMagic);
+    }
+    let version = u16::from_be_bytes(r.take()?);
+    if version != SNAPSHOT_VERSION {
+        return Err(SnapshotError::UnknownVersion(version));
+    }
+    let max_payload = r.usize()?;
+    let max_log = r.usize()?;
+    let max_pending = r.usize()?;
+    let max_rooms = r.usize()?;
+    let max_members = r.usize()?;
+    let max_publishes_per_window = r.u32()?;
+    let window = r.u64()?;
+    let max_rooms_per_conn = r.usize()?;
+    let max_tags_per_room = r.usize()?;
+    let stored = Limits {
+        max_payload,
+        max_log,
+        max_pending,
+        max_rooms,
+        max_members,
+        max_publishes_per_window,
+        window,
+        max_rooms_per_conn,
+        max_tags_per_room,
+    };
+    let limits = run_under.unwrap_or(stored);
+    let mut rooms = BTreeMap::new();
+    let mut rooms_of_conn: BTreeMap<ConnId, usize> = BTreeMap::new();
+    let room_count = r.count(limits.max_rooms)?;
+    for _ in 0..room_count {
+        let alias = RoomAlias::from_raw(r.take()?);
+        if rooms
+            .last_key_value()
+            .is_some_and(|(last, _)| *last >= alias)
+        {
+            return Err(SnapshotError::NotCanonical);
         }
-        let version = u16::from_be_bytes(r.take()?);
-        if version != SNAPSHOT_VERSION {
-            return Err(SnapshotError::UnknownVersion(version));
-        }
-        let max_payload = r.usize()?;
-        let max_log = r.usize()?;
-        let max_pending = r.usize()?;
-        let max_rooms = r.usize()?;
-        let max_members = r.usize()?;
-        let max_publishes_per_window = r.u32()?;
-        let window = r.u64()?;
-        let max_rooms_per_conn = r.usize()?;
-        let max_tags_per_room = r.usize()?;
-        let limits = Limits {
-            max_payload,
-            max_log,
-            max_pending,
-            max_rooms,
-            max_members,
-            max_publishes_per_window,
-            window,
-            max_rooms_per_conn,
-            max_tags_per_room,
-        };
-        let mut rooms = BTreeMap::new();
-        let mut rooms_of_conn: BTreeMap<ConnId, usize> = BTreeMap::new();
-        let room_count = r.count(limits.max_rooms)?;
-        for _ in 0..room_count {
-            let alias = RoomAlias::from_raw(r.take()?);
-            if rooms
-                .last_key_value()
-                .is_some_and(|(last, _)| *last >= alias)
-            {
-                return Err(SnapshotError::NotCanonical);
-            }
-            let room = read_room(&mut r, &limits, &mut rooms_of_conn)?;
-            rooms.insert(alias, room);
-        }
-        if !r.0.is_empty() {
-            return Err(SnapshotError::Trailing);
-        }
-        Ok(Self { limits, rooms })
+        let room = read_room(&mut r, &limits, &mut rooms_of_conn)?;
+        rooms.insert(alias, room);
+    }
+    if !r.0.is_empty() {
+        return Err(SnapshotError::Trailing);
+    }
+    Ok(AnonymousRelayCore { limits, rooms })
+}
+
+impl AnonymousRelayCore {
+    /// A core in the state `bytes` holds, run under `limits` instead of the limits stored in the snapshot.
+    ///
+    /// The state is checked against `limits`: a state over any of them is refused (see
+    /// [the module documentation](self)). The bytes are read and checked as by
+    /// [`restore`](Self::restore) otherwise.
+    ///
+    /// # Errors
+    ///
+    /// See [`SnapshotError`].
+    pub fn restore_with_limits(bytes: &[u8], limits: Limits) -> Result<Self, SnapshotError> {
+        read(bytes, Some(limits))
     }
 }
 
@@ -383,9 +417,11 @@ fn read_room(
         add_tag(tag)?;
         rate.insert(tag, (start, count));
     }
-    // the log holds exactly the last min(next index, max_log) payloads, ending just before the next index
-    let should_keep = next_index.min(u64::try_from(limits.max_log).unwrap_or(u64::MAX));
-    if u64::from(r.u32()?) != should_keep {
+    // the log holds the last payloads, at most min(next index, max_log), ending just before the next
+    // index (fewer than that after max_log was raised by `restore_with_limits`: the log then grows
+    // to the new limit)
+    let should_keep = u64::from(r.u32()?);
+    if should_keep > next_index.min(u64::try_from(limits.max_log).unwrap_or(u64::MAX)) {
         return Err(SnapshotError::Inconsistent);
     }
     let mut log: VecDeque<LogItem> = VecDeque::new();

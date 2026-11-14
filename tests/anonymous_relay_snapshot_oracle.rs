@@ -449,14 +449,17 @@ fn magic_version_and_trailing_bytes() {
 #[test]
 fn counts_and_lengths_that_do_not_match_the_bytes() {
     let good = golden_bytes();
-    let cases: [(usize, u32, SnapshotError); 7] = [
+    let cases: [(usize, u32, SnapshotError); 8] = [
         (OFF_ROOM_COUNT, 2, SnapshotError::Truncated),
         (OFF_ROOM_COUNT, 0, SnapshotError::Trailing),
         // counts over their limit are refused when read (before any entry)
         (OFF_ROOM_COUNT, u32::MAX, SnapshotError::Inconsistent),
         (OFF_MEMBER_COUNT, u32::MAX, SnapshotError::Inconsistent),
         (OFF_LOG_COUNT, u32::MAX, SnapshotError::Inconsistent),
-        (OFF_LOG_COUNT, 0, SnapshotError::Inconsistent),
+        // a log longer than min(next index 1, max_log 4); a shorter one (0) is a reachable state
+        // (after max_log was raised), so its item's bytes are then trailing
+        (OFF_LOG_COUNT, 2, SnapshotError::Inconsistent),
+        (OFF_LOG_COUNT, 0, SnapshotError::Trailing),
         // a payload length over max_payload (16), refused before its bytes
         (OFF_LOG_PAYLOAD_LEN, u32::MAX, SnapshotError::Inconsistent),
     ];

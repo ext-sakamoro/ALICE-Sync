@@ -94,15 +94,23 @@ pub enum Frame {
         to_index: u64,
     },
     /// Relay: the logged payloads of a range: `(index, publisher tag, seq, payload)`.
+    ///
+    /// A relay whose transport caps the size of a message answers with a prefix of the range
+    /// ([`AnonymousRelayCore::log_range_within`](crate::anonymous_relay::AnonymousRelayCore::log_range_within)):
+    /// the client asks again from the last index + 1, and an empty `items` means the range is done. The
+    /// frame is 45 bytes plus, per item, 36 bytes and its payload.
     Log {
         /// Room.
         room: RoomAlias,
         /// Index of the oldest payload still kept.
         first_index: u64,
-        /// The kept payloads of the range.
+        /// The kept payloads of the range, from its start: all of them, or the longest prefix that fits
+        /// the relay's reply size.
         items: Vec<(u64, SenderTag, u64, Vec<u8>)>,
     },
-    /// Client: leave the room on this connection.
+    /// Client: leave the room on this connection (the relay calls
+    /// [`AnonymousRelayCore::leave`](crate::anonymous_relay::AnonymousRelayCore::leave) for it; the
+    /// connection stays bound to its other rooms).
     Close {
         /// Room.
         room: RoomAlias,
@@ -166,6 +174,20 @@ const fn refusal_of(code: u8) -> Option<Refusal> {
 fn put_payload(out: &mut Vec<u8>, p: &[u8]) {
     out.extend_from_slice(&u32::try_from(p.len()).unwrap_or(u32::MAX).to_be_bytes());
     out.extend_from_slice(p);
+}
+
+fn put_log_item(out: &mut Vec<u8>, index: u64, from: SenderTag, seq: u64, payload: &[u8]) {
+    out.extend_from_slice(&index.to_be_bytes());
+    out.extend_from_slice(from.as_ref());
+    out.extend_from_slice(&seq.to_be_bytes());
+    put_payload(out, payload);
+}
+
+/// How many bytes one item adds to a [`Frame::Log`], as [`Frame::encode`] writes it
+pub(crate) fn log_item_len(index: u64, from: SenderTag, seq: u64, payload: &[u8]) -> usize {
+    let mut out = Vec::new();
+    put_log_item(&mut out, index, from, seq, payload);
+    out.len()
 }
 
 impl Frame {
@@ -235,10 +257,7 @@ impl Frame {
                     &u32::try_from(items.len()).unwrap_or(u32::MAX).to_be_bytes(),
                 );
                 for (index, from, seq, payload) in items {
-                    out.extend_from_slice(&index.to_be_bytes());
-                    out.extend_from_slice(from.as_ref());
-                    out.extend_from_slice(&seq.to_be_bytes());
-                    put_payload(&mut out, payload);
+                    put_log_item(&mut out, *index, *from, *seq, payload);
                 }
             }
             Self::Close { room } => {

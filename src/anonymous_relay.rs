@@ -33,9 +33,17 @@
 //! The whole state can be written out and read back ([`AnonymousRelayCore::snapshot`],
 //! [`AnonymousRelayCore::restore`]), so a host that may evict and restart the process holding the core
 //! keeps every room across the restart; see [`snapshot`] for the format and what the host must do about
-//! connections.
+//! connections ([`AnonymousRelayCore::bound_conns`], [`AnonymousRelayCore::close_all_except`]) and
+//! about limits that changed while it was down ([`AnonymousRelayCore::restore_with_limits`]).
+//!
+//! For the wire ([`crate::anonymous_relay_wire`]): [`Out::into_wire`] gives each frame the relay sends
+//! with its connection, [`LogRange::into_wire`] the answer to a log read, and
+//! [`AnonymousRelayCore::log_range_within`] keeps that answer within a transport's message size. The
+//! wire's `Close` names a room and maps to [`AnonymousRelayCore::leave`].
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use crate::anonymous_relay_wire::Frame;
 
 pub mod snapshot;
 
@@ -182,7 +190,8 @@ pub enum Refusal {
     NotBound,
     /// Another bound connection holds the sender tag.
     TagInUse,
-    /// The payload is larger than [`Limits::max_payload`].
+    /// The payload is larger than [`Limits::max_payload`]; or, for a log read with a byte budget
+    /// ([`AnonymousRelayCore::log_range_within`]), the first payload of the range does not fit it.
     TooLarge,
     /// The publisher is more than [`Limits::max_pending`] payloads ahead of the next expected one.
     TooFarAhead,
@@ -268,6 +277,55 @@ pub struct LogRange {
     pub first_index: u64,
     /// The payloads in the range that are still kept.
     pub items: Vec<LogItem>,
+}
+
+impl Out {
+    /// The connection the frame goes to, and the frame as [`anonymous_relay_wire`](crate::anonymous_relay_wire)
+    /// sends it.
+    #[must_use]
+    pub fn into_wire(self) -> (ConnId, Frame) {
+        match self {
+            Self::Bound { to, room } => (to, Frame::Bound { room }),
+            Self::Forward {
+                to,
+                room,
+                from,
+                seq,
+                payload,
+            } => (
+                to,
+                Frame::Forward {
+                    room,
+                    from,
+                    seq,
+                    payload,
+                },
+            ),
+            Self::Resend {
+                to,
+                room,
+                from,
+                to_seq,
+            } => (to, Frame::Resend { room, from, to_seq }),
+            Self::Refused { to, room, reason } => (to, Frame::Refused { room, reason }),
+        }
+    }
+}
+
+impl LogRange {
+    /// The range as the [`Log`](crate::anonymous_relay_wire::Frame::Log) frame answering a read of `room`.
+    #[must_use]
+    pub fn into_wire(self, room: RoomAlias) -> Frame {
+        Frame::Log {
+            room,
+            first_index: self.first_index,
+            items: self
+                .items
+                .into_iter()
+                .map(|i| (i.index, i.from, i.seq, i.payload))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -505,12 +563,64 @@ impl AnonymousRelayCore {
         Ok(LogRange { first_index, items })
     }
 
+    /// Read log indices `from..to` (end exclusive) of a room, for a bound connection, as the longest
+    /// prefix of the range whose [`Log`](crate::anonymous_relay_wire::Frame::Log) frame encodes to at
+    /// most `max_bytes` bytes (measured with the wire's own encoder: 45 bytes, plus 36 bytes and the
+    /// payload per item).
+    ///
+    /// For a transport that caps the size of a message: answer a read with this, and the reader asks
+    /// again from the last index it got + 1; an empty reply means the range is done. A payload that
+    /// cannot fit on its own is refused rather than skipped or returned as an empty reply, so a reader
+    /// never loops on empty answers; a host avoids it by keeping [`Limits::max_payload`] at most
+    /// `max_bytes - 81`.
+    ///
+    /// # Errors
+    ///
+    /// As [`log_range`](Self::log_range); and [`Refusal::TooLarge`] when not even the first payload fits.
+    pub fn log_range_within(
+        &self,
+        conn: ConnId,
+        room: RoomAlias,
+        from: u64,
+        to: u64,
+        max_bytes: usize,
+    ) -> Result<LogRange, Refusal> {
+        let r = self.rooms.get(&room).ok_or(Refusal::NoRoom)?;
+        if !r.members.contains_key(&conn) {
+            return Err(Refusal::NotBound);
+        }
+        let first_index = r.log.front().map_or(r.next_index, |i| i.index);
+        // the frame's head, measured by the encoder itself
+        let mut used = Frame::Log {
+            room,
+            first_index,
+            items: Vec::new(),
+        }
+        .encode()
+        .len();
+        if used > max_bytes {
+            return Err(Refusal::TooLarge);
+        }
+        let mut items = Vec::new();
+        for i in r.log.iter().filter(|i| i.index >= from && i.index < to) {
+            let n = crate::anonymous_relay_wire::log_item_len(i.index, i.from, i.seq, &i.payload);
+            match used.checked_add(n) {
+                Some(total) if total <= max_bytes => used = total,
+                // not even the first payload fits: refused, so the reader never gets an empty
+                // reply (which means done) for a range that still has payloads
+                _ if items.is_empty() => return Err(Refusal::TooLarge),
+                _ => break,
+            }
+            items.push(i.clone());
+        }
+        Ok(LogRange { first_index, items })
+    }
+
     /// How many sender tags `room` keeps state for (0 for a room not open).
     #[must_use]
     pub fn tags_held(&self, room: RoomAlias) -> usize {
         self.rooms.get(&room).map_or(0, |r| {
-            let mut tags: std::collections::BTreeSet<SenderTag> =
-                r.next_seq.keys().copied().collect();
+            let mut tags: BTreeSet<SenderTag> = r.next_seq.keys().copied().collect();
             tags.extend(r.held.keys().copied());
             tags.extend(r.members.values().copied());
             tags.len()
@@ -523,13 +633,46 @@ impl AnonymousRelayCore {
             r.members.remove(&conn);
         }
     }
+
+    /// Unbind connection `conn` from `room` only (the wire's
+    /// [`Close`](crate::anonymous_relay_wire::Frame::Close) names a room); its bindings to other rooms,
+    /// the room and its log stay. Nothing happens when `conn` is not bound to `room`.
+    pub fn leave(&mut self, conn: ConnId, room: RoomAlias) {
+        if let Some(r) = self.rooms.get_mut(&room) {
+            r.members.remove(&conn);
+        }
+    }
+
+    /// Every connection bound to at least one room, each once, in ascending order.
+    ///
+    /// After a [`restore`](Self::restore) this is the list of connections the host has to account for:
+    /// each one is either still open (the host keeps routing to it under the same number) or gone (the
+    /// host closes it, for example with [`close_all_except`](Self::close_all_except)).
+    pub fn bound_conns(&self) -> impl Iterator<Item = ConnId> {
+        self.rooms
+            .values()
+            .flat_map(|r| r.members.keys().copied())
+            .collect::<BTreeSet<ConnId>>()
+            .into_iter()
+    }
+
+    /// [`close`](Self::close) every bound connection not in `live`, and return the ones closed, in
+    /// ascending order. The state afterwards is the state after calling `close` for each of them.
+    ///
+    /// A host that restored the core calls this with the connections it still holds open.
+    pub fn close_all_except(&mut self, live: &BTreeSet<ConnId>) -> Vec<ConnId> {
+        let dead: Vec<ConnId> = self.bound_conns().filter(|c| !live.contains(c)).collect();
+        for &conn in &dead {
+            self.close(conn);
+        }
+        dead
+    }
 }
 
 impl Room {
     /// The tags this room keeps state for: held by a connection, or with a sequence, held payloads or a rate
-    fn tags(&self) -> std::collections::BTreeSet<SenderTag> {
-        let mut tags: std::collections::BTreeSet<SenderTag> =
-            self.members.values().copied().collect();
+    fn tags(&self) -> BTreeSet<SenderTag> {
+        let mut tags: BTreeSet<SenderTag> = self.members.values().copied().collect();
         tags.extend(self.next_seq.keys().copied());
         tags.extend(self.held.keys().copied());
         tags.extend(self.rate.keys().copied());
@@ -566,8 +709,7 @@ impl Room {
     /// Forget the tags no connection holds and with nothing held back (their sequence and rate go with them:
     /// a member that comes back under such a tag starts its sequence again at 0)
     fn prune_tags(&mut self) {
-        let held_by_member: std::collections::BTreeSet<SenderTag> =
-            self.members.values().copied().collect();
+        let held_by_member: BTreeSet<SenderTag> = self.members.values().copied().collect();
         let gone: Vec<SenderTag> = self
             .tags()
             .into_iter()
