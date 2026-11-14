@@ -55,7 +55,7 @@ dependencies = [
 [[package]]
 name = "alice-analytics"
 version = "0.7.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Analytics?branch=main#6ef41bc5abd923ec2fdd47618f8f2ac7d6b7b707"
+source = "git+https://github.com/ext-sakamoro/ALICE-Analytics?branch=main#fd09b3e447107fb9a57750b8077b30fe696f9d6d"
 dependencies = [
  "alice-det-math",
  "libm",
@@ -162,7 +162,7 @@ dependencies = [
 [[package]]
 name = "alice-physics"
 version = "4.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Physics?branch=main#5fc440bf9a7aa02f7923edafb6a409fe070d4781"
+source = "git+https://github.com/ext-sakamoro/ALICE-Physics?branch=main#5e23fdf18315958031418d20111779a9faf2170a"
 dependencies = [
  "alice-physics-core",
 ]
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "alice-physics-core"
 version = "4.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Physics?branch=main#5fc440bf9a7aa02f7923edafb6a409fe070d4781"
+source = "git+https://github.com/ext-sakamoro/ALICE-Physics?branch=main#5e23fdf18315958031418d20111779a9faf2170a"
 dependencies = [
  "alice-det-math",
  "sha2",

@@ -13,7 +13,7 @@
 //! # Hex form
 //!
 //! ```text
-//! cfd47e946abf8993c29f3a259d34d79ca437fdc243dcf008a97b7407b24d46c7
+//! 9da778c63409a1f9ab9d24b58d8920821a6fb53255cdd8d6bfd3f38efe190f6d
 //! ```
 //!
 //! # Entries
@@ -100,18 +100,18 @@ pub const SYNC_SEMANTICS_PINS: [(&str, [u8; 32]); 7] = [
     ),
     (
         "alice-physics",
-        hex32("c82742de000629b51a5fa1717bb68620a683460617a89dc009c2374e7e9a470f"),
+        hex32("07035121d7e6f509101156013afca862f6b3e3782029db9bb003db38e8844e36"),
     ),
     (
         "alice-analytics",
-        hex32("847535174fa305517aa11fe8b98f604d1b1ec48abaa23d2b1dce9ccc8aa8884f"),
+        hex32("67650b7f63ebe71670b7fd9b5781fe276f515dbcee4497169cdd74f1c19a08d4"),
     ),
 ];
 
 /// The semantics identifier of this crate: the fold of
 /// [`SYNC_SEMANTICS_PINS`] (see the module documentation).
 pub const SYNC_SEMANTICS_ID: [u8; 32] =
-    hex32("cfd47e946abf8993c29f3a259d34d79ca437fdc243dcf008a97b7407b24d46c7");
+    hex32("9da778c63409a1f9ab9d24b58d8920821a6fb53255cdd8d6bfd3f38efe190f6d");
 
 /// Earlier values of [`SYNC_SEMANTICS_ID`] whose pinned bits this release
 /// still reproduces (none yet: this is the first identifier).
