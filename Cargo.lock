@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "alice-channel"
 version = "0.1.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#438f2f63bde7d2f15722ce805309d15066a10141"
+source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#06df20bc25bcc4f21de79d5239d58682cf24398a"
 dependencies = [
  "alice-crypto",
  "alice-identity",
@@ -153,7 +153,7 @@ source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#6269efc2
 [[package]]
 name = "alice-identity"
 version = "3.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#8c3ef375d401c4f7ac321cbfc3d2518c99841473"
+source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#7ad904fa95c4b63718561663b59004bda626247d"
 dependencies = [
  "alice-crypto",
  "alice-sign",
@@ -203,6 +203,7 @@ dependencies = [
  "alice-identity",
  "alice-physics",
  "alice-sign",
+ "alice-websocket",
  "bitcode",
  "criterion",
  "mdns-sd",
@@ -214,6 +215,11 @@ dependencies = [
  "tokio",
  "wide",
 ]
+
+[[package]]
+name = "alice-websocket"
+version = "2.0.0"
+source = "git+https://github.com/ext-sakamoro/ALICE-WebSocket?branch=main#7cd1ec6937825e1b2c991374e139d13e2ec754bc"
 
 [[package]]
 name = "alice-zip"

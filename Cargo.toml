@@ -29,6 +29,9 @@ alice-analytics = { git = "https://github.com/ext-sakamoro/ALICE-Analytics", bra
 mdns-sd = { version = "0.11", optional = true }
 # the secure transport: the channel (feature secure-transport)
 alice-channel = { version = "0.1.0", git = "https://github.com/ext-sakamoro/ALICE-Channel", branch = "main", features = ["async"], optional = true }
+# the anonymous relay's blocking client (feature anonymous-relay-client): the WebSocket client the relay hop
+# runs over (the caller passes the mask source: alice-websocket's OsMask with its feature `rng`, for example)
+alice-websocket = { version = "2.0", git = "https://github.com/ext-sakamoro/ALICE-WebSocket", branch = "main", optional = true }
 # signed events (authorship) and the secure transport: the device certificates and the checkpoint
 # signatures; Ed25519 and SHA-256 from alice-sign (ALICE repositories taken by git from main, as their
 # other consumers take them, so a build with downstream consumers links one copy of each; the lock is the pin)
@@ -61,6 +64,9 @@ serde-raw = []
 ffi = ["std"]     # C-ABI FFI for Unity/UE5
 cloud = ["std"]  # Cloud-side multi-device spatial synchronization
 secure-transport = ["async", "dep:alice-channel"]  # SyncTransport over the authenticated, encrypted channel
+# the anonymous relay's blocking client: RelayConnection (WebSocket, then the anonymous handshake to the relay's
+# service certificate) and fetch_relay_cert; the sans-I/O RelayClient needs no feature
+anonymous-relay-client = ["std", "dep:alice-channel", "dep:alice-websocket"]
 mdns = ["dep:mdns-sd", "async"]  # mDNS LAN auto-discovery
 all-bridges = ["physics", "telemetry", "cache", "auth", "codec", "analytics"]  # All integration bridges
 

@@ -624,42 +624,49 @@ command -v python >/dev/null 2>&1 || python() { python3 "$@"; }
 step "ci.yml / fmt: run"
 (
   gh_step ci.yml.fmt
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo fmt --all -- --check )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo fmt --all -- --check )
 )
 
 step "ci.yml / clippy: Clippy (default)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo clippy --all-targets -- -D warnings )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo clippy --all-targets -- -D warnings )
 )
 
 step "ci.yml / clippy: Clippy (all native features)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo clippy --all-targets --features "$NATIVE_FEATURES" -- -D warnings )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo clippy --all-targets --features "$NATIVE_FEATURES" -- -D warnings )
 )
 
 step "ci.yml / clippy: Clippy (no default features)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo clippy --lib --no-default-features -- -D warnings )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo clippy --lib --no-default-features -- -D warnings )
+)
+
+step "ci.yml / clippy: Clippy (anonymous relay client feature alone)"
+(
+  gh_step ci.yml.clippy
+relint
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo clippy --all-targets --features anonymous-relay-client -- -D warnings )
 )
 
 step "ci.yml / clippy: Clippy library configuration (tests)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_clippy_lib_gate.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_clippy_lib_gate.py )
 )
 
 step "ci.yml / clippy: Clippy library configuration (generated, canary flagged)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/clippy_lib_gate.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/clippy_lib_gate.py )
 )
 
 step "ci.yml / clippy: Clippy library code (default, all native features, python)"
@@ -667,7 +674,7 @@ step "ci.yml / clippy: Clippy library code (default, all native features, python
   gh_step ci.yml.clippy
 relint
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CLIPPY_CONF_DIR=".github/clippy-lib"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CLIPPY_CONF_DIR=".github/clippy-lib"
   cargo clippy --lib -- -D clippy::disallowed_methods -D clippy::disallowed_types
   cargo clippy --lib --features "$NATIVE_FEATURES" -- -D clippy::disallowed_methods -D clippy::disallowed_types
   cargo clippy --lib --features python -- -D clippy::disallowed_methods -D clippy::disallowed_types
@@ -678,47 +685,47 @@ step "ci.yml / clippy: Clippy canary data (generator tests)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_gen_clippy_canary_calls.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_gen_clippy_canary_calls.py )
 )
 
 step "ci.yml / clippy: Clippy canary data (generated from clippy.toml, no drift)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/gen_clippy_canary_calls.py --check )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/gen_clippy_canary_calls.py --check )
 )
 
 step "ci.yml / clippy: Clippy canary (tests)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_clippy_canary.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_clippy_canary.py )
 )
 
 step "ci.yml / clippy: Clippy canary (every planted banned call is flagged)"
 (
   gh_step ci.yml.clippy
 relint
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/clippy_canary.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/clippy_canary.py )
 )
 
 step "ci.yml / clippy: API boundary (tests)"
 (
   gh_step ci.yml.clippy
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_api_boundary.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_api_boundary.py )
 )
 
 step "ci.yml / clippy: API boundary (rustdoc JSON, every item decided)"
 (
   gh_step ci.yml.clippy
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/api_boundary.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/api_boundary.py )
 )
 
 step "ci.yml / clippy: Upstream previous identifiers (test, then whole-list uses only)"
 (
   gh_step ci.yml.clippy
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   python3 scripts/test_upstream_previous_ids_check.py
   python3 scripts/upstream_previous_ids_check.py
 )
@@ -727,14 +734,14 @@ step "ci.yml / clippy: Upstream previous identifiers (test, then whole-list uses
 step "ci.yml / clippy: Identifier moves (tests)"
 (
   gh_step ci.yml.clippy
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_id_move_check.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_id_move_check.py )
 )
 
 step "ci.yml / clippy: Gated test files are run"
 (
   gh_step ci.yml.clippy
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   python3 scripts/test_gated_tests.py
   python3 scripts/gated_tests.py
 )
@@ -743,26 +750,26 @@ step "ci.yml / clippy: Gated test files are run"
 step "ci.yml / clippy: Identifier moves (the release compared with)"
 (
   gh_step ci.yml.clippy
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; echo "crate=$(python3 scripts/id_move_check.py --print-base)" >> "$GITHUB_OUTPUT" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; echo "crate=$(python3 scripts/id_move_check.py --print-base)" >> "$GITHUB_OUTPUT" )
 )
 
 step "ci.yml / clippy: Identifier moves (against the published release)"
 (
   gh_step ci.yml.clippy
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/id_move_check.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/id_move_check.py )
 )
 
 step "ci.yml / test: Build (no default features)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo build --lib --no-default-features )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo build --lib --no-default-features )
 )
 
 step "ci.yml / test: No bincode in any build"
 (
   gh_step ci.yml.test
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   set -euo pipefail
   for flags in --no-default-features "" --all-features; do
     deps="$(cargo tree -e normal ${flags} --prefix none --format '{p}')"
@@ -776,7 +783,7 @@ step "ci.yml / test: Shared files equal ALICE-Law's table"
 (
   gh_step ci.yml.test
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   PY=$(command -v python3 || command -v python)
   "$PY" scripts/test_shared_files.py
   scripts/shared_files.sh
@@ -786,14 +793,14 @@ step "ci.yml / test: Shared files equal ALICE-Law's table"
 step "ci.yml / test: G11 table matches the declared gates"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/g11_table.sh )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/g11_table.sh )
 )
 
 step "ci.yml / msrv: Check (default + all native features)"
 (
   gh_step ci.yml.msrv
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   v=$(cargo +1.88 --version)
   case "$v" in "cargo 1.88."*) ;; *) echo "::error::not 1.88: $v"; exit 1 ;; esac
   cargo +1.88 check --lib
@@ -804,32 +811,32 @@ step "ci.yml / msrv: Check (default + all native features)"
 step "ci.yml / doc: run"
 (
   gh_step ci.yml.doc
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" RUSTDOCFLAGS="-Dwarnings"; cargo doc --no-deps --features "$NATIVE_FEATURES" )
 )
 
 step "ci.yml / feature-powerset: Check every feature pair (python 除外)"
 (
   gh_step ci.yml.feature-powerset
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo hack check --lib --feature-powerset --depth 2 --exclude-features python --no-dev-deps )
 )
 
 step "ci.yml / entropy-guard: Entropy guard (tests)"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_entropy_guard.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_entropy_guard.py )
 )
 
 step "ci.yml / entropy-guard: Entropy guard"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/entropy_guard.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/entropy_guard.py )
 )
 
 step "ci.yml / entropy-guard: Order guard (test, then check)"
 (
   gh_step ci.yml.entropy-guard
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   python3 scripts/test_order_guard.py
   python3 scripts/order_guard.py
 )
@@ -838,32 +845,32 @@ step "ci.yml / entropy-guard: Order guard (test, then check)"
 step "ci.yml / entropy-guard: Serialize guard (tests)"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_serialize_guard.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_serialize_guard.py )
 )
 
 step "ci.yml / entropy-guard: Serialize guard"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/serialize_guard.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/serialize_guard.py )
 )
 
 step "ci.yml / entropy-guard: Boundary guard (tests)"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_boundary_guard.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_boundary_guard.py )
 )
 
 step "ci.yml / entropy-guard: Boundary guard"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/boundary_guard.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/boundary_guard.py )
 )
 
 step "ci.yml / entropy-guard: libm dependency guard (test, then check)"
 (
   gh_step ci.yml.entropy-guard
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   # the guard parses Cargo.toml with tomllib (Python 3.11+); this job has
   # no setup-python, so fail with exit 2 instead of skipping if it is missing
   python3 -c 'import sys, importlib.util as u; print(sys.version); sys.exit(0 if u.find_spec("tomllib") else 2)'
@@ -876,7 +883,7 @@ step "ci.yml / entropy-guard: Build configuration guard (test, then check)"
 (
   gh_step ci.yml.entropy-guard
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   python3 scripts/test_build_config_guard.py
   python3 scripts/build_config_guard.py
   python3 scripts/test_build_flags_check.py
@@ -886,13 +893,13 @@ step "ci.yml / entropy-guard: Build configuration guard (test, then check)"
 step "ci.yml / entropy-guard: run_tests.sh (tests)"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_run_tests.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_run_tests.py )
 )
 
 step "ci.yml / entropy-guard: changed_paths.py (tests)"
 (
   gh_step ci.yml.entropy-guard
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; python3 scripts/test_changed_paths.py )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; python3 scripts/test_changed_paths.py )
 )
 
 step "ci.yml / actionlint: actionlint"
@@ -905,7 +912,7 @@ step "ci.yml / actionlint: workflow-timeouts"
 (
   gh_step ci.yml.actionlint
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   python3 scripts/test_workflow_timeouts.py
   python3 scripts/workflow_timeouts.py
 )
@@ -914,7 +921,7 @@ step "ci.yml / actionlint: workflow-timeouts"
 step "security-audit.yml / deny: Run cargo deny check all"
 (
   gh_step security-audit.yml.deny
-( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --features "$NATIVE_FEATURES" check all )
+( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo deny --features "$NATIVE_FEATURES" check all )
 )
 
 step "security-audit.yml / unused-deps: cargo machete"
@@ -927,7 +934,7 @@ step "security-audit.yml / stub-guard: Block panic!(STUB) in src/**"
 (
   gh_step security-audit.yml.stub-guard
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rnE 'panic!\([^)]*STUB' \
     src/ --include="*.rs" \
@@ -948,7 +955,7 @@ step "security-audit.yml / stub-guard: Detect todo! / unimplemented! (informatio
 (
   gh_step security-audit.yml.stub-guard
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rnE 'todo!\(|unimplemented!\(' \
     src/ --include="*.rs" \
@@ -970,7 +977,7 @@ step "security-audit.yml / stub-guard: Detect dbg!() residual in src/**"
 (
   gh_step security-audit.yml.stub-guard
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rn 'dbg!(' src/ --include="*.rs" || true)
   if [ -n "$hits" ]; then
@@ -986,7 +993,7 @@ step "security-audit.yml / stub-guard: Detect TODO / FIXME / XXX / HACK (informa
 (
   gh_step security-audit.yml.stub-guard
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   set -eo pipefail
   hits=$(grep -rnE 'TODO|FIXME|XXX|HACK' src/ --include="*.rs" || true)
   if [ -n "$hits" ]; then
@@ -1091,38 +1098,44 @@ fi
 step "ci.yml / test: Test (default = std)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,authorship=18,persist_state_id=10,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1 -- cargo test )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,authorship=18,persist_state_id=10,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13 -- cargo test )
 )
 
 step "ci.yml / test: Test (all native features)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1 -- cargo test --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,anonymous_relay_client_connection=7 -- cargo test --features "$NATIVE_FEATURES" )
+)
+
+step "ci.yml / test: Test (anonymous relay client feature alone)"
+(
+  gh_step ci.yml.test
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh anonymous_relay_client_connection=7,anonymous_relay_client_oracle=13 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle )
 )
 
 step "ci.yml / test: Analytic oracle (async + physics + codec)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo test --test analytic_oracle --features "async,physics,codec" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo test --test analytic_oracle --features "async,physics,codec" )
 )
 
 step "ci.yml / test: Float environment (debug)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh float_environment=2 -- cargo test --test float_environment )
 )
 
 step "ci.yml / test: Doc tests"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"; cargo test --doc --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; cargo test --doc --features "$NATIVE_FEATURES" )
 )
 
 step "ci.yml / test: No negated fma result (syntax tree, tests then check)"
 (
   gh_step ci.yml.test
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
   cargo fmt --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --check
   cargo test --quiet --locked --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml
   cargo run --quiet --locked --release --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --root .
@@ -1133,7 +1146,7 @@ step "security-audit.yml / audit: Run cargo audit"
 (
   gh_step security-audit.yml.audit
 (
-  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
+  export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"
   cargo audit --deny yanked \
     --ignore RUSTSEC-2024-0436 \
     --ignore RUSTSEC-2025-0020 \
@@ -1151,7 +1164,7 @@ step "security-audit.yml / coverage: Run coverage"
   log="$(mktemp)"
   set +e
   {
-    ( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo llvm-cov --lib --summary-only 2>&1 )
+    ( export CARGO_TERM_COLOR="always" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" CARGO_NET_RETRY="5" CARGO_HTTP_MULTIPLEXING="false"; cargo llvm-cov --lib --summary-only 2>&1 )
   } 2>&1 | tee "${log}"
   rc=${PIPESTATUS[0]}
   n=$(sed $'s/\033\[[0-9;]*m//g' "${log}" | awk '$1 == "TOTAL" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {n = $2 - $3} END {print n + 0}')
