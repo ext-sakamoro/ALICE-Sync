@@ -6,7 +6,7 @@
 //! The relay's certificate is a service certificate (`did:alice-service:relay`) signed by a fixed
 //! test-only operator key, and the client trusts it through `PinnedPeer::service`, as a member would.
 //!
-//! `fetch_relay_cert` is run against canned HTTP responses.
+//! `fetch_relay_cert` and `fetch_relay_revocations` are run against canned HTTP responses.
 #![cfg(feature = "anonymous-relay-client")]
 // a test server runs on its own thread; no result of the library is combined across threads here
 #![allow(clippy::disallowed_methods)]
@@ -18,6 +18,7 @@ use std::time::Duration;
 use alice_channel::noise::{Keypair, MAX_MESSAGE};
 use alice_channel::{accept_messages, ChannelError, MessageIo, PinnedPeer};
 use alice_identity::artifact::Revocation;
+use alice_identity::cert_revocation::{CertRevocations, RevocationList, RevocationListError};
 use alice_identity::device_cert::{DeviceCert, MAX_DEVICE_CERT_LEN};
 use alice_identity::service_cert::issue_service_cert;
 use alice_sign::KeyPair;
@@ -25,7 +26,8 @@ use alice_sync::anonymous_relay::{
     AnonymousRelayCore, ConnId, Limits, RoomAlias, RoomToken, SenderTag,
 };
 use alice_sync::anonymous_relay_client::{
-    fetch_relay_cert, Event, FetchCertError, RelayClient, RelayConnection, RelayConnectionError,
+    fetch_relay_cert, fetch_relay_revocations, Event, FetchError, RelayClient, RelayConnection,
+    RelayConnectionError, MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS,
 };
 use alice_sync::anonymous_relay_wire::Frame;
 use alice_websocket::{Frame as WsFrame, HandshakeRequest, HandshakeResponse, MaskSource, Opcode};
@@ -353,11 +355,11 @@ fn a_host_name_that_would_break_the_request_is_refused() {
     assert!(matches!(result, Err(RelayConnectionError::BadHost)));
     assert_eq!(
         fetch_relay_cert(connect(&listener), "").err(),
-        Some(FetchCertError::BadHost)
+        Some(FetchError::BadHost)
     );
 }
 
-/// Serve one canned response to `GET /relay-cert`, then hold the connection open until the client closes
+/// Serve one canned response to a `GET`, then hold the connection open until the client closes
 /// it (so a reader that does not stop on its own waits instead of seeing the end of the stream); returns
 /// the request head the server read
 fn serve(listener: TcpListener, response: Vec<u8>) -> impl FnOnce() -> String {
@@ -421,7 +423,7 @@ fn fetch_relay_cert_reports_a_status_other_than_200() {
     let request = serve(listener, response("404 Not Found", Some(9), b"not found"));
     assert_eq!(
         fetch_relay_cert(stream, "relay.test").err(),
-        Some(FetchCertError::Status(404))
+        Some(FetchError::Status(404))
     );
     request();
 }
@@ -449,7 +451,7 @@ fn fetch_relay_cert_refuses_a_body_over_the_cap() {
     );
     assert_eq!(
         fetch_relay_cert(stream, "relay.test").err(),
-        Some(FetchCertError::TooLarge)
+        Some(FetchError::TooLarge)
     );
     request();
     // without a length, reading stops one byte past the cap (the server sends more and keeps the
@@ -459,7 +461,7 @@ fn fetch_relay_cert_refuses_a_body_over_the_cap() {
     let request = serve(listener, response("200 OK", None, &vec![0u8; over + 4_096]));
     assert_eq!(
         fetch_relay_cert(stream, "relay.test").err(),
-        Some(FetchCertError::TooLarge)
+        Some(FetchError::TooLarge)
     );
     request();
 }
@@ -478,12 +480,149 @@ fn fetch_relay_cert_refuses_a_transfer_coding_and_a_malformed_head() {
         let request = serve(listener, bad.clone());
         assert_eq!(
             fetch_relay_cert(stream, "relay.test").err(),
-            Some(FetchCertError::Malformed),
+            Some(FetchError::Malformed),
             "{}",
             String::from_utf8_lossy(&bad)
         );
         request();
     }
+}
+
+/// The operator's list revoking the relay's device id (and one other), sequence 3
+fn revocation_list() -> RevocationList {
+    let other = alice_identity::device_cert::DeviceId::from_raw([0x99; 16]);
+    RevocationList::issue(
+        &operator(),
+        3,
+        ISSUED + 60,
+        &[relay_cert().device_id(), other],
+    )
+}
+
+#[test]
+fn fetch_relay_revocations_reads_a_200_body_as_the_list_unverified() {
+    let list = revocation_list();
+    let body = list.to_bytes();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    let request = serve(listener, response("200 OK", Some(body.len()), &body));
+    let got = fetch_relay_revocations(stream, "relay.test").unwrap();
+    assert_eq!(got, list);
+    let head = request();
+    assert!(
+        head.starts_with("GET /relay-revocations HTTP/1.1\r\n"),
+        "{head}"
+    );
+    assert!(head.contains("\r\nHost: relay.test\r\n"), "{head}");
+
+    // returned as decoded, not verified: a list under another key decodes, and only the caller's check
+    // under the operator key refuses it
+    let foreign = RevocationList::issue(&KeyPair::from_seed([0x0f; 32]), 1, ISSUED, &[]).to_bytes();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    let request = serve(listener, response("200 OK", Some(foreign.len()), &foreign));
+    let got = fetch_relay_revocations(stream, "relay.test").unwrap();
+    request();
+    assert_eq!(
+        CertRevocations::new().accept(got, &operator().public()),
+        Err(RevocationListError::IssuerMismatch)
+    );
+}
+
+#[test]
+fn fetch_relay_revocations_reports_404_and_refuses_a_body_that_is_not_a_list() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    let request = serve(listener, response("404 Not Found", Some(9), b"not found"));
+    assert_eq!(
+        fetch_relay_revocations(stream, "relay.test").err(),
+        Some(FetchError::Status(404))
+    );
+    request();
+    // a certificate is not a list
+    let body = relay_cert().to_bytes();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    let request = serve(listener, response("200 OK", Some(body.len()), &body));
+    assert!(matches!(
+        fetch_relay_revocations(stream, "relay.test"),
+        Err(FetchError::Revocations(_))
+    ));
+    request();
+}
+
+/// The list's cap is its own (much larger than a certificate's): a list longer than a certificate is read,
+/// a declared length one past the cap is refused from the head, and without a length the reader stops one
+/// byte past the cap
+#[test]
+fn fetch_relay_revocations_has_its_own_cap() {
+    assert_eq!(
+        MAX_RELAY_REVOCATIONS_LEN,
+        1 + 32 + 8 + 8 + 4 + 16 * MAX_RELAY_REVOCATION_IDS + 64
+    );
+    // the longest list the cap admits is read whole
+    let ids: Vec<_> = (0..MAX_RELAY_REVOCATION_IDS)
+        .map(|i| {
+            let mut id = [0u8; 16];
+            id[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            alice_identity::device_cert::DeviceId::from_raw(id)
+        })
+        .collect();
+    let longest = RevocationList::issue(&operator(), 1, ISSUED, &ids);
+    let body = longest.to_bytes();
+    assert_eq!(body.len(), MAX_RELAY_REVOCATIONS_LEN);
+    assert!(body.len() > MAX_DEVICE_CERT_LEN);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    let request = serve(listener, response("200 OK", Some(body.len()), &body));
+    assert_eq!(
+        fetch_relay_revocations(stream, "relay.test").unwrap(),
+        longest
+    );
+    request();
+    // without a length too
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect(&listener);
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        read_head(&mut s);
+        s.write_all(&response("200 OK", None, &body)).unwrap();
+    });
+    assert_eq!(
+        fetch_relay_revocations(stream, "relay.test").unwrap(),
+        longest
+    );
+    server.join().unwrap();
+
+    // one past the cap, declared: refused from the head (the server sends far less and keeps the
+    // connection open, so a reader that went on reading would time out instead)
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect_short(&listener);
+    let request = serve(
+        listener,
+        response("200 OK", Some(MAX_RELAY_REVOCATIONS_LEN + 1), &[0u8; 16]),
+    );
+    assert_eq!(
+        fetch_relay_revocations(stream, "relay.test").err(),
+        Some(FetchError::TooLarge)
+    );
+    request();
+    // without a length, the stream going on past the cap
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = connect_short(&listener);
+    let request = serve(
+        listener,
+        response(
+            "200 OK",
+            None,
+            &vec![0u8; MAX_RELAY_REVOCATIONS_LEN + 4_096],
+        ),
+    );
+    assert_eq!(
+        fetch_relay_revocations(stream, "relay.test").err(),
+        Some(FetchError::TooLarge)
+    );
+    request();
 }
 
 /// A read timeout in the middle of a message is retryable: the relay writes the first bytes of its

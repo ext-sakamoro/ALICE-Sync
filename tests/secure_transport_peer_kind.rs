@@ -6,15 +6,18 @@
 //! The listener trusts the service `relay` (subject `did:alice-service:relay`) under its operator's master
 //! key. Its policy can switch the kind it expects, so the same open channel is checked once as a service
 //! (kept) and once as a person (closed), and the service's 30-day bound closes it when the clock passes it.
+//! Its policy can also come to hold the operator's revocation list: once the list names the service's
+//! device id, the open channel is closed (the revocation reaches the service certificate rules).
 #![cfg(feature = "secure-transport")]
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use alice_channel::noise::Keypair;
 use alice_channel::{Credential, PeerKind, PeerPolicy};
 use alice_identity::artifact::Revocation;
+use alice_identity::cert_revocation::{CertRevocations, RevocationList};
 use alice_identity::device_cert::DeviceCert;
 use alice_identity::did::Did;
 use alice_identity::service_cert::{
@@ -75,11 +78,12 @@ fn person_credential() -> Credential {
 }
 
 /// The listener's policy: the service's subject under the operator key, the kind it expects switchable,
-/// and a clock that can move while the channel is open
+/// a clock that can move while the channel is open, and the operator's revocations once they are set
 #[derive(Clone)]
 struct TrustsTheService {
     as_service: Arc<AtomicBool>,
     now: Arc<AtomicU64>,
+    revocations: Arc<OnceLock<CertRevocations>>,
 }
 
 impl PeerPolicy for TrustsTheService {
@@ -87,7 +91,9 @@ impl PeerPolicy for TrustsTheService {
         (*subject == service_subject(SERVICE).unwrap()).then(|| operator().public())
     }
     fn revocation(&self) -> Revocation<'_> {
-        Revocation::NoListAvailable
+        self.revocations
+            .get()
+            .map_or(Revocation::NoListAvailable, Revocation::Checked)
     }
     fn now(&self) -> u64 {
         self.now.load(Ordering::SeqCst)
@@ -125,6 +131,7 @@ async fn connected() -> (
     let policy = TrustsTheService {
         as_service: Arc::new(AtomicBool::new(true)),
         now: Arc::new(AtomicU64::new(ISSUED + 100)),
+        revocations: Arc::new(OnceLock::new()),
     };
     let person = person_credential();
     let person_cert = person.cert().clone();
@@ -176,4 +183,33 @@ async fn a_service_channel_is_closed_at_the_end_of_its_certificate() {
         .now
         .store(ISSUED + SERVICE_CERT_MAX_LIFETIME_SECS, Ordering::SeqCst);
     assert_eq!(tp.revalidate().await, open);
+}
+
+/// The operator's revocations holding `list`, accepted under the operator key
+fn revocations(list: RevocationList) -> CertRevocations {
+    let mut kept = CertRevocations::new();
+    kept.accept(list, &operator().public()).unwrap();
+    kept
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_service_channel_is_closed_once_the_operator_revokes_its_device() {
+    let (tp, policy, _ts) = connected().await;
+    let open = tp.peers().await;
+    assert_eq!(open.len(), 1);
+    let revoked = service_credential().cert().device_id();
+    let list = RevocationList::issue(&operator(), 1, ISSUED + 200, &[revoked]);
+    assert!(policy.revocations.set(revocations(list)).is_ok());
+    assert_eq!(tp.revalidate().await, open);
+    assert!(tp.peers().await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_service_channel_is_kept_under_a_list_that_does_not_name_it() {
+    let (tp, policy, _ts) = connected().await;
+    let other = person_credential().cert().device_id();
+    let list = RevocationList::issue(&operator(), 1, ISSUED + 200, &[other]);
+    assert!(policy.revocations.set(revocations(list)).is_ok());
+    assert!(tp.revalidate().await.is_empty());
+    assert_eq!(tp.peers().await.len(), 1);
 }

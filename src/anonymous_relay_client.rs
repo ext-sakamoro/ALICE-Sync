@@ -55,7 +55,10 @@ mod http;
 #[cfg(feature = "anonymous-relay-client")]
 pub use connection::{RelayConnection, RelayConnectionError, MAX_FRAME_BYTES};
 #[cfg(feature = "anonymous-relay-client")]
-pub use http::{fetch_relay_cert, FetchCertError, MAX_RELAY_CERT_RESPONSE_HEAD};
+pub use http::{
+    fetch_relay_cert, fetch_relay_revocations, FetchError, MAX_RELAY_RESPONSE_HEAD,
+    MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS,
+};
 
 /// How many published payloads a [`RelayClient`] keeps for a resend unless set otherwise
 /// ([`RelayClient::with_max_unacked`]).
