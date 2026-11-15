@@ -57,10 +57,12 @@ mod kept;
 #[cfg(feature = "anonymous-relay-client")]
 pub use connection::{RelayConnection, RelayConnectionError, MAX_FRAME_BYTES};
 #[cfg(feature = "anonymous-relay-client")]
-pub use http::{
-    fetch_relay_cert, fetch_relay_revocations, DelegatedListResponse, FetchError,
-    MAX_RELAY_DELEGATED_REVOCATIONS_LEN, MAX_RELAY_RESPONSE_HEAD, MAX_RELAY_REVOCATIONS_LEN,
-    MAX_RELAY_REVOCATION_IDS, RELAY_REVOCATIONS_BODY_VERSION,
+pub use http::{fetch_relay_cert, fetch_relay_revocations, FetchError, MAX_RELAY_RESPONSE_HEAD};
+// the revocation body needs no feature (a relay serves it without this client): re-exported here so the
+// client's paths name it too
+pub use crate::relay_revocations_body::{
+    BodyError, DelegatedListResponse, MAX_RELAY_DELEGATED_REVOCATIONS_LEN,
+    MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS, RELAY_REVOCATIONS_BODY_VERSION,
 };
 #[cfg(feature = "anonymous-relay-client")]
 pub use kept::{

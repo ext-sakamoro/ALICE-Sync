@@ -25,9 +25,9 @@ use alice_identity::device_cert::{DeviceCert, DeviceId};
 use alice_identity::service_cert::issue_service_cert;
 use alice_sign::KeyPair;
 use alice_sync::anonymous_relay_client::{
-    fetch_relay_revocations, DelegatedListResponse, FetchError, FloorError, FloorSource, KeptError,
-    KeptRevocations, RevocationRule, RevocationRuleError, ServedNotUsed, DEFAULT_LOCK_WAIT,
-    MAX_RELAY_DELEGATED_REVOCATIONS_LEN, RELAY_REVOCATIONS_BODY_VERSION,
+    fetch_relay_revocations, BodyError, DelegatedListResponse, FetchError, FloorError, FloorSource,
+    KeptError, KeptRevocations, RevocationRule, RevocationRuleError, ServedNotUsed,
+    DEFAULT_LOCK_WAIT, MAX_RELAY_DELEGATED_REVOCATIONS_LEN, RELAY_REVOCATIONS_BODY_VERSION,
 };
 use sha2::{Digest, Sha256};
 
@@ -509,7 +509,7 @@ fn the_revocation_body_is_the_delegate_certificate_then_the_list() {
     for bad in [v2.as_slice(), trailing.as_slice(), short, &[], &[1u8]] {
         assert_eq!(
             DelegatedListResponse::from_bytes(bad).err(),
-            Some(FetchError::Malformed)
+            Some(BodyError::Malformed)
         );
     }
     // a part that is not one
@@ -518,7 +518,7 @@ fn the_revocation_body_is_the_delegate_certificate_then_the_list() {
     not_cert.extend_from_slice(&lb);
     assert!(matches!(
         DelegatedListResponse::from_bytes(&not_cert),
-        Err(FetchError::Cert(_))
+        Err(BodyError::Cert(_))
     ));
     // a declared length over the cap, refused from the head
     let mut stream = Canned::new("200 OK", &[]);

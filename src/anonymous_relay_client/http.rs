@@ -11,127 +11,21 @@
 //!
 //! # The revocation body
 //!
-//! The operator's master key stays offline and certifies a delegate key that signs the lists
-//! (`alice_identity::delegated_revocation`). A list is checked against the delegate certificate that vouches
-//! for its signer, so the relay serves both in one body ([`DelegatedListResponse`]):
-//!
-//! ```text
-//! body = version (1) = 1 || certificate length (u16 BE) || delegate certificate
-//!        || list length (u32 BE) || list
-//! ```
-//!
-//! One body, not two paths: the certificate and the list are read from one response, so a delegate rotated
-//! between two requests cannot pair a new certificate with an old list (which would read as a wrong signer).
+//! The body of `GET /relay-revocations` (the delegate certificate and the list, [`DelegatedListResponse`]),
+//! its version and its caps live in [`crate::relay_revocations_body`], which needs no feature, so a relay
+//! serves the same layout without this client; `anonymous_relay_client` re-exports them.
 
 use std::io::{Read, Write};
 
-use alice_identity::cert_revocation::{RevocationList, RevocationListError};
+use alice_identity::cert_revocation::RevocationListError;
 use alice_identity::device_cert::{DeviceCert, DeviceCertError, MAX_DEVICE_CERT_LEN};
+
+use crate::relay_revocations_body::{
+    BodyError, DelegatedListResponse, MAX_RELAY_DELEGATED_REVOCATIONS_LEN,
+};
 
 /// The longest response head [`fetch_relay_cert`] and [`fetch_relay_revocations`] read.
 pub const MAX_RELAY_RESPONSE_HEAD: usize = 8 * 1024;
-
-/// The most device ids a revocation list [`fetch_relay_revocations`] takes may hold.
-///
-/// The list format itself has no limit short of its 32-bit count, so this reader states one: within a
-/// delegate's epoch a newer list keeps every id of the older one, so the list grows by one id per relay key the
-/// operator revokes (a new epoch may drop ids). 4096 ids is over three centuries of one revocation a month; a
-/// list past it is refused as [`FetchError::TooLarge`].
-pub const MAX_RELAY_REVOCATION_IDS: usize = 4096;
-
-/// The longest list [`fetch_relay_revocations`] takes: [`MAX_RELAY_REVOCATION_IDS`] ids in the list's
-/// canonical layout (version 1, issuer key 32, sequence 8, issued-at 8, count 4, 16 per id, signature 64).
-pub const MAX_RELAY_REVOCATIONS_LEN: usize =
-    1 + 32 + 8 + 8 + 4 + 16 * MAX_RELAY_REVOCATION_IDS + 64;
-
-/// The layout version of the revocation body ([`DelegatedListResponse::to_bytes`]).
-pub const RELAY_REVOCATIONS_BODY_VERSION: u8 = 1;
-
-/// The longest body [`fetch_relay_revocations`] reads: the version, the longest certificate there is
-/// ([`MAX_DEVICE_CERT_LEN`]) and the longest list it takes ([`MAX_RELAY_REVOCATIONS_LEN`]) with their lengths.
-pub const MAX_RELAY_DELEGATED_REVOCATIONS_LEN: usize =
-    1 + 2 + MAX_DEVICE_CERT_LEN + 4 + MAX_RELAY_REVOCATIONS_LEN;
-
-/// What `GET /relay-revocations` serves: the operator's revocation list and the certificate of the delegate key
-/// that signed it (see the module documentation for the layout).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DelegatedListResponse {
-    /// The list, as decoded (not verified).
-    pub list: RevocationList,
-    /// The delegate's certificate, as decoded (not verified).
-    pub delegate: DeviceCert,
-}
-
-impl DelegatedListResponse {
-    /// The body a relay serves (the layout of the module documentation).
-    ///
-    /// # Panics
-    ///
-    /// When the list is 4 GiB or longer (a list is built by `RevocationList::issue` or `from_bytes`, whose
-    /// id count is a u32, so no list in use comes near it).
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let cert = self.delegate.to_bytes();
-        let list = self.list.to_bytes();
-        // a certificate is at most MAX_DEVICE_CERT_LEN bytes
-        let cert_len = u16::try_from(cert.len()).expect("a certificate fits a u16 length");
-        let list_len = u32::try_from(list.len()).expect("a list fits a u32 length");
-        let mut b = Vec::with_capacity(1 + 2 + cert.len() + 4 + list.len());
-        b.push(RELAY_REVOCATIONS_BODY_VERSION);
-        b.extend_from_slice(&cert_len.to_be_bytes());
-        b.extend_from_slice(&cert);
-        b.extend_from_slice(&list_len.to_be_bytes());
-        b.extend_from_slice(&list);
-        b
-    }
-
-    /// Decode a body: exactly the layout, nothing after the list.
-    ///
-    /// # Errors
-    ///
-    /// [`FetchError::Malformed`] for another version, a length past the end or bytes after the list;
-    /// [`FetchError::TooLarge`] for a certificate over [`MAX_DEVICE_CERT_LEN`] or a list over
-    /// [`MAX_RELAY_REVOCATIONS_LEN`]; [`FetchError::Cert`] / [`FetchError::Revocations`] when a part does not
-    /// decode.
-    pub fn from_bytes(body: &[u8]) -> Result<Self, FetchError> {
-        let (&version, rest) = body.split_first().ok_or(FetchError::Malformed)?;
-        if version != RELAY_REVOCATIONS_BODY_VERSION {
-            return Err(FetchError::Malformed);
-        }
-        let (cert_len, rest) = split_len::<2>(rest)?;
-        if cert_len > MAX_DEVICE_CERT_LEN {
-            return Err(FetchError::TooLarge);
-        }
-        let (cert, rest) = split_part(rest, cert_len)?;
-        let (list_len, rest) = split_len::<4>(rest)?;
-        if list_len > MAX_RELAY_REVOCATIONS_LEN {
-            return Err(FetchError::TooLarge);
-        }
-        let (list, rest) = split_part(rest, list_len)?;
-        if !rest.is_empty() {
-            return Err(FetchError::Malformed);
-        }
-        Ok(Self {
-            delegate: DeviceCert::from_bytes(cert).map_err(FetchError::Cert)?,
-            list: RevocationList::from_bytes(list).map_err(FetchError::Revocations)?,
-        })
-    }
-}
-
-/// A big-endian length of `N` bytes (2 or 4) at the start of `bytes`
-fn split_len<const N: usize>(bytes: &[u8]) -> Result<(usize, &[u8]), FetchError> {
-    let (head, rest) = split_part(bytes, N)?;
-    let len = head.iter().fold(0usize, |n, b| (n << 8) | usize::from(*b));
-    Ok((len, rest))
-}
-
-/// The first `n` bytes and the rest, or [`FetchError::Malformed`] when fewer are left
-fn split_part(bytes: &[u8], n: usize) -> Result<(&[u8], &[u8]), FetchError> {
-    if bytes.len() < n {
-        return Err(FetchError::Malformed);
-    }
-    Ok(bytes.split_at(n))
-}
 
 /// Why [`fetch_relay_cert`] or [`fetch_relay_revocations`] returned nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,6 +61,20 @@ impl core::fmt::Display for FetchError {
 }
 
 impl std::error::Error for FetchError {}
+
+/// A body that is not one is the same refusal as from the reader: [`BodyError::Malformed`] is
+/// [`FetchError::Malformed`], [`BodyError::TooLarge`] is [`FetchError::TooLarge`], and a part that does not
+/// decode is [`FetchError::Cert`] / [`FetchError::Revocations`].
+impl From<BodyError> for FetchError {
+    fn from(e: BodyError) -> Self {
+        match e {
+            BodyError::Malformed => Self::Malformed,
+            BodyError::TooLarge => Self::TooLarge,
+            BodyError::Cert(e) => Self::Cert(e),
+            BodyError::Revocations(e) => Self::Revocations(e),
+        }
+    }
+}
 
 impl From<std::io::Error> for FetchError {
     fn from(e: std::io::Error) -> Self {
@@ -234,7 +142,7 @@ pub fn fetch_relay_cert<S: Read + Write>(stream: S, host: &str) -> Result<Device
 /// # Errors
 ///
 /// As [`fetch_relay_cert`], with the body capped at [`MAX_RELAY_DELEGATED_REVOCATIONS_LEN`] and the errors of
-/// [`DelegatedListResponse::from_bytes`] when the body is not one.
+/// [`DelegatedListResponse::from_bytes`] (as [`FetchError`], `From<BodyError>`) when the body is not one.
 pub fn fetch_relay_revocations<S: Read + Write>(
     stream: S,
     host: &str,
@@ -245,7 +153,7 @@ pub fn fetch_relay_revocations<S: Read + Write>(
         "/relay-revocations",
         MAX_RELAY_DELEGATED_REVOCATIONS_LEN,
     )?;
-    DelegatedListResponse::from_bytes(&body)
+    Ok(DelegatedListResponse::from_bytes(&body)?)
 }
 
 /// `GET path` on `stream` and the body of a 200 response, at most `cap` bytes (see the module documentation)

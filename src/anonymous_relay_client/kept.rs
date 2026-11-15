@@ -78,9 +78,8 @@ use alice_identity::delegated_revocation::{
 use alice_identity::device_cert::{DeviceCert, MAX_DEVICE_CERT_LEN};
 use alice_sign::PublicKey;
 
-use super::http::{
-    fetch_relay_revocations, DelegatedListResponse, FetchError, MAX_RELAY_REVOCATIONS_LEN,
-};
+use super::http::{fetch_relay_revocations, FetchError};
+use crate::relay_revocations_body::{DelegatedListResponse, MAX_RELAY_REVOCATIONS_LEN};
 
 /// How long [`KeptRevocations::open`] and [`KeptRevocations::accept`] wait for the store's lock unless set
 /// otherwise ([`KeptRevocations::with_lock_wait`]).
