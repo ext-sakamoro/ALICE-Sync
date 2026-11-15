@@ -359,16 +359,13 @@ fn a_floor_above_the_stored_pair_refuses_the_open() {
             floor: (T0, 6)
         })
     );
-    // a missing file is below any floor
+    // a missing file is not an older file: it opens with the floor pending (see the floor-pending tests)
     let empty = Scratch::new("floor-missing");
-    assert_eq!(
+    let pending =
         KeptRevocations::open_with_floor(empty.file(), master().public(), Box::new(floor.clone()))
-            .err(),
-        Some(KeptError::RolledBack {
-            stored: None,
-            floor: (T0, 6)
-        })
-    );
+            .unwrap();
+    assert_eq!(pending.floor_pending(), Some((T0, 6)));
+    assert_eq!(pending.sequence(), None);
     // equal to the floor opens
     *floor.floor.lock().unwrap() = Some((T0, 5));
     let kept =
@@ -770,4 +767,122 @@ fn the_rule_carries_on_past_an_older_list_but_not_past_a_conflict() {
             ..
         })))
     ));
+}
+
+/// A store whose file was deleted under a floor (T0, 6): open with the floor pending
+fn pending_store(name: &str) -> (Scratch, TestFloor, KeptRevocations) {
+    let s = Scratch::new(name);
+    let floor = TestFloor::default();
+    *floor.floor.lock().unwrap() = Some((T0, 6));
+    let kept =
+        KeptRevocations::open_with_floor(s.file(), master().public(), Box::new(floor.clone()))
+            .unwrap();
+    assert_eq!(kept.floor_pending(), Some((T0, 6)));
+    (s, floor, kept)
+}
+
+/// Negative: with the list file deleted, no relay is admitted while the floor is pending, whether or not a
+/// fresh list is required, and a failed fetch leaves it pending
+#[test]
+fn a_pending_floor_admits_no_relay_required_or_not() {
+    let (_s, _floor, mut kept) = pending_store("pending-none");
+    let optional = RevocationRule {
+        required: false,
+        ..RevocationRule::default()
+    };
+    let mut compared = 0;
+    for rule in [RevocationRule::default(), optional] {
+        assert_eq!(
+            rule.apply_fetch(
+                &mut kept,
+                Canned::not_found(),
+                "relay.test",
+                &relay_cert(),
+                NOW
+            ),
+            Err(RevocationRuleError::FloorPending {
+                floor: (T0, 6),
+                served: Some(Box::new(ServedNotUsed::Fetch(FetchError::Status(404)))),
+            }),
+            "required = {}",
+            rule.required
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 2);
+    assert_eq!(kept.floor_pending(), Some((T0, 6)));
+    let shown = RevocationRuleError::FloorPending {
+        floor: (T0, 6),
+        served: None,
+    }
+    .to_string();
+    assert!(shown.contains("lost its list"), "{shown}");
+}
+
+/// Negative: a revoked relay serving the list from before its revocation (below the floor) is refused and
+/// nothing is written, required or not
+#[test]
+fn a_pending_floor_refuses_a_list_below_it_and_writes_nothing() {
+    let (s, _floor, mut kept) = pending_store("pending-below");
+    let optional = RevocationRule {
+        required: false,
+        ..RevocationRule::default()
+    };
+    for rule in [RevocationRule::default(), optional] {
+        let old = Canned::served(list(1, 5, T0 + 10, &[]), delegate(1, T0));
+        assert_eq!(
+            rule.apply_fetch(&mut kept, old, "relay.test", &relay_cert(), NOW),
+            Err(RevocationRuleError::Kept(KeptError::RolledBack {
+                stored: Some((T0, 5)),
+                floor: (T0, 6)
+            }))
+        );
+    }
+    assert!(!s.file().exists(), "nothing written");
+    assert_eq!(kept.floor_pending(), Some((T0, 6)));
+}
+
+/// The honest path: a fresh list at or above the floor from a relay clears the pending floor; a relay it
+/// names is then refused and one it does not name is admitted
+#[test]
+fn a_list_at_the_floor_clears_it() {
+    let (s, floor, mut kept) = pending_store("pending-reach");
+    let rule = RevocationRule::default();
+    let at_floor = Canned::served(list(1, 6, T0 + 10, &[]), delegate(1, T0));
+    assert_eq!(
+        rule.apply_fetch(&mut kept, at_floor, "relay.test", &relay_cert(), NOW),
+        Ok(None)
+    );
+    assert_eq!(kept.floor_pending(), None);
+    assert!(s.file().exists());
+    assert_eq!(*floor.floor.lock().unwrap(), Some((T0, 6)));
+    let names = Canned::served(
+        list(1, 7, T0 + 11, &[relay_cert().device_id()]),
+        delegate(1, T0),
+    );
+    assert_eq!(
+        rule.apply_fetch(&mut kept, names, "relay.test", &relay_cert(), NOW),
+        Err(RevocationRuleError::Revoked)
+    );
+    // reopened: the file is at the floor, nothing pending
+    let again =
+        KeptRevocations::open_with_floor(s.file(), master().public(), Box::new(floor)).unwrap();
+    assert_eq!(again.floor_pending(), None);
+    assert_eq!(again.sequence(), Some(7));
+}
+
+/// An older valid file put back (non-empty, below the floor) is still refused at open, not taken as pending
+#[test]
+fn an_older_file_put_back_is_rolled_back_not_pending() {
+    let s = Scratch::new("pending-older");
+    drop(stored(&s.file(), 5));
+    let floor = TestFloor::default();
+    *floor.floor.lock().unwrap() = Some((T0, 6));
+    assert_eq!(
+        KeptRevocations::open_with_floor(s.file(), master().public(), Box::new(floor)).err(),
+        Some(KeptError::RolledBack {
+            stored: Some((T0, 5)),
+            floor: (T0, 6)
+        })
+    );
 }
