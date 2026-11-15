@@ -524,7 +524,7 @@ fn revocation_body() -> DelegatedListResponse {
 #[test]
 fn fetch_relay_revocations_reads_a_200_body_as_the_list_unverified() {
     let served = revocation_body();
-    let body = served.to_bytes();
+    let body = served.to_bytes().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = connect(&listener);
     let request = serve(listener, response("200 OK", Some(body.len()), &body));
@@ -543,7 +543,8 @@ fn fetch_relay_revocations_reads_a_200_body_as_the_list_unverified() {
         list: RevocationList::issue(&KeyPair::from_seed([0x0f; 32]), 1, ISSUED, &[]),
         delegate: revocation_delegate(),
     }
-    .to_bytes();
+    .to_bytes()
+    .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = connect(&listener);
     let request = serve(listener, response("200 OK", Some(foreign.len()), &foreign));
@@ -614,7 +615,7 @@ fn fetch_relay_revocations_has_its_own_cap() {
         delegate: revocation_delegate(),
     };
     assert_eq!(longest.list.to_bytes().len(), MAX_RELAY_REVOCATIONS_LEN);
-    let body = longest.to_bytes();
+    let body = longest.to_bytes().unwrap();
     assert!(body.len() > MAX_DEVICE_CERT_LEN);
     assert!(body.len() <= MAX_RELAY_DELEGATED_REVOCATIONS_LEN);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

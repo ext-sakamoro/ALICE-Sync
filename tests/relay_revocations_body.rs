@@ -66,7 +66,7 @@ fn the_constants_are_the_stated_sums() {
 #[test]
 fn a_body_is_the_certificate_then_the_list_and_decodes_back() {
     let b = body();
-    let bytes = b.to_bytes();
+    let bytes = b.to_bytes().unwrap();
     assert_eq!(bytes, layout(1, &b.delegate.to_bytes(), &b.list.to_bytes()));
     assert_eq!(DelegatedListResponse::from_bytes(&bytes), Ok(b));
     // an empty list too
@@ -75,14 +75,14 @@ fn a_body_is_the_certificate_then_the_list_and_decodes_back() {
         delegate: delegate(),
     };
     assert_eq!(
-        DelegatedListResponse::from_bytes(&empty.to_bytes()),
+        DelegatedListResponse::from_bytes(&empty.to_bytes().unwrap()),
         Ok(empty)
     );
 }
 
 #[test]
 fn the_golden_body() {
-    let bytes = body().to_bytes();
+    let bytes = body().to_bytes().unwrap();
     assert_eq!(hex(&bytes), GOLDEN_BODY_HEX);
 }
 
@@ -170,7 +170,7 @@ fn the_longest_list_fits_its_cap_and_one_more_id_does_not() {
         delegate: delegate(),
     };
     assert_eq!(longest.list.to_bytes().len(), MAX_RELAY_REVOCATIONS_LEN);
-    let bytes = longest.to_bytes();
+    let bytes = longest.to_bytes().unwrap();
     assert!(bytes.len() <= MAX_RELAY_DELEGATED_REVOCATIONS_LEN);
     assert_eq!(DelegatedListResponse::from_bytes(&bytes), Ok(longest));
 
@@ -180,8 +180,11 @@ fn the_longest_list_fits_its_cap_and_one_more_id_does_not() {
         list: list(&more),
         delegate: delegate(),
     };
+    // the relay refuses to serve it, and a body carrying it is refused by the client
+    assert_eq!(over.to_bytes(), Err(BodyError::TooLarge));
+    let over_body = layout(1, &over.delegate.to_bytes(), &over.list.to_bytes());
     assert_eq!(
-        DelegatedListResponse::from_bytes(&over.to_bytes()),
+        DelegatedListResponse::from_bytes(&over_body),
         Err(BodyError::TooLarge)
     );
 }

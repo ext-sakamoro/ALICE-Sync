@@ -59,24 +59,23 @@ pub struct DelegatedListResponse {
 impl DelegatedListResponse {
     /// The body a relay serves (the layout of the module documentation).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// When the list is 4 GiB or longer (a list is built by `RevocationList::issue` or `from_bytes`, whose
-    /// id count is a u32, so no list in use comes near it).
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// [`BodyError::TooLarge`] for a certificate over [`MAX_DEVICE_CERT_LEN`] or a list over
+    /// [`MAX_RELAY_REVOCATIONS_LEN`]: the caps [`Self::from_bytes`] applies, so a relay never serves a body
+    /// a client refuses. Both caps are under the u16 / u32 length fields.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, BodyError> {
         let cert = self.delegate.to_bytes();
         let list = self.list.to_bytes();
-        // a certificate is at most MAX_DEVICE_CERT_LEN bytes
-        let cert_len = u16::try_from(cert.len()).expect("a certificate fits a u16 length");
-        let list_len = u32::try_from(list.len()).expect("a list fits a u32 length");
+        let cert_len = capped_len::<u16>(cert.len(), MAX_DEVICE_CERT_LEN)?;
+        let list_len = capped_len::<u32>(list.len(), MAX_RELAY_REVOCATIONS_LEN)?;
         let mut b = Vec::with_capacity(1 + 2 + cert.len() + 4 + list.len());
         b.push(RELAY_REVOCATIONS_BODY_VERSION);
         b.extend_from_slice(&cert_len.to_be_bytes());
         b.extend_from_slice(&cert);
         b.extend_from_slice(&list_len.to_be_bytes());
         b.extend_from_slice(&list);
-        b
+        Ok(b)
     }
 
     /// Decode a body: exactly the layout, nothing after the list.
@@ -112,6 +111,14 @@ impl DelegatedListResponse {
     }
 }
 
+/// `len` as the length field `T`, or [`BodyError::TooLarge`] when it is over `cap` or does not fit `T`
+fn capped_len<T: TryFrom<usize>>(len: usize, cap: usize) -> Result<T, BodyError> {
+    if len > cap {
+        return Err(BodyError::TooLarge);
+    }
+    T::try_from(len).map_err(|_| BodyError::TooLarge)
+}
+
 /// A big-endian length of `N` bytes (2 or 4) at the start of `bytes`
 fn split_len<const N: usize>(bytes: &[u8]) -> Result<(usize, &[u8]), BodyError> {
     let (head, rest) = split_part(bytes, N)?;
@@ -127,7 +134,7 @@ fn split_part(bytes: &[u8], n: usize) -> Result<(&[u8], &[u8]), BodyError> {
     Ok(bytes.split_at(n))
 }
 
-/// Why [`DelegatedListResponse::from_bytes`] refused a body.
+/// Why [`DelegatedListResponse::from_bytes`] refused a body, or [`DelegatedListResponse::to_bytes`] a part.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BodyError {

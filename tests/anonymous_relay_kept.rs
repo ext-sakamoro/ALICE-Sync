@@ -449,7 +449,7 @@ impl Canned {
     fn served(list: RevocationList, delegate: DeviceCert) -> Self {
         Self::new(
             "200 OK",
-            &DelegatedListResponse { list, delegate }.to_bytes(),
+            &DelegatedListResponse { list, delegate }.to_bytes().unwrap(),
         )
     }
     fn not_found() -> Self {
@@ -479,7 +479,8 @@ fn the_revocation_body_is_the_delegate_certificate_then_the_list() {
         list: l.clone(),
         delegate: d.clone(),
     }
-    .to_bytes();
+    .to_bytes()
+    .unwrap();
     // the layout, built here from the parts
     let cert = d.to_bytes();
     let lb = l.to_bytes();
