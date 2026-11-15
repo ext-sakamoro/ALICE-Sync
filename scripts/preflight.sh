@@ -1150,7 +1150,7 @@ step "ci.yml / msrv: Test the revocation store (anonymous-relay-client, 1.89)"
   v=$(cargo +1.89 --version)
   case "$v" in "cargo 1.89."*) ;; *) echo "::error::not 1.89: $v"; exit 1 ;; esac
   scripts/run_tests.sh anonymous_relay_kept=16 -- cargo +1.89 test --features anonymous-relay-client --test anonymous_relay_kept
-  scripts/run_tests.sh lib=3 -- cargo +1.89 test --features anonymous-relay-client --lib anonymous_relay_client::kept::
+  scripts/run_tests.sh lib=4 -- cargo +1.89 test --features anonymous-relay-client --lib anonymous_relay_client::kept::
 )
 )
 

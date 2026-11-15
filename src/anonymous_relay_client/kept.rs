@@ -406,6 +406,13 @@ fn sibling(path: &Path, prefix: &str, suffix: &str) -> io::Result<PathBuf> {
 #[allow(clippy::incompatible_msrv)]
 fn lock(path: &Path, wait: Duration) -> Result<File, KeptError> {
     let lock_path = sibling(path, "", ".lock").map_err(io_error("lock path"))?;
+    // a link planted at the lock path is refused rather than followed
+    match fs::symlink_metadata(&lock_path) {
+        Ok(m) if !m.is_file() => return Err(KeptError::NotAFile),
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(io_error("stat lock")(e)),
+    }
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -433,7 +440,8 @@ fn lock(path: &Path, wait: Duration) -> Result<File, KeptError> {
 
 /// The stored state at `path` checked under `master`; a missing file is an empty state
 fn read_state(path: &Path, master: &PublicKey) -> Result<DelegatedRevocations, KeptError> {
-    let meta = match fs::metadata(path) {
+    // symlink_metadata: a link at the store path is not followed (it is not a file)
+    let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(DelegatedRevocations::new()),
         Err(e) => return Err(io_error("stat")(e)),
@@ -467,12 +475,15 @@ fn write_atomically(
     before_rename: &mut dyn FnMut(&Path) -> io::Result<()>,
 ) -> io::Result<()> {
     let tmp = sibling(path, ".", &format!(".{}.tmp", std::process::id()))?;
+    // a stale temporary file (or a link planted there) is removed, not followed; create_new then refuses
+    // whatever appears at the name in between instead of writing through it
+    match fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
     let written = (|| {
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tmp)?;
+        let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         before_rename(&tmp)?;
@@ -723,6 +734,48 @@ mod tests {
         // and a write that goes through replaces it
         write_atomically(&path, &new, &mut |_| Ok(())).unwrap();
         assert_eq!(fs::read(&path).unwrap(), new);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Links planted in the data directory are not followed: a link at the temporary name is replaced, not
+    /// written through, and a link at the store path or the lock path is refused
+    #[cfg(unix)]
+    #[test]
+    fn links_in_the_data_directory_are_not_followed() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("links");
+        let target = dir.join("target.txt");
+        fs::write(&target, b"untouched").unwrap();
+        let path = dir.join("kept.bin");
+        let tmp = dir.join(format!(".kept.bin.{}.tmp", std::process::id()));
+        symlink(&target, &tmp).unwrap();
+        let bytes = stored_bytes(5);
+        write_atomically(&path, &bytes, &mut |_| Ok(())).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"untouched");
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(!fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let mut refused = 0;
+        // a link at the store path
+        let linked = dir.join("linked.bin");
+        symlink(&path, &linked).unwrap();
+        assert!(matches!(
+            KeptRevocations::open(&linked, master().public()),
+            Err(KeptError::NotAFile)
+        ));
+        refused += 1;
+        // a link at the lock path
+        let other = dir.join("other.bin");
+        symlink(&target, dir.join("other.bin.lock")).unwrap();
+        assert!(matches!(
+            KeptRevocations::open(&other, master().public()),
+            Err(KeptError::NotAFile)
+        ));
+        refused += 1;
+        assert_eq!(fs::read(&target).unwrap(), b"untouched");
+        assert_eq!(refused, 2);
         fs::remove_dir_all(&dir).unwrap();
     }
 
