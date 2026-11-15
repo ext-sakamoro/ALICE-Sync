@@ -101,6 +101,7 @@ fn main() {
 | `discovery` | mDNS による LAN 自動検出、手動のピア登録、GC |
 | `session` | 高レベルのセッションドライバ: builder パターン、tick ループ、5 つの同期モード |
 | `secure_transport` | 認証・暗号化した channel の上の `SyncTransport`: 相手は証明書を持つ端末で証明書を持って dial する (Noise IK)、message は封をして送り受けた接続の証明書を伴う、Sync の message と並んで application の bytes も送る (feature `secure-transport`) |
+| `anonymous_relay_client` | 匿名中継の client: I/O なしで frame を組み立て・読む (`RelayClient`、feature 不要) feature `anonymous-relay-client` では blocking の接続、証明書と失効リストの取得、運営の失効リストを disk に保ち再起動や別 process で下がらないようにする (`KeptRevocations`、`RevocationRule`) この feature は Rust 1.89 が要る (`File::try_lock`)、それ以外は 1.88 で build する |
 
 ### 同期モード
 

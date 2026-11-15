@@ -153,7 +153,7 @@ source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#6269efc2
 [[package]]
 name = "alice-identity"
 version = "3.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#be7b7f60695fbad084da2cc3323390b88e6384e0"
+source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#ac912d2c5be2f1631fc44c039f1b560cdb7ebac5"
 dependencies = [
  "alice-crypto",
  "alice-sign",

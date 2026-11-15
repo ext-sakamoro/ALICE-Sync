@@ -796,15 +796,15 @@ step "ci.yml / test: G11 table matches the declared gates"
 ( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/g11_table.sh )
 )
 
-step "ci.yml / msrv: Check (default + all native features)"
+step "ci.yml / msrv: Check (default + native features without anonymous-relay-client, 1.88)"
 (
   gh_step ci.yml.msrv
 (
-  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" MSRV_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
   v=$(cargo +1.88 --version)
   case "$v" in "cargo 1.88."*) ;; *) echo "::error::not 1.88: $v"; exit 1 ;; esac
   cargo +1.88 check --lib
-  cargo +1.88 check --lib --features "$NATIVE_FEATURES"
+  cargo +1.88 check --lib --features "$MSRV_FEATURES"
 )
 )
 
@@ -1104,13 +1104,13 @@ step "ci.yml / test: Test (default = std)"
 step "ci.yml / test: Test (all native features)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,secure_transport_peer_kind=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,anonymous_relay_client_connection=11 -- cargo test --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,secure_transport_peer_kind=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,anonymous_relay_client_connection=11,anonymous_relay_kept=16 -- cargo test --features "$NATIVE_FEATURES" )
 )
 
 step "ci.yml / test: Test (anonymous relay client feature alone)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh anonymous_relay_client_connection=11,anonymous_relay_client_oracle=13 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh anonymous_relay_client_connection=11,anonymous_relay_client_oracle=13,anonymous_relay_kept=16 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle --test anonymous_relay_kept )
 )
 
 step "ci.yml / test: Analytic oracle (async + physics + codec)"
@@ -1139,6 +1139,18 @@ step "ci.yml / test: No negated fma result (syntax tree, tests then check)"
   cargo fmt --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --check
   cargo test --quiet --locked --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml
   cargo run --quiet --locked --release --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --root .
+)
+)
+
+step "ci.yml / msrv: Test the revocation store (anonymous-relay-client, 1.89)"
+(
+  gh_step ci.yml.msrv
+(
+  export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" MSRV_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
+  v=$(cargo +1.89 --version)
+  case "$v" in "cargo 1.89."*) ;; *) echo "::error::not 1.89: $v"; exit 1 ;; esac
+  scripts/run_tests.sh anonymous_relay_kept=16 -- cargo +1.89 test --features anonymous-relay-client --test anonymous_relay_kept
+  scripts/run_tests.sh lib=3 -- cargo +1.89 test --features anonymous-relay-client --lib anonymous_relay_client::kept::
 )
 )
 

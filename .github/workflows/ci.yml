@@ -157,13 +157,13 @@ jobs:
         run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,authorship=18,persist_state_id=10,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13 -- cargo test
       - name: Test (all native features)
         shell: bash
-        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,secure_transport_peer_kind=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,anonymous_relay_client_connection=11 -- cargo test --features "$NATIVE_FEATURES"
+        run: scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,secure_transport_peer_kind=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,anonymous_relay_client_connection=11,anonymous_relay_kept=16 -- cargo test --features "$NATIVE_FEATURES"
       # the anonymous relay's blocking client on its own (feature anonymous-relay-client without async or
       # secure-transport): a WebSocket and the anonymous handshake over loopback TCP to a relay built in
-      # the test, and the certificate fetch against canned responses
+      # the test, the certificate and list fetches against canned responses, and the list kept on disk
       - name: Test (anonymous relay client feature alone)
         shell: bash
-        run: scripts/run_tests.sh anonymous_relay_client_connection=11,anonymous_relay_client_oracle=13 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle
+        run: scripts/run_tests.sh anonymous_relay_client_connection=11,anonymous_relay_client_oracle=13,anonymous_relay_kept=16 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle --test anonymous_relay_kept
       # 解析解 oracle (tests/analytic_oracle.rs): feature-gated test (async / physics / codec)
       # を必ず走らせる
       - name: Analytic oracle (async + physics + codec)
@@ -214,21 +214,34 @@ jobs:
           cargo run --quiet --locked --release --manifest-path tools/no-outer-fneg-of-fma/Cargo.toml -- --root .
 
   msrv:
-    name: MSRV (rust-version = 1.88 実 compile)
+    name: MSRV (rust-version = 1.88 実 compile、anonymous-relay-client は 1.89)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # NATIVE_FEATURES から anonymous-relay-client を除いたもの: この feature だけは File::try_lock (1.89) を使う
+      MSRV_FEATURES: "std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
     steps:
       - uses: actions/checkout@v5
       # 宣言値と同じ toolchain: Cargo.toml の rust-version を bump したら同 commit で @<version> と +<version> も更新
       # rust-toolchain.toml が既定の toolchain を決めるので、+1.88 で明示し、版を確かめてから check する
       - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
-      - name: Check (default + all native features)
+      - name: Check (default + native features without anonymous-relay-client, 1.88)
         run: |
           v=$(cargo +1.88 --version)
           case "$v" in "cargo 1.88."*) ;; *) echo "::error::not 1.88: $v"; exit 1 ;; esac
           cargo +1.88 check --lib
-          cargo +1.88 check --lib --features "$NATIVE_FEATURES"
+          cargo +1.88 check --lib --features "$MSRV_FEATURES"
+      # the feature anonymous-relay-client needs 1.89 (File::try_lock): compile and run the revocation
+      # store's tests with it (scripts/run_tests.sh fails when a binary ran fewer tests than it names)
+      - name: Test the revocation store (anonymous-relay-client, 1.89)
+        shell: bash
+        run: |
+          v=$(cargo +1.89 --version)
+          case "$v" in "cargo 1.89."*) ;; *) echo "::error::not 1.89: $v"; exit 1 ;; esac
+          scripts/run_tests.sh anonymous_relay_kept=16 -- cargo +1.89 test --features anonymous-relay-client --test anonymous_relay_kept
+          scripts/run_tests.sh lib=3 -- cargo +1.89 test --features anonymous-relay-client --lib anonymous_relay_client::kept::
 
   doc:
     name: Doc (RUSTDOCFLAGS=-Dwarnings)

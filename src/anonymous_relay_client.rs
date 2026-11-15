@@ -51,13 +51,21 @@ use crate::anonymous_relay_wire::Frame;
 mod connection;
 #[cfg(feature = "anonymous-relay-client")]
 mod http;
+#[cfg(feature = "anonymous-relay-client")]
+mod kept;
 
 #[cfg(feature = "anonymous-relay-client")]
 pub use connection::{RelayConnection, RelayConnectionError, MAX_FRAME_BYTES};
 #[cfg(feature = "anonymous-relay-client")]
 pub use http::{
-    fetch_relay_cert, fetch_relay_revocations, FetchError, MAX_RELAY_RESPONSE_HEAD,
-    MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS,
+    fetch_relay_cert, fetch_relay_revocations, DelegatedListResponse, FetchError,
+    MAX_RELAY_DELEGATED_REVOCATIONS_LEN, MAX_RELAY_RESPONSE_HEAD, MAX_RELAY_REVOCATIONS_LEN,
+    MAX_RELAY_REVOCATION_IDS, RELAY_REVOCATIONS_BODY_VERSION,
+};
+#[cfg(feature = "anonymous-relay-client")]
+pub use kept::{
+    FloorError, FloorSource, KeptError, KeptRevocations, RevocationRule, RevocationRuleError,
+    ServedNotUsed, DEFAULT_LOCK_WAIT, MAX_KEPT_FILE_LEN,
 };
 
 /// How many published payloads a [`RelayClient`] keeps for a resend unless set otherwise

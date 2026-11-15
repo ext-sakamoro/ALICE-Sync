@@ -18,7 +18,10 @@ use std::time::Duration;
 use alice_channel::noise::{Keypair, MAX_MESSAGE};
 use alice_channel::{accept_messages, ChannelError, MessageIo, PinnedPeer};
 use alice_identity::artifact::Revocation;
-use alice_identity::cert_revocation::{CertRevocations, RevocationList, RevocationListError};
+use alice_identity::cert_revocation::RevocationList;
+use alice_identity::delegated_revocation::{
+    issue_revocation_delegate, DelegatedRevocationError, DelegatedRevocations,
+};
 use alice_identity::device_cert::{DeviceCert, MAX_DEVICE_CERT_LEN};
 use alice_identity::service_cert::issue_service_cert;
 use alice_sign::KeyPair;
@@ -26,8 +29,9 @@ use alice_sync::anonymous_relay::{
     AnonymousRelayCore, ConnId, Limits, RoomAlias, RoomToken, SenderTag,
 };
 use alice_sync::anonymous_relay_client::{
-    fetch_relay_cert, fetch_relay_revocations, Event, FetchError, RelayClient, RelayConnection,
-    RelayConnectionError, MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS,
+    fetch_relay_cert, fetch_relay_revocations, DelegatedListResponse, Event, FetchError,
+    RelayClient, RelayConnection, RelayConnectionError, MAX_RELAY_DELEGATED_REVOCATIONS_LEN,
+    MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS,
 };
 use alice_sync::anonymous_relay_wire::Frame;
 use alice_websocket::{Frame as WsFrame, HandshakeRequest, HandshakeResponse, MaskSource, Opcode};
@@ -488,26 +492,44 @@ fn fetch_relay_cert_refuses_a_transfer_coding_and_a_malformed_head() {
     }
 }
 
-/// The operator's list revoking the relay's device id (and one other), sequence 3
-fn revocation_list() -> RevocationList {
-    let other = alice_identity::device_cert::DeviceId::from_raw([0x99; 16]);
-    RevocationList::issue(
+/// The operator's delegate key (test-only, fixed) and its certificate, epoch ISSUED
+fn revocation_delegate_key() -> KeyPair {
+    KeyPair::from_seed([0x21; 32])
+}
+fn revocation_delegate() -> DeviceCert {
+    issue_revocation_delegate(
         &operator(),
-        3,
-        ISSUED + 60,
-        &[relay_cert().device_id(), other],
+        revocation_delegate_key().public().0,
+        ISSUED,
+        ISSUED + 7 * 86_400,
     )
+    .unwrap()
+}
+
+/// The delegate's list revoking the relay's device id (and one other), sequence 3, served with the
+/// delegate's certificate
+fn revocation_body() -> DelegatedListResponse {
+    let other = alice_identity::device_cert::DeviceId::from_raw([0x99; 16]);
+    DelegatedListResponse {
+        list: RevocationList::issue(
+            &revocation_delegate_key(),
+            3,
+            ISSUED + 60,
+            &[relay_cert().device_id(), other],
+        ),
+        delegate: revocation_delegate(),
+    }
 }
 
 #[test]
 fn fetch_relay_revocations_reads_a_200_body_as_the_list_unverified() {
-    let list = revocation_list();
-    let body = list.to_bytes();
+    let served = revocation_body();
+    let body = served.to_bytes();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = connect(&listener);
     let request = serve(listener, response("200 OK", Some(body.len()), &body));
     let got = fetch_relay_revocations(stream, "relay.test").unwrap();
-    assert_eq!(got, list);
+    assert_eq!(got, served);
     let head = request();
     assert!(
         head.starts_with("GET /relay-revocations HTTP/1.1\r\n"),
@@ -517,15 +539,25 @@ fn fetch_relay_revocations_reads_a_200_body_as_the_list_unverified() {
 
     // returned as decoded, not verified: a list under another key decodes, and only the caller's check
     // under the operator key refuses it
-    let foreign = RevocationList::issue(&KeyPair::from_seed([0x0f; 32]), 1, ISSUED, &[]).to_bytes();
+    let foreign = DelegatedListResponse {
+        list: RevocationList::issue(&KeyPair::from_seed([0x0f; 32]), 1, ISSUED, &[]),
+        delegate: revocation_delegate(),
+    }
+    .to_bytes();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = connect(&listener);
     let request = serve(listener, response("200 OK", Some(foreign.len()), &foreign));
     let got = fetch_relay_revocations(stream, "relay.test").unwrap();
     request();
     assert_eq!(
-        CertRevocations::new().accept(got, &operator().public()),
-        Err(RevocationListError::IssuerMismatch)
+        DelegatedRevocations::new().accept(
+            got.list,
+            &got.delegate,
+            &operator().public(),
+            NOW,
+            86_400
+        ),
+        Err(DelegatedRevocationError::WrongSigner)
     );
 }
 
@@ -539,8 +571,13 @@ fn fetch_relay_revocations_reports_404_and_refuses_a_body_that_is_not_a_list() {
         Some(FetchError::Status(404))
     );
     request();
-    // a certificate is not a list
-    let body = relay_cert().to_bytes();
+    // a certificate where the list should be
+    let cert = relay_cert().to_bytes();
+    let mut body = vec![1u8];
+    body.extend_from_slice(&(cert.len() as u16).to_be_bytes());
+    body.extend_from_slice(&cert);
+    body.extend_from_slice(&(cert.len() as u32).to_be_bytes());
+    body.extend_from_slice(&cert);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = connect(&listener);
     let request = serve(listener, response("200 OK", Some(body.len()), &body));
@@ -551,14 +588,18 @@ fn fetch_relay_revocations_reports_404_and_refuses_a_body_that_is_not_a_list() {
     request();
 }
 
-/// The list's cap is its own (much larger than a certificate's): a list longer than a certificate is read,
-/// a declared length one past the cap is refused from the head, and without a length the reader stops one
-/// byte past the cap
+/// The body's cap is its own (much larger than a certificate's): the longest list with the delegate's
+/// certificate is read, a declared length one past the cap is refused from the head, and without a length
+/// the reader stops one byte past the cap
 #[test]
 fn fetch_relay_revocations_has_its_own_cap() {
     assert_eq!(
         MAX_RELAY_REVOCATIONS_LEN,
         1 + 32 + 8 + 8 + 4 + 16 * MAX_RELAY_REVOCATION_IDS + 64
+    );
+    assert_eq!(
+        MAX_RELAY_DELEGATED_REVOCATIONS_LEN,
+        1 + 2 + MAX_DEVICE_CERT_LEN + 4 + MAX_RELAY_REVOCATIONS_LEN
     );
     // the longest list the cap admits is read whole
     let ids: Vec<_> = (0..MAX_RELAY_REVOCATION_IDS)
@@ -568,10 +609,14 @@ fn fetch_relay_revocations_has_its_own_cap() {
             alice_identity::device_cert::DeviceId::from_raw(id)
         })
         .collect();
-    let longest = RevocationList::issue(&operator(), 1, ISSUED, &ids);
+    let longest = DelegatedListResponse {
+        list: RevocationList::issue(&revocation_delegate_key(), 1, ISSUED, &ids),
+        delegate: revocation_delegate(),
+    };
+    assert_eq!(longest.list.to_bytes().len(), MAX_RELAY_REVOCATIONS_LEN);
     let body = longest.to_bytes();
-    assert_eq!(body.len(), MAX_RELAY_REVOCATIONS_LEN);
     assert!(body.len() > MAX_DEVICE_CERT_LEN);
+    assert!(body.len() <= MAX_RELAY_DELEGATED_REVOCATIONS_LEN);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = connect(&listener);
     let request = serve(listener, response("200 OK", Some(body.len()), &body));
@@ -600,7 +645,11 @@ fn fetch_relay_revocations_has_its_own_cap() {
     let stream = connect_short(&listener);
     let request = serve(
         listener,
-        response("200 OK", Some(MAX_RELAY_REVOCATIONS_LEN + 1), &[0u8; 16]),
+        response(
+            "200 OK",
+            Some(MAX_RELAY_DELEGATED_REVOCATIONS_LEN + 1),
+            &[0u8; 16],
+        ),
     );
     assert_eq!(
         fetch_relay_revocations(stream, "relay.test").err(),
@@ -615,7 +664,7 @@ fn fetch_relay_revocations_has_its_own_cap() {
         response(
             "200 OK",
             None,
-            &vec![0u8; MAX_RELAY_REVOCATIONS_LEN + 4_096],
+            &vec![0u8; MAX_RELAY_DELEGATED_REVOCATIONS_LEN + 4_096],
         ),
     );
     assert_eq!(

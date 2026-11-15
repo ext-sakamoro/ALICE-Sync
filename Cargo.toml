@@ -65,7 +65,9 @@ ffi = ["std"]     # C-ABI FFI for Unity/UE5
 cloud = ["std"]  # Cloud-side multi-device spatial synchronization
 secure-transport = ["async", "dep:alice-channel"]  # SyncTransport over the authenticated, encrypted channel
 # the anonymous relay's blocking client: RelayConnection (WebSocket, then the anonymous handshake to the relay's
-# service certificate) and fetch_relay_cert; the sans-I/O RelayClient needs no feature
+# service certificate), fetch_relay_cert / fetch_relay_revocations, and the revocation list kept on disk
+# (KeptRevocations, RevocationRule); the sans-I/O RelayClient needs no feature. This feature needs Rust 1.89
+# (File::try_lock locks the store); the rest of the crate keeps rust-version 1.88
 anonymous-relay-client = ["std", "dep:alice-channel", "dep:alice-websocket"]
 mdns = ["dep:mdns-sd", "async"]  # mDNS LAN auto-discovery
 all-bridges = ["physics", "telemetry", "cache", "auth", "codec", "analytics"]  # All integration bridges

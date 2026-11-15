@@ -101,6 +101,7 @@ Enable with `--features async` to get a complete, self-contained P2P stack.
 | `discovery` | mDNS LAN auto-discovery + manual peer registration + GC |
 | `session` | High-level session driver: builder pattern, tick loop, 5 sync modes |
 | `secure_transport` | `SyncTransport` over an authenticated, encrypted channel: peers are certified devices dialled by their certificate (Noise IK), messages are sealed and carry the certificate they came with, application bytes travel beside Sync messages (feature `secure-transport`) |
+| `anonymous_relay_client` | The anonymous relay's client: frames in and out without I/O (`RelayClient`, no feature); with the feature `anonymous-relay-client`, the blocking connection, the certificate and revocation-list fetches, and the operator's revocation list kept on disk so a restart or a second process never lowers it (`KeptRevocations`, `RevocationRule`). That feature needs Rust 1.89 (`File::try_lock`); the rest of the crate builds with 1.88 |
 
 ### Sync Modes
 
