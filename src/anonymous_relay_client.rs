@@ -66,8 +66,8 @@ pub use crate::relay_revocations_body::{
 };
 #[cfg(feature = "anonymous-relay-client")]
 pub use kept::{
-    FloorError, FloorSource, KeptError, KeptRevocations, RevocationRule, RevocationRuleError,
-    ServedNotUsed, DEFAULT_LOCK_WAIT, MAX_KEPT_FILE_LEN,
+    FloorError, FloorPending, FloorSource, KeptError, KeptRevocations, RevocationRule,
+    RevocationRuleError, ServedNotUsed, DEFAULT_LOCK_WAIT, MAX_KEPT_FILE_LEN,
 };
 
 /// How many published payloads a [`RelayClient`] keeps for a resend unless set otherwise

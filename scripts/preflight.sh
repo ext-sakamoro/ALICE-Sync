@@ -1104,13 +1104,13 @@ step "ci.yml / test: Test (default = std)"
 step "ci.yml / test: Test (all native features)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,secure_transport_peer_kind=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,relay_revocations_body=7,anonymous_relay_client_connection=13,anonymous_relay_kept=20 -- cargo test --features "$NATIVE_FEATURES" )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh determinism_golden,float_edge_golden,sync_semantics_id,g13_receive_order,g13_order_determinism,persist_canonical,g13_bounds,keyed_lookup,backends_agree,raw_serde_has_stamped_path,untrusted_entity_id_alloc_bound,secure_transport=22,secure_transport_control=5,secure_transport_peer_kind=5,authorship=18,persist_state_id=10,physics_input_lossless=3,input_wire_legacy=2,anonymous_relay_snapshot_stream_oracle=5,anonymous_relay_snapshot_stream_memory=1,anonymous_relay_snapshot_reader_oracle=4,anonymous_relay_snapshot_reader_memory=1,anonymous_relay_client_oracle=13,relay_revocations_body=7,anonymous_relay_client_connection=13,anonymous_relay_kept=21 -- cargo test --features "$NATIVE_FEATURES" )
 )
 
 step "ci.yml / test: Test (anonymous relay client feature alone)"
 (
   gh_step ci.yml.test
-( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh anonymous_relay_client_connection=13,anonymous_relay_client_oracle=13,anonymous_relay_kept=20 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle --test anonymous_relay_kept )
+( export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client"; scripts/run_tests.sh anonymous_relay_client_connection=13,anonymous_relay_client_oracle=13,anonymous_relay_kept=21 -- cargo test --features anonymous-relay-client --test anonymous_relay_client_connection --test anonymous_relay_client_oracle --test anonymous_relay_kept )
 )
 
 step "ci.yml / test: Analytic oracle (async + physics + codec)"
@@ -1149,7 +1149,7 @@ step "ci.yml / msrv: Test the revocation store (anonymous-relay-client, 1.89)"
   export CARGO_TERM_COLOR="always" CARGO_INCREMENTAL="0" RUST_BACKTRACE="short" NATIVE_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db,anonymous-relay-client" MSRV_FEATURES="std,async,simd,cloud,physics,telemetry,cache,auth,codec,analytics,ffi,serde-raw,secure-transport,crdt-db"
   v=$(cargo +1.89 --version)
   case "$v" in "cargo 1.89."*) ;; *) echo "::error::not 1.89: $v"; exit 1 ;; esac
-  scripts/run_tests.sh anonymous_relay_kept=20 -- cargo +1.89 test --features anonymous-relay-client --test anonymous_relay_kept
+  scripts/run_tests.sh anonymous_relay_kept=21 -- cargo +1.89 test --features anonymous-relay-client --test anonymous_relay_kept
   scripts/run_tests.sh lib=4 -- cargo +1.89 test --features anonymous-relay-client --lib anonymous_relay_client::kept::
 )
 )

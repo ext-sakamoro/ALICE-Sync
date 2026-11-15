@@ -52,14 +52,16 @@
 //! the lock. The file is written first and the floor raised second, so a crash between the two leaves the
 //! floor below the file, which is safe; the floor is never raised first.
 //!
-//! A store that holds nothing while the floor source holds a pair (the file was deleted, or the data
-//! directory was replaced) opens with that floor pending ([`KeptRevocations::floor_pending`]): it is not
-//! an older file, so it is not [`KeptError::RolledBack`], but nothing it holds may be trusted.
+//! A store that holds nothing, or a list below the floor (the file was deleted, the data directory was
+//! replaced, an older file or a backup was put back), while the floor source holds a pair opens with that
+//! floor pending ([`KeptRevocations::floor_pending`], [`FloorPending`]): the older list is not used for
+//! anything, and [`FloorPending::stored`] says whether one was found (show it: it is the trace of a
+//! rollback).
 //! [`RevocationRule::apply`] refuses every relay while the floor is pending, whether or not a fresh list is
 //! required ([`RevocationRuleError::FloorPending`]). The pending floor clears only when a list accepted
 //! from a relay (checked as every list is: delegate, signatures, freshness) reaches the floor; a list
-//! below it is refused as [`KeptError::RolledBack`] and nothing is written. A non-empty stored state
-//! below the floor (an older file put back) is still refused at open.
+//! below it is refused as [`KeptError::RolledBack`] and nothing is written (the older file stays as it
+//! is until a list at or above the floor replaces it).
 //!
 //! # The rule
 //!
@@ -169,9 +171,10 @@ pub enum KeptError {
         /// How long it was waited for.
         waited: Duration,
     },
-    /// The stored pair is below the floor source's: an older file was put back.
+    /// A list was accepted that does not reach the floor (the store's floor is pending: nothing, or an
+    /// older list, was stored); nothing was written.
     RolledBack {
-        /// The stored (epoch, sequence), `None` when nothing is stored.
+        /// The (epoch, sequence) that would have been stored.
         stored: Option<(u64, u64)>,
         /// The floor.
         floor: (u64, u64),
@@ -222,7 +225,17 @@ pub struct KeptRevocations {
     state: DelegatedRevocations,
     lock_wait: Duration,
     floor: Option<Box<dyn FloorSource + Send>>,
-    pending: Option<(u64, u64)>,
+    pending: Option<FloorPending>,
+}
+
+/// Why a store's floor is pending ([`KeptRevocations::floor_pending`]): what it found against the floor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FloorPending {
+    /// The floor the store waits for.
+    pub floor: (u64, u64),
+    /// `None`: nothing was stored (no list yet, or the file was removed). `Some(pair)`: a list below the
+    /// floor was found and is ignored, which is what a rollback or a restored backup looks like; show it.
+    pub stored: Option<(u64, u64)>,
 }
 
 impl core::fmt::Debug for KeptRevocations {
@@ -249,12 +262,12 @@ impl KeptRevocations {
         Self::open_inner(path.into(), master, None)
     }
 
-    /// Open the store at `path` for `master` with a floor source: as [`Self::open`], and the stored pair
-    /// must be at least the floor.
+    /// Open the store at `path` for `master` with a floor source: as [`Self::open`]; a store holding
+    /// nothing, or a list below the floor, opens with the floor pending ([`Self::floor_pending`]).
     ///
     /// # Errors
     ///
-    /// As [`Self::open`], then [`KeptError::Floor`] and [`KeptError::RolledBack`].
+    /// As [`Self::open`], then [`KeptError::Floor`] when the floor cannot be read.
     pub fn open_with_floor(
         path: impl Into<PathBuf>,
         master: PublicKey,
@@ -269,8 +282,12 @@ impl KeptRevocations {
         floor: Option<Box<dyn FloorSource + Send>>,
     ) -> Result<Self, KeptError> {
         let lock = lock(&path, DEFAULT_LOCK_WAIT)?;
-        let state = read_state(&path, &master)?;
+        let mut state = read_state(&path, &master)?;
         let pending = check_floor(floor.as_deref(), &state)?;
+        if pending.is_some() {
+            // a list below the floor is not used for anything
+            state = DelegatedRevocations::new();
+        }
         drop(lock);
         Ok(Self {
             path,
@@ -310,11 +327,15 @@ impl KeptRevocations {
         let lock = lock(&self.path, self.lock_wait)?;
         let mut next = read_state(&self.path, &self.master)?;
         let pending = check_floor(self.floor.as_deref(), &next)?;
+        if pending.is_some() {
+            // the stored list is below the floor (or absent): accept against nothing, never against it
+            next = DelegatedRevocations::new();
+        }
         let got = next
             .accept(list, delegate, &self.master, now, window)
             .map_err(KeptError::Refused)?;
         // with the floor pending, the accepted list must reach it before anything is written
-        if let Some(floor) = pending {
+        if let Some(FloorPending { floor, .. }) = pending {
             let stored = pair(&next);
             if stored.is_none_or(|p| p < floor) {
                 return Err(KeptError::RolledBack { stored, floor });
@@ -385,10 +406,11 @@ impl KeptRevocations {
     }
 
     /// The floor this store must reach before anything it holds is used: `Some` when it opened holding
-    /// nothing while the floor source held this pair (see the module documentation), until a list at or
-    /// above it is accepted. [`RevocationRule::apply`] refuses every relay meanwhile; show it to the user.
+    /// nothing, or a list below the floor, while the floor source held a pair (see the module
+    /// documentation), until a list at or above it is accepted. [`RevocationRule::apply`] refuses every
+    /// relay meanwhile; show it to the user, and log [`FloorPending::stored`] when it is `Some`.
     #[must_use]
-    pub const fn floor_pending(&self) -> Option<(u64, u64)> {
+    pub const fn floor_pending(&self) -> Option<FloorPending> {
         self.pending
     }
 }
@@ -397,26 +419,23 @@ fn pair(state: &DelegatedRevocations) -> Option<(u64, u64)> {
     state.epoch().zip(state.sequence())
 }
 
-/// The stored pair against the floor: a stored pair below it is refused (an older file put back); nothing
-/// stored under a floor gives the floor as pending (see the module documentation)
+/// The stored pair against the floor: nothing stored, or a pair below it (an older file put back, a
+/// restored backup), gives the floor as pending (see the module documentation)
 fn check_floor(
     floor: Option<&(dyn FloorSource + Send)>,
     state: &DelegatedRevocations,
-) -> Result<Option<(u64, u64)>, KeptError> {
+) -> Result<Option<FloorPending>, KeptError> {
     let Some(source) = floor else {
         return Ok(None);
     };
     let Some(floor) = source.read_floor().map_err(KeptError::Floor)? else {
         return Ok(None);
     };
-    match pair(state) {
-        None => Ok(Some(floor)),
-        Some(p) if p < floor => Err(KeptError::RolledBack {
-            stored: Some(p),
-            floor,
-        }),
-        Some(_) => Ok(None),
+    let stored = pair(state);
+    if stored.is_none_or(|p| p < floor) {
+        return Ok(Some(FloorPending { floor, stored }));
     }
+    Ok(None)
 }
 
 /// `<dir>/<name><suffix>` beside `path`, with `<prefix>` before the name
@@ -598,8 +617,8 @@ pub enum RevocationRuleError {
     /// The store opened holding nothing under a floor and no list has reached it yet
     /// ([`KeptRevocations::floor_pending`]): no relay is admitted, whether or not a fresh list is required.
     FloorPending {
-        /// The floor the store waits for.
-        floor: (u64, u64),
+        /// The floor the store waits for, and the older list it found and ignores, if any.
+        pending: FloorPending,
         /// Why the served list was not used, if it was not.
         served: Option<Box<ServedNotUsed>>,
     },
@@ -618,11 +637,20 @@ impl core::fmt::Display for RevocationRuleError {
                 reason,
             } => write!(f, "no fresh revocation list ({reason})"),
             Self::Revoked => f.write_str("the relay's certificate is revoked"),
-            Self::FloorPending { floor, served } => {
-                write!(
-                    f,
-                    "the revocation store lost its list and waits for one at or above {floor:?}"
-                )?;
+            Self::FloorPending { pending, served } => {
+                match pending.stored {
+                    None => write!(
+                        f,
+                        "the revocation store holds no list and waits for one at or above {:?}",
+                        pending.floor
+                    )?,
+                    Some(stored) => write!(
+                        f,
+                        "the revocation store found an older list {stored:?}, below the floor {:?}, \
+                         ignores it and waits for one at or above the floor",
+                        pending.floor
+                    )?,
+                }
                 match served {
                     Some(served) => write!(f, "; {served}"),
                     None => Ok(()),
@@ -689,9 +717,9 @@ impl RevocationRule {
             },
             Err(e) => Some(ServedNotUsed::Fetch(e)),
         };
-        if let Some(floor) = kept.floor_pending() {
+        if let Some(pending) = kept.floor_pending() {
             return Err(RevocationRuleError::FloorPending {
-                floor,
+                pending,
                 served: served.map(Box::new),
             });
         }
