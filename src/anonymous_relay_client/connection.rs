@@ -7,7 +7,7 @@ use alice_channel::noise::{Transport, MAX_MESSAGE};
 use alice_channel::{check_cert, connect_messages, ChannelError, MessageIo, PeerPolicy};
 use alice_identity::device_cert::DeviceCert;
 use alice_websocket::client::{Connection, Received};
-use alice_websocket::{MaskSource, WsError};
+use alice_websocket::{MaskError, MaskSource, WsError};
 
 use crate::anonymous_relay::RoomAlias;
 use crate::anonymous_relay_wire::{Frame, WireError};
@@ -18,11 +18,16 @@ pub const MAX_FRAME_BYTES: usize = alice_channel::MAX_PAYLOAD;
 
 /// Why a [`RelayConnection`] could not open, send or receive.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RelayConnectionError {
     /// The host name is empty or holds a character that would break the request line.
     BadHost,
     /// The WebSocket failed (the upgrade, the stream, the framing).
     WebSocket(WsError),
+    /// The mask source gave no mask key (this side's random source failed, not the relay). The WebSocket
+    /// wrote no byte of the message it was masking; the connection is poisoned all the same when the
+    /// failure came after the channel had sealed the message (its nonce has advanced).
+    Mask(MaskError),
     /// The channel refused the relay's certificate (nothing was sent) or the handshake failed.
     Channel(ChannelError),
     /// The relay sent bytes that are not one frame.
@@ -45,6 +50,7 @@ impl core::fmt::Display for RelayConnectionError {
         match self {
             Self::BadHost => f.write_str("host name not usable in a request"),
             Self::WebSocket(e) => write!(f, "websocket: {e}"),
+            Self::Mask(e) => write!(f, "mask: {e}"),
             Self::Channel(e) => write!(f, "channel: {e:?}"),
             Self::Wire(e) => write!(f, "frame: {e:?}"),
             Self::TooLarge { len } => write!(f, "frame of {len} bytes over {MAX_FRAME_BYTES}"),
@@ -56,6 +62,16 @@ impl core::fmt::Display for RelayConnectionError {
 }
 
 impl std::error::Error for RelayConnectionError {}
+
+/// A WebSocket error as this connection reports it: a failure of this side's mask source is
+/// [`RelayConnectionError::Mask`] (not something the relay did), every other one
+/// [`RelayConnectionError::WebSocket`]
+fn ws_error(e: WsError) -> RelayConnectionError {
+    match e {
+        WsError::Mask(e) => RelayConnectionError::Mask(e),
+        e => RelayConnectionError::WebSocket(e),
+    }
+}
 
 /// Whether `host` can stand in a request's `Host` header: not empty, printable ASCII, no space
 pub(super) fn usable_host(host: &str) -> bool {
@@ -89,9 +105,10 @@ impl<S, M> WsIo<'_, S, M> {
     fn fail(&mut self, e: WsError) -> ChannelError {
         let kind = match &e {
             WsError::Io { kind, .. } => *kind,
+            WsError::Mask(_) => std::io::ErrorKind::Other,
             _ => std::io::ErrorKind::InvalidData,
         };
-        self.keep(RelayConnectionError::WebSocket(e));
+        self.keep(ws_error(e));
         ChannelError::Io(kind)
     }
 
@@ -149,7 +166,8 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
     ///
     /// [`RelayConnectionError::BadHost`] and [`RelayConnectionError::Channel`] (`UnknownPeer` /
     /// `Rejected`) before anything is written; [`RelayConnectionError::WebSocket`] when the upgrade or the
-    /// stream fails; [`RelayConnectionError::Channel`] (`Noise`) when the relay does not finish the
+    /// stream fails; [`RelayConnectionError::Mask`] when the mask source gives no key (for the upgrade's
+    /// key nothing has been written); [`RelayConnectionError::Channel`] (`Noise`) when the relay does not finish the
     /// handshake for that key; [`RelayConnectionError::TextMessage`] / [`RelayConnectionError::Closed`]
     /// for a text message or a close during the handshake.
     pub fn open(
@@ -165,8 +183,8 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
         }
         // the certificate first: a relay this side does not trust gets no byte at all
         check_cert(cert, policy).map_err(RelayConnectionError::Channel)?;
-        let mut ws = Connection::connect(stream, host, &format!("/r/{room}"), mask)
-            .map_err(RelayConnectionError::WebSocket)?;
+        let mut ws =
+            Connection::connect(stream, host, &format!("/r/{room}"), mask).map_err(ws_error)?;
         let mut io = WsIo {
             ws: &mut ws,
             failed: None,
@@ -190,7 +208,9 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
     /// [`RelayConnectionError::TooLarge`] when the encoded frame is over [`MAX_FRAME_BYTES`] (nothing is
     /// sent, the connection stays usable); [`RelayConnectionError::WebSocket`] /
     /// [`RelayConnectionError::Channel`] when the write or the encryption fails (the connection is
-    /// poisoned); [`RelayConnectionError::Poisoned`].
+    /// poisoned); [`RelayConnectionError::Mask`] when the mask source gives no key (no byte of the message
+    /// is written, but the channel has sealed it, so the connection is poisoned);
+    /// [`RelayConnectionError::Poisoned`].
     pub fn send(&mut self, frame: &Frame) -> Result<(), RelayConnectionError> {
         if self.poisoned {
             return Err(RelayConnectionError::Poisoned);
@@ -205,9 +225,7 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
             .transport
             .send(&bytes)
             .map_err(|e| RelayConnectionError::Channel(ChannelError::Noise(e)))?;
-        self.ws
-            .send_binary(&sealed)
-            .map_err(RelayConnectionError::WebSocket)?;
+        self.ws.send_binary(&sealed).map_err(ws_error)?;
         self.poisoned = false;
         Ok(())
     }
@@ -220,8 +238,9 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
     /// [`RelayConnectionError::Wire`] when the decrypted bytes are not exactly one frame (the connection
     /// stays usable: the channel is in step); [`RelayConnectionError::Closed`] when the relay closed the
     /// WebSocket; [`RelayConnectionError::WebSocket`] / [`RelayConnectionError::Channel`] /
-    /// [`RelayConnectionError::TextMessage`] (the connection is poisoned, except for a read timeout, which
-    /// leaves it usable); [`RelayConnectionError::Poisoned`].
+    /// [`RelayConnectionError::TextMessage`] / [`RelayConnectionError::Mask`] (the mask source failed for
+    /// the pong or the close echo the WebSocket answers with) (the connection is poisoned, except for a
+    /// read timeout, which leaves it usable); [`RelayConnectionError::Poisoned`].
     pub fn recv(&mut self) -> Result<Frame, RelayConnectionError> {
         if self.poisoned {
             return Err(RelayConnectionError::Poisoned);
@@ -242,7 +261,7 @@ impl<S: Read + Write, M: MaskSource> RelayConnection<S, M> {
                 if !is_timeout(&e) {
                     self.poisoned = true;
                 }
-                return Err(RelayConnectionError::WebSocket(e));
+                return Err(ws_error(e));
             }
         };
         let bytes = match self.transport.recv(&sealed) {

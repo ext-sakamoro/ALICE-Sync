@@ -218,8 +218,8 @@ dependencies = [
 
 [[package]]
 name = "alice-websocket"
-version = "2.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-WebSocket?branch=main#7cd1ec6937825e1b2c991374e139d13e2ec754bc"
+version = "3.0.0"
+source = "git+https://github.com/ext-sakamoro/ALICE-WebSocket?branch=main#705a5aa0b299b88dc697526d162ab3b5cf4a77d8"
 
 [[package]]
 name = "alice-zip"

@@ -13,6 +13,8 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use alice_channel::noise::{Keypair, MAX_MESSAGE};
@@ -34,7 +36,9 @@ use alice_sync::anonymous_relay_client::{
     MAX_RELAY_REVOCATIONS_LEN, MAX_RELAY_REVOCATION_IDS,
 };
 use alice_sync::anonymous_relay_wire::Frame;
-use alice_websocket::{Frame as WsFrame, HandshakeRequest, HandshakeResponse, MaskSource, Opcode};
+use alice_websocket::{
+    Frame as WsFrame, HandshakeRequest, HandshakeResponse, MaskError, MaskSource, Opcode,
+};
 
 const ROOM: RoomAlias = RoomAlias::from_raw([0x41; 32]);
 const TOKEN: RoomToken = RoomToken::from_raw([0xc1; 32]);
@@ -87,11 +91,51 @@ fn relay_cert() -> DeviceCert {
 struct CountingMask(u8);
 
 impl MaskSource for CountingMask {
-    fn fill(&mut self, buf: &mut [u8]) {
+    fn fill(&mut self, buf: &mut [u8]) -> Result<(), MaskError> {
         for b in buf {
             self.0 = self.0.wrapping_mul(31).wrapping_add(17);
             *b = self.0;
         }
+        Ok(())
+    }
+}
+
+/// A mask source that fails once its switch is set (this side's random source running dry); until then
+/// it gives the same keys as [`CountingMask`]
+struct FailingMask {
+    inner: CountingMask,
+    fail: Arc<AtomicBool>,
+}
+
+impl MaskSource for FailingMask {
+    fn fill(&mut self, buf: &mut [u8]) -> Result<(), MaskError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(MaskError::Unavailable("test source switched off".into()));
+        }
+        self.inner.fill(buf)
+    }
+}
+
+/// A stream that counts the bytes written through it
+struct CountedStream {
+    inner: TcpStream,
+    written: Arc<AtomicUsize>,
+}
+
+impl Read for CountedStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl Write for CountedStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.written.fetch_add(n, Ordering::SeqCst);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -342,6 +386,106 @@ fn a_relay_under_another_operator_key_is_refused_before_any_byte_is_sent() {
         server.join().unwrap(),
         0,
         "not even the WebSocket upgrade was written"
+    );
+}
+
+/// A mask source with no key for the upgrade: `open` reports `Mask` (this side's failure, not the
+/// relay's) and writes no byte, not even the upgrade request
+#[test]
+fn a_mask_source_that_fails_at_the_upgrade_is_reported_as_mask_and_writes_nothing() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let written = Arc::new(AtomicUsize::new(0));
+    let stream = CountedStream {
+        inner: connect(&listener),
+        written: Arc::clone(&written),
+    };
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        s.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let mut all = Vec::new();
+        s.read_to_end(&mut all).unwrap();
+        all.len()
+    });
+    let result = RelayConnection::open(
+        stream,
+        "relay.test",
+        ROOM,
+        &relay_cert(),
+        &policy(&operator()),
+        FailingMask {
+            inner: CountingMask(1),
+            fail: Arc::new(AtomicBool::new(true)),
+        },
+    );
+    assert!(
+        matches!(
+            result,
+            Err(RelayConnectionError::Mask(MaskError::Unavailable(_)))
+        ),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(written.load(Ordering::SeqCst), 0, "no byte was written");
+    assert_eq!(server.join().unwrap(), 0, "the relay received no byte");
+}
+
+/// A mask source that fails after the connection is open: `send` reports `Mask`, writes no byte of
+/// the message, and poisons the connection (the channel sealed the message, so its nonce advanced);
+/// the relay receives no frame
+#[test]
+fn a_mask_source_that_fails_on_send_is_reported_as_mask_writes_nothing_and_poisons() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let written = Arc::new(AtomicUsize::new(0));
+    let stream = CountedStream {
+        inner: connect(&listener),
+        written: Arc::clone(&written),
+    };
+    let server = std::thread::spawn(move || relay(&listener));
+    let fail = Arc::new(AtomicBool::new(false));
+    let mut conn = RelayConnection::open(
+        stream,
+        "relay.test",
+        ROOM,
+        &relay_cert(),
+        &policy(&operator()),
+        FailingMask {
+            inner: CountingMask(1),
+            fail: Arc::clone(&fail),
+        },
+    )
+    .unwrap();
+    let client = RelayClient::new(ROOM, TOKEN, TAG_A, 0, LIMITS.max_payload);
+
+    let before = written.load(Ordering::SeqCst);
+    assert!(before > 0, "the upgrade and the handshake were written");
+    fail.store(true, Ordering::SeqCst);
+    let result = conn.send(&client.bind());
+    assert!(
+        matches!(
+            result,
+            Err(RelayConnectionError::Mask(MaskError::Unavailable(_)))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        written.load(Ordering::SeqCst),
+        before,
+        "no byte of the failed message was written"
+    );
+    fail.store(false, Ordering::SeqCst);
+    assert!(
+        matches!(
+            conn.send(&client.bind()),
+            Err(RelayConnectionError::Poisoned)
+        ),
+        "the channel's nonce advanced: the connection is not used again"
+    );
+    assert_eq!(written.load(Ordering::SeqCst), before);
+    drop(conn);
+    assert_eq!(
+        server.join().unwrap(),
+        Vec::<Frame>::new(),
+        "the relay received no frame"
     );
 }
 
