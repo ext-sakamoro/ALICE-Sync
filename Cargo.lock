@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "alice-channel"
 version = "0.1.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#dda5a20f1daa5bd88e8f6c0ff34abb3d50a6ae79"
+source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#28ae5c7d65b99800c6410ccd218b89dd227df97e"
 dependencies = [
  "alice-crypto",
  "alice-identity",
@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "alice-crypto"
 version = "0.7.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Crypto?branch=main#c61aa2a0b20b0babe6bc860ebf76135fb4986c77"
+source = "git+https://github.com/ext-sakamoro/ALICE-Crypto?branch=main#a3f3907831b81ffc9aa079f4a2eb160dc63a898d"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -152,8 +152,8 @@ source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#6269efc2
 
 [[package]]
 name = "alice-identity"
-version = "3.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#ac912d2c5be2f1631fc44c039f1b560cdb7ebac5"
+version = "4.0.0"
+source = "git+https://github.com/ext-sakamoro/ALICE-Identity?rev=480d591a0617b8511f6ce91af7aa3570ee6aa7e0#480d591a0617b8511f6ce91af7aa3570ee6aa7e0"
 dependencies = [
  "alice-crypto",
  "alice-sign",
@@ -184,7 +184,7 @@ source = "git+https://github.com/ext-sakamoro/ALICE-Serial?branch=main#38f306c2a
 [[package]]
 name = "alice-sign"
 version = "0.1.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Sign?branch=main#8c8d1eebf4ef9fc4059dae08779f8846e832df5e"
+source = "git+https://github.com/ext-sakamoro/ALICE-Sign?branch=main#74e3d8286f88940a3ee756cb61f18c8549fe4b4f"
 dependencies = [
  "ed25519-dalek",
  "sha2",
@@ -776,7 +776,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1008,7 +1008,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1635,7 +1635,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1847,7 +1847,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

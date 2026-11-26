@@ -56,7 +56,7 @@ fn delegate(n: u8, epoch: u64) -> DeviceCert {
     .unwrap()
 }
 fn list(n: u8, seq: u64, at: u64, revoked: &[DeviceId]) -> RevocationList {
-    RevocationList::issue(&delegate_key(n), seq, at, revoked)
+    RevocationList::issue(&delegate_key(n), seq, at, revoked).unwrap()
 }
 fn dev(n: u8) -> DeviceId {
     DeviceId::from_raw([n; 16])

@@ -198,7 +198,7 @@ async fn a_service_channel_is_closed_once_the_operator_revokes_its_device() {
     let open = tp.peers().await;
     assert_eq!(open.len(), 1);
     let revoked = service_credential().cert().device_id();
-    let list = RevocationList::issue(&operator(), 1, ISSUED + 200, &[revoked]);
+    let list = RevocationList::issue(&operator(), 1, ISSUED + 200, &[revoked]).unwrap();
     assert!(policy.revocations.set(revocations(list)).is_ok());
     assert_eq!(tp.revalidate().await, open);
     assert!(tp.peers().await.is_empty());
@@ -208,7 +208,7 @@ async fn a_service_channel_is_closed_once_the_operator_revokes_its_device() {
 async fn a_service_channel_is_kept_under_a_list_that_does_not_name_it() {
     let (tp, policy, _ts) = connected().await;
     let other = person_credential().cert().device_id();
-    let list = RevocationList::issue(&operator(), 1, ISSUED + 200, &[other]);
+    let list = RevocationList::issue(&operator(), 1, ISSUED + 200, &[other]).unwrap();
     assert!(policy.revocations.set(revocations(list)).is_ok());
     assert!(tp.revalidate().await.is_empty());
     assert_eq!(tp.peers().await.len(), 1);

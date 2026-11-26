@@ -7,7 +7,7 @@
 //! one body (fixed test-only seeds; Ed25519 signatures are deterministic) so a change of the layout or of the
 //! parts' encodings shows. Every key is a fixed test-only seed.
 
-use alice_identity::cert_revocation::RevocationList;
+use alice_identity::cert_revocation::{RevocationList, RevocationListError};
 use alice_identity::delegated_revocation::issue_revocation_delegate;
 use alice_identity::device_cert::{DeviceCert, DeviceId, MAX_DEVICE_CERT_LEN};
 use alice_sign::KeyPair;
@@ -28,7 +28,7 @@ fn delegate() -> DeviceCert {
     issue_revocation_delegate(&master(), delegate_key().public().0, T0, T0 + 7 * 86_400).unwrap()
 }
 fn list(revoked: &[DeviceId]) -> RevocationList {
-    RevocationList::issue(&delegate_key(), 3, T0 + 10, revoked)
+    RevocationList::issue(&delegate_key(), 3, T0 + 10, revoked).unwrap()
 }
 fn body() -> DelegatedListResponse {
     DelegatedListResponse {
@@ -172,17 +172,24 @@ fn the_longest_list_fits_its_cap_and_one_more_id_does_not() {
     assert_eq!(longest.list.to_bytes().len(), MAX_RELAY_REVOCATIONS_LEN);
     let bytes = longest.to_bytes().unwrap();
     assert!(bytes.len() <= MAX_RELAY_DELEGATED_REVOCATIONS_LEN);
-    assert_eq!(DelegatedListResponse::from_bytes(&bytes), Ok(longest));
+    assert_eq!(
+        DelegatedListResponse::from_bytes(&bytes),
+        Ok(longest.clone())
+    );
 
     let mut more = ids;
     more.push(DeviceId::from_raw([0xff; 16]));
-    let over = DelegatedListResponse {
-        list: list(&more),
-        delegate: delegate(),
-    };
-    // the relay refuses to serve it, and a body carrying it is refused by the client
-    assert_eq!(over.to_bytes(), Err(BodyError::TooLarge));
-    let over_body = layout(1, &over.delegate.to_bytes(), &over.list.to_bytes());
+    // one more id is not a list at all: the list format refuses to issue it
+    assert!(matches!(
+        RevocationList::issue(&delegate_key(), 3, T0 + 10, &more),
+        Err(RevocationListError::TooMany { .. })
+    ));
+    // and a body carrying the bytes such a list would have (16 more than the longest) is refused by the client
+    // before the list is read
+    let mut over_list = longest.list.to_bytes();
+    over_list.extend_from_slice(&[0xff; 16]);
+    assert_eq!(over_list.len(), MAX_RELAY_REVOCATIONS_LEN + 16);
+    let over_body = layout(1, &longest.delegate.to_bytes(), &over_list);
     assert_eq!(
         DelegatedListResponse::from_bytes(&over_body),
         Err(BodyError::TooLarge)

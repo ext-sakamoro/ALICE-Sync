@@ -774,7 +774,7 @@ mod tests {
             .unwrap()
     }
     fn list(seq: u64) -> RevocationList {
-        RevocationList::issue(&delegate_key(), seq, T0 + 10, &[])
+        RevocationList::issue(&delegate_key(), seq, T0 + 10, &[]).unwrap()
     }
 
     fn scratch(name: &str) -> PathBuf {

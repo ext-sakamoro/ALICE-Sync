@@ -4,6 +4,10 @@ All notable changes to ALICE-Sync will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- 依存: alice-identity を 4.0 に上げる (`RevocationList::issue` が `Result` を返し、失効の一覧は端末 id 4096 まで) 試験の `issue(..)` は結果を受ける 4.0 の波の間は alice-identity を 4.0 の候補 commit (rev 480d591) に固定し、alice-identity の main に入った後に branch main へ戻す (時限、48 時間以内) lock は alice-channel を main 28ae5c7 (alice-identity 4.0 の側) に、alice-crypto / alice-sign もそれぞれの main (a3f3907 / 74e3d82) に動く
+- `MAX_RELAY_REVOCATION_IDS` / `MAX_RELAY_REVOCATIONS_LEN` は alice-identity の `MAX_REVOKED` / `MAX_REVOCATION_LIST_LEN` から導く (値は同じ 4096 / 65,653 byte、一覧の形式自体が上限を持つようになったので同じ数を 2 か所に持たない) 上限より 1 つ多い一覧は作れないので、試験は手で組んだ 16 byte 多い body が `TooLarge` で断られることを見る
+
 ### Added
 - 中継の失効リストを disk に保つ `anonymous_relay_client::KeptRevocations` (feature `anonymous-relay-client`): alice-identity の `DelegatedRevocations` (offline の master 鍵が認めた代理鍵が署名する失効リスト、(epoch, sequence) で順序づける) を 1 つの file に保ち、再起動しても別 process が同じ file を使っても保存した (epoch, sequence) が下がらない `accept` は隣の `<name>.lock` の排他 lock (`File::try_lock`、既定の待ち `DEFAULT_LOCK_WAIT` = 5 秒、超えると `KeptError::LockTimeout`) を取り、file を読み直してそれを下限にし、置き換わった時だけ同じ directory の一時 file に書いて sync・rename・(unix は) directory を sync する 拒否 (`KeptError::Refused`、衝突は両方のリストの SHA-256 を表示) では何も書かない `open` は file が無ければ空、それ以外の不正 (I/O・path に directory・0 byte・途中で切れた・壊れた・別の master の署名) は型つきの error で閉じる
   - 外部の下限 `FloorSource` (`open_with_floor`、application が data directory の外 (OS の鍵保管など) に置く): lock の中で、open と accept の時に保存した組が下限以上であることを確かめ (下回れば `KeptError::RolledBack`)、書いた後に下限を上げる 先に file を書き、後で下限を上げる (間で落ちても下限が file より低いだけで安全) 下限が無い時は、data directory に書ける者が以前に写した古い正当な file を戻せる 得られるのは鮮度の窓 (既定 24 時間) の間、漏れた古い epoch の代理鍵も持つ時はその代理鍵の有効期間 (7 日以内) の間に限られる

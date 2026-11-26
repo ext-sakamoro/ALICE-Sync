@@ -660,7 +660,8 @@ fn revocation_body() -> DelegatedListResponse {
             3,
             ISSUED + 60,
             &[relay_cert().device_id(), other],
-        ),
+        )
+        .unwrap(),
         delegate: revocation_delegate(),
     }
 }
@@ -684,7 +685,7 @@ fn fetch_relay_revocations_reads_a_200_body_as_the_list_unverified() {
     // returned as decoded, not verified: a list under another key decodes, and only the caller's check
     // under the operator key refuses it
     let foreign = DelegatedListResponse {
-        list: RevocationList::issue(&KeyPair::from_seed([0x0f; 32]), 1, ISSUED, &[]),
+        list: RevocationList::issue(&KeyPair::from_seed([0x0f; 32]), 1, ISSUED, &[]).unwrap(),
         delegate: revocation_delegate(),
     }
     .to_bytes()
@@ -755,7 +756,7 @@ fn fetch_relay_revocations_has_its_own_cap() {
         })
         .collect();
     let longest = DelegatedListResponse {
-        list: RevocationList::issue(&revocation_delegate_key(), 1, ISSUED, &ids),
+        list: RevocationList::issue(&revocation_delegate_key(), 1, ISSUED, &ids).unwrap(),
         delegate: revocation_delegate(),
     };
     assert_eq!(longest.list.to_bytes().len(), MAX_RELAY_REVOCATIONS_LEN);

@@ -25,18 +25,21 @@
 use alice_identity::cert_revocation::{RevocationList, RevocationListError};
 use alice_identity::device_cert::{DeviceCert, DeviceCertError, MAX_DEVICE_CERT_LEN};
 
-/// The most device ids a revocation list in a body may hold.
+/// The most device ids a revocation list in a body may hold: the list format's own cap
+/// ([`alice_identity::cert_revocation::MAX_REVOKED`], 4096), which `RevocationList::issue` and
+/// `RevocationList::from_bytes` enforce.
 ///
-/// The list format itself has no limit short of its 32-bit count, so the body states one: within a
-/// delegate's epoch a newer list keeps every id of the older one, so the list grows by one id per relay key the
-/// operator revokes (a new epoch may drop ids). 4096 ids is over three centuries of one revocation a month; a
-/// list past it is refused as [`BodyError::TooLarge`].
-pub const MAX_RELAY_REVOCATION_IDS: usize = 4096;
+/// Within a delegate's epoch a newer list keeps every id of the older one, so the list grows by one id per relay
+/// key the operator revokes (a new epoch may drop ids); 4096 ids is over three centuries of one revocation a month.
+/// A body whose list is longer than [`MAX_RELAY_REVOCATIONS_LEN`] is refused as [`BodyError::TooLarge`] before the
+/// list is read.
+pub const MAX_RELAY_REVOCATION_IDS: usize = alice_identity::cert_revocation::MAX_REVOKED;
 
 /// The longest list a body carries: [`MAX_RELAY_REVOCATION_IDS`] ids in the list's canonical layout
-/// (version 1, issuer key 32, sequence 8, issued-at 8, count 4, 16 per id, signature 64).
+/// (version 1, issuer key 32, sequence 8, issued-at 8, count 4, 16 per id, signature 64), the list format's
+/// [`alice_identity::cert_revocation::MAX_REVOCATION_LIST_LEN`].
 pub const MAX_RELAY_REVOCATIONS_LEN: usize =
-    1 + 32 + 8 + 8 + 4 + 16 * MAX_RELAY_REVOCATION_IDS + 64;
+    alice_identity::cert_revocation::MAX_REVOCATION_LIST_LEN;
 
 /// The layout version of the revocation body ([`DelegatedListResponse::to_bytes`]).
 pub const RELAY_REVOCATIONS_BODY_VERSION: u8 = 1;
