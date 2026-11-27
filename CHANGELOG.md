@@ -5,7 +5,7 @@ All notable changes to ALICE-Sync will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- 依存: alice-identity を 4.0 に上げる (`RevocationList::issue` が `Result` を返し、失効の一覧は端末 id 4096 まで) 試験の `issue(..)` は結果を受ける 4.0 の波の間は alice-identity を 4.0 の候補 commit (rev 480d591) に固定し、alice-identity の main に入った後に branch main へ戻す (時限、48 時間以内) lock は alice-channel を main 28ae5c7 (alice-identity 4.0 の側) に、alice-crypto / alice-sign もそれぞれの main (a3f3907 / 74e3d82) に動く
+- 依存: alice-identity を 4.0 に上げる (`RevocationList::issue` が `Result` を返し、失効の一覧は端末 id 4096 まで) 試験の `issue(..)` は結果を受ける alice-identity の main が 4.0 に進んだので、要求は branch main に戻した (lock は main の dc5f844) lock は alice-channel を main 28ae5c7 (alice-identity 4.0 の側) に、alice-crypto / alice-sign もそれぞれの main (a3f3907 / 74e3d82) に動く
 - `MAX_RELAY_REVOCATION_IDS` / `MAX_RELAY_REVOCATIONS_LEN` は alice-identity の `MAX_REVOKED` / `MAX_REVOCATION_LIST_LEN` から導く (値は同じ 4096 / 65,653 byte、一覧の形式自体が上限を持つようになったので同じ数を 2 か所に持たない) 上限より 1 つ多い一覧は作れないので、試験は手で組んだ 16 byte 多い body が `TooLarge` で断られることを見る
 
 ### Added

@@ -87,7 +87,7 @@ dependencies = [
 [[package]]
 name = "alice-channel"
 version = "0.1.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#28ae5c7d65b99800c6410ccd218b89dd227df97e"
+source = "git+https://github.com/ext-sakamoro/ALICE-Channel?branch=main#b3c9a0bc17ca947be7598b27ced5bbe44d52cd27"
 dependencies = [
  "alice-crypto",
  "alice-identity",
@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "alice-crypto"
 version = "0.7.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Crypto?branch=main#a3f3907831b81ffc9aa079f4a2eb160dc63a898d"
+source = "git+https://github.com/ext-sakamoro/ALICE-Crypto?branch=main#2756788e1d5b71a740962db5cac75493364fae09"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -153,7 +153,7 @@ source = "git+https://github.com/ext-sakamoro/ALICE-DetMath?branch=main#6269efc2
 [[package]]
 name = "alice-identity"
 version = "4.0.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Identity?rev=480d591a0617b8511f6ce91af7aa3570ee6aa7e0#480d591a0617b8511f6ce91af7aa3570ee6aa7e0"
+source = "git+https://github.com/ext-sakamoro/ALICE-Identity?branch=main#dc5f8441cb46c70db1aaa4a2ffe2215687cb6387"
 dependencies = [
  "alice-crypto",
  "alice-sign",
@@ -184,7 +184,7 @@ source = "git+https://github.com/ext-sakamoro/ALICE-Serial?branch=main#38f306c2a
 [[package]]
 name = "alice-sign"
 version = "0.1.0"
-source = "git+https://github.com/ext-sakamoro/ALICE-Sign?branch=main#74e3d8286f88940a3ee756cb61f18c8549fe4b4f"
+source = "git+https://github.com/ext-sakamoro/ALICE-Sign?branch=main#62f22c538ef07c1c4266d2e024606dadb6852680"
 dependencies = [
  "ed25519-dalek",
  "sha2",
@@ -776,7 +776,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1008,7 +1008,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1635,7 +1635,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1847,7 +1847,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
