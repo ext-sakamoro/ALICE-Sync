@@ -255,6 +255,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --features "$NATIVE_FEATURES"
 
+  python:
+    # the python feature on the runner image's own python3 (no setup-python pin): clippy, then the extension built
+    # (debug, so pyo3's alignment check runs) and imported, the bindings checked against the package version, the
+    # SYNC_SEMANTICS_ID literal and round trips; numpy is installed in a venv
+    name: Python bindings (python feature, runner python3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (python, lib)
+        run: |
+          python3 --version
+          PYO3_PYTHON="$(command -v python3)" cargo clippy --lib --features python -- -D warnings
+      - name: numpy in a venv on the runner's python3
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet numpy
+      - name: Python binding tests
+        run: '"$RUNNER_TEMP/venv/bin/python" scripts/test_python_bindings.py'
+
   feature-powerset:
     name: Feature powerset (cargo-hack, depth 2)
     runs-on: ubuntu-latest

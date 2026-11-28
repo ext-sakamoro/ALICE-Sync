@@ -420,6 +420,14 @@ fn version() -> &'static str {
 // Module registration
 // ============================================================================
 
+// CPython allocates every object (and the pyclass contents inside it) on a 16-byte boundary; a pyclass
+// whose contents need a larger alignment is undefined behaviour (debug builds abort with a misaligned
+// pointer dereference, release builds run silently on a misaligned address). Hold such data in a Box.
+const _: () = assert!(core::mem::align_of::<PyInputFrame>() <= 16);
+const _: () = assert!(core::mem::align_of::<PyLockstepSession>() <= 16);
+const _: () = assert!(core::mem::align_of::<PyRollbackSession>() <= 16);
+const _: () = assert!(core::mem::align_of::<PyWorldSoA>() <= 16);
+
 #[pymodule]
 fn alice_sync(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyInputFrame>()?;
